@@ -4,9 +4,9 @@
 
 **Goal:** Scaffold the ZSwap monorepo with Aztec toolchain pinned, two deployable test-token contracts (tUSDC and tETH), green Noir TXE tests, green TypeScript integration tests, and CI compiling on every PR.
 
-**Architecture:** pnpm workspaces monorepo. Each Noir contract is a separate Nargo package under `contracts/`. TypeScript packages under `aggregator/`, `cli/`, `tests/`. Test tokens depend on `@defi-wonderland/aztec-standards` token contract as a Nargo git dependency, configured with a mint authority for testing. Local development uses `aztec start --local-network`. CI uses the Aztec Docker image with the pinned version.
+**Architecture:** pnpm workspaces monorepo. Each Noir contract is a separate Nargo package under `contracts/`. TypeScript packages under `aggregator/`, `cli/`, `tests/`. Test tokens depend on `@defi-wonderland/aztec-standards` token contract as a Nargo git dependency, configured with a mint authority for testing. Aztec 4.x removed the self-contained sandbox, so local development uses `scripts/dev.sh` which orchestrates `anvil` (L1, from Foundry) + `aztec start --local-network` (L2). CI uses both as service containers.
 
-**Tech Stack:** Aztec `v3.0.0-devnet.6-patch.1` (Aztec Sandbox, `aztec-nr`, Noir, Barretenberg Honk prover), `@aztec/aztec.js`, Node 22, pnpm 9+, TypeScript 5.6+, Vitest.
+**Tech Stack:** Aztec `v4.2.1` (Aztec Sandbox, `aztec-nr`, Noir, Barretenberg Honk prover), `@aztec/aztec.js`, Node 22, pnpm 9+, TypeScript 5.6+, Vitest.
 
 **Reference spec:** `docs/superpowers/specs/2026-05-14-zswap-aztec-mvp-design.md`
 
@@ -69,41 +69,48 @@ If any check fails, stop and resolve before continuing. The plan assumes Node 22
 
 ---
 
-## Task 1: Install Aztec toolchain and pin version
+## Task 1: Install toolchain, pin versions, dev orchestrator
+
+Aztec 4.x removed the self-contained sandbox. Local development requires an external L1 (we use anvil from Foundry). The pinned version is invoked via `VERSION=4.2.1 aztec ...` because Aztec's wrapper script reads `VERSION` (or `NETWORK`) env var and defaults to `:latest`; `docker tag` retags don't persist across `aztec` invocations because the wrapper re-pulls `:latest` on each call.
 
 **Files:**
-- Create: `.aztec-version` (informational pin)
+- Create: `.aztec-version` (read by scripts to pin Docker image tag)
 - Create: `.nvmrc`
+- Create: `scripts/dev.sh` (anvil + Aztec local-network orchestrator)
 
-- [ ] **Step 1: Install the Aztec CLI**
-
-Run:
-
-```bash
-bash -i <(curl -s https://install.aztec.network)
-```
-
-This installs `aztec`, `aztec-up`, `aztec-nargo`, and `aztec-wallet` into `~/.aztec/bin` and adds it to PATH. Reload your shell or run `source ~/.zshrc` after.
-
-Expected: `which aztec` returns a path under `~/.aztec/bin/aztec`.
-
-- [ ] **Step 2: Pin Aztec toolkit to the spec's version**
-
-Run:
+- [ ] **Step 1: Install the Aztec CLI (if not already installed)**
 
 ```bash
-export VERSION=3.0.0-devnet.6-patch.1
-aztec-up && docker pull aztecprotocol/aztec:$VERSION && docker tag aztecprotocol/aztec:$VERSION aztecprotocol/aztec:latest
+which aztec || bash -i <(curl -s https://install.aztec.network)
 ```
 
-Expected: Docker image `aztecprotocol/aztec:3.0.0-devnet.6-patch.1` pulled, tagged as `latest`. `aztec --version` reports `3.0.0-devnet.6-patch.1`.
+Expected: `which aztec` returns `~/.aztec/bin/aztec`.
 
-- [ ] **Step 3: Record the version pins in repo**
+- [ ] **Step 2: Install Foundry / anvil (if not already installed)**
+
+```bash
+which anvil || (curl -L https://foundry.paradigm.xyz | bash && foundryup)
+```
+
+Expected: `anvil --version` returns a version (e.g., `anvil Version: 1.5.x`).
+
+- [ ] **Step 3: Pull the pinned Aztec Docker image**
+
+```bash
+export VERSION=4.2.1
+aztec-up -v "$VERSION"
+docker pull aztecprotocol/aztec:$VERSION
+VERSION=$VERSION aztec --version
+```
+
+Expected: Last command reports `4.2.1`. (Note: `aztec --version` *without* `VERSION=` will hit `:latest`, which may differ — this is the wrapper's default behavior, not a misconfiguration.)
+
+- [ ] **Step 4: Record the version pins in repo**
 
 Create `.aztec-version`:
 
 ```
-3.0.0-devnet.6-patch.1
+4.2.1
 ```
 
 Create `.nvmrc`:
@@ -112,21 +119,150 @@ Create `.nvmrc`:
 22
 ```
 
-- [ ] **Step 4: Smoke-test the sandbox starts**
+- [ ] **Step 5: Create `scripts/dev.sh` orchestrator**
 
-Run:
+This script starts anvil + Aztec local-network together and tears them down on Ctrl+C. It reads the version pin from `.aztec-version`.
 
 ```bash
-aztec start --local-network
+#!/usr/bin/env bash
+#
+# Start the local dev stack: anvil (L1) + Aztec local-network (L2).
+#
+# Aztec 4.x removed the self-contained sandbox; local development requires an
+# external L1 RPC. We use anvil from Foundry (https://book.getfoundry.sh).
+#
+# Usage:
+#   scripts/dev.sh             # start both, foreground; Ctrl+C stops both
+#   scripts/dev.sh --down      # stop everything started by a previous run
+#
+# Endpoints when ready:
+#   anvil:  http://localhost:8545
+#   aztec:  http://localhost:8080 (PXE / Aztec node JSON-RPC)
+#
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+VERSION="$(tr -d '[:space:]' < "$ROOT/.aztec-version")"
+ANVIL_PORT=8545
+AZTEC_PORT=8080
+L1_CHAIN_ID=31337
+ANVIL_PID_FILE="$ROOT/.aztec-store/anvil.pid"
+mkdir -p "$ROOT/.aztec-store"
+
+cleanup() {
+  echo
+  echo "→ Stopping Aztec containers..."
+  docker ps --filter "ancestor=aztecprotocol/aztec:$VERSION" --format '{{.ID}}' \
+    | xargs -r docker stop > /dev/null || true
+  if [ -f "$ANVIL_PID_FILE" ]; then
+    local pid
+    pid="$(cat "$ANVIL_PID_FILE")"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "→ Stopping anvil (pid $pid)..."
+      kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$ANVIL_PID_FILE"
+  fi
+  echo "→ Done."
+}
+
+# --down command
+if [ "${1:-}" = "--down" ]; then
+  cleanup
+  exit 0
+fi
+
+# Sanity checks
+command -v docker >/dev/null || { echo "docker not found in PATH"; exit 1; }
+command -v anvil >/dev/null || {
+  cat <<EOF
+anvil not found. Install Foundry first:
+  curl -L https://foundry.paradigm.xyz | bash
+  foundryup
+EOF
+  exit 1
+}
+docker info >/dev/null 2>&1 || { echo "Docker daemon not running"; exit 1; }
+
+# Refuse to run if anvil is already on the port (might be the user's other work)
+if lsof -i ":$ANVIL_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $ANVIL_PORT already in use. Stop the other anvil first or run: scripts/dev.sh --down"
+  exit 1
+fi
+
+# Start anvil
+echo "→ Starting anvil on :$ANVIL_PORT (chain $L1_CHAIN_ID)..."
+anvil --port "$ANVIL_PORT" --chain-id "$L1_CHAIN_ID" --silent > "$ROOT/.aztec-store/anvil.log" 2>&1 &
+ANVIL_PID=$!
+echo "$ANVIL_PID" > "$ANVIL_PID_FILE"
+
+# Trap so Ctrl+C cleans up both
+trap cleanup INT TERM EXIT
+
+# Wait for anvil to accept JSON-RPC
+for i in $(seq 1 30); do
+  if curl -sf -X POST -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+      "http://localhost:$ANVIL_PORT" > /dev/null 2>&1; then
+    echo "→ anvil ready."
+    break
+  fi
+  sleep 1
+  if [ "$i" = "30" ]; then echo "anvil failed to come up"; exit 1; fi
+done
+
+# Start Aztec local-network in the foreground (this blocks)
+echo "→ Starting Aztec local-network ($VERSION) on :$AZTEC_PORT..."
+VERSION="$VERSION" aztec start --local-network \
+  --l1-rpc-urls "http://host.docker.internal:$ANVIL_PORT" \
+  --l1-chain-id "$L1_CHAIN_ID"
 ```
 
-Wait until output shows `Aztec PXE running on http://localhost:8080` (this takes ~30 sec on first run). Press `Ctrl+C` to stop.
-
-- [ ] **Step 5: Commit**
+Make it executable:
 
 ```bash
-git add .aztec-version .nvmrc
-git commit -m "chore: pin Aztec toolchain to 3.0.0-devnet.6-patch.1"
+chmod +x scripts/dev.sh
+```
+
+- [ ] **Step 6: Smoke-test the dev stack**
+
+In one terminal:
+
+```bash
+scripts/dev.sh
+```
+
+Wait until Aztec output shows `Started sequencer` and (later) PXE endpoints are exposed. This takes ~60-90 sec on first run.
+
+In a second terminal, verify both endpoints respond:
+
+```bash
+# anvil (block number)
+curl -sf -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+  http://localhost:8545
+
+# aztec node (responds to GET with 405 Method Not Allowed = service alive)
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080
+```
+
+Expected: anvil returns a `{"result":"0x..."}` JSON; aztec returns `405`. Both indicate alive services.
+
+Press `Ctrl+C` in the first terminal to tear down. Verify cleanup with:
+
+```bash
+docker ps --filter "ancestor=aztecprotocol/aztec:4.2.1"   # empty
+lsof -i :8545                                              # empty
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add .aztec-version .nvmrc scripts/dev.sh
+git commit -m "chore: pin Aztec to 4.2.1, add anvil + aztec dev orchestrator"
 ```
 
 ---
@@ -230,7 +366,7 @@ MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auct
 
 ## Quickstart
 
-Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `3.0.0-devnet.6-patch.1`.
+Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `4.2.1`.
 
 ```bash
 # Install Aztec toolchain (one-time)
@@ -247,8 +383,8 @@ pnpm compile
 # Run Noir TXE tests
 pnpm test:noir
 
-# In a separate terminal, start the local Aztec sandbox
-aztec start --local-network
+# In a separate terminal, start the local dev stack (anvil + aztec)
+scripts/dev.sh
 
 # Then run TypeScript integration tests
 pnpm test
@@ -357,8 +493,8 @@ authors = [""]
 compiler_version = ">=0.40.0"
 
 [dependencies]
-aztec = { git = "https://github.com/AztecProtocol/aztec-packages", tag = "v3.0.0-devnet.6-patch.1", directory = "noir-projects/aztec-nr/aztec" }
-aztec_standards = { git = "https://github.com/defi-wonderland/aztec-standards", tag = "v3.0.0-devnet.6-patch.1", directory = "contracts/token_contract" }
+aztec = { git = "https://github.com/AztecProtocol/aztec-packages", tag = "v4.2.1", directory = "noir-projects/aztec-nr/aztec" }
+aztec_standards = { git = "https://github.com/defi-wonderland/aztec-standards", tag = "v4.2.1", directory = "contracts/token_contract" }
 ```
 
 (Tag pinning protects against breaking changes. If `defi-wonderland/aztec-standards` doesn't have this tag, switch to a commit SHA after consulting their releases page.)
@@ -391,7 +527,7 @@ pub contract TokenA {
 mod test;
 ```
 
-(Note: the exact re-export mechanism depends on the `aztec-standards` API surface. If direct re-export isn't supported in v3.0.0-devnet.6, switch this to a fork-and-copy approach where `main.nr` directly contains the token logic with our token-specific globals. Verify against `https://github.com/defi-wonderland/aztec-standards/tree/main/contracts/token_contract/src` before writing.)
+(Note: the exact re-export mechanism depends on the `aztec-standards` API surface. If direct re-export isn't supported in v4.2.1, switch this to a fork-and-copy approach where `main.nr` directly contains the token logic with our token-specific globals. Verify against `https://github.com/defi-wonderland/aztec-standards/tree/main/contracts/token_contract/src` before writing.)
 
 - [ ] **Step 3: Compile the contract**
 
@@ -515,8 +651,8 @@ authors = [""]
 compiler_version = ">=0.40.0"
 
 [dependencies]
-aztec = { git = "https://github.com/AztecProtocol/aztec-packages", tag = "v3.0.0-devnet.6-patch.1", directory = "noir-projects/aztec-nr/aztec" }
-aztec_standards = { git = "https://github.com/defi-wonderland/aztec-standards", tag = "v3.0.0-devnet.6-patch.1", directory = "contracts/token_contract" }
+aztec = { git = "https://github.com/AztecProtocol/aztec-packages", tag = "v4.2.1", directory = "noir-projects/aztec-nr/aztec" }
+aztec_standards = { git = "https://github.com/defi-wonderland/aztec-standards", tag = "v4.2.1", directory = "contracts/token_contract" }
 ```
 
 - [ ] **Step 2: Create `contracts/token-b/src/main.nr`**
@@ -627,8 +763,8 @@ git commit -m "feat(token-b): add tETH contract with TXE tests"
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aztec/aztec.js": "3.0.0-devnet.6-patch.1",
-    "@aztec/accounts": "3.0.0-devnet.6-patch.1"
+    "@aztec/aztec.js": "4.2.1",
+    "@aztec/accounts": "4.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
@@ -680,7 +816,7 @@ Run:
 pnpm install
 ```
 
-Expected: `tests/node_modules` populated, `@aztec/aztec.js@3.0.0-devnet.6-patch.1` resolved.
+Expected: `tests/node_modules` populated, `@aztec/aztec.js@4.2.1` resolved.
 
 - [ ] **Step 5: Commit**
 
@@ -705,9 +841,9 @@ import { createPXEClient, waitForPXE, type PXE } from "@aztec/aztec.js";
 const PXE_URL = process.env.PXE_URL ?? "http://localhost:8080";
 
 /**
- * Connect to a running Aztec sandbox at PXE_URL. Throws after 30s if PXE is
- * not reachable. The sandbox itself must be started externally via:
- *   aztec start --local-network
+ * Connect to a running Aztec PXE at PXE_URL. Throws after 30s if not reachable.
+ * The dev stack (anvil + Aztec local-network) must be started externally via:
+ *   scripts/dev.sh
  */
 export async function connectToSandbox(): Promise<PXE> {
   const pxe = createPXEClient(PXE_URL);
@@ -838,7 +974,7 @@ describe("token contracts", () => {
 Run:
 
 ```bash
-aztec start --local-network
+scripts/dev.sh
 ```
 
 Wait for `Aztec PXE running on http://localhost:8080`.
@@ -932,7 +1068,7 @@ pnpm install
 In one terminal:
 
 ```bash
-aztec start --local-network
+scripts/dev.sh
 ```
 
 In another:
@@ -975,7 +1111,7 @@ jobs:
     name: Noir compile + TXE tests
     runs-on: ubuntu-latest
     container:
-      image: aztecprotocol/aztec:3.0.0-devnet.6-patch.1
+      image: aztecprotocol/aztec:4.2.1
     steps:
       - uses: actions/checkout@v4
       - name: Compile all contracts
@@ -1004,18 +1140,6 @@ jobs:
     name: TypeScript integration tests
     runs-on: ubuntu-latest
     needs: [noir]
-    services:
-      sandbox:
-        image: aztecprotocol/aztec:3.0.0-devnet.6-patch.1
-        ports:
-          - 8080:8080
-        options: >-
-          --health-cmd "curl -f http://localhost:8080 || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-        env:
-          AZTEC_PORT: 8080
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -1024,26 +1148,42 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+      - name: Install Foundry (for anvil)
+        uses: foundry-rs/foundry-toolchain@v1
       - run: pnpm install --frozen-lockfile
+      - name: Pull Aztec image
+        run: docker pull aztecprotocol/aztec:4.2.1
       - name: Compile contracts (for codegen artifacts)
         run: |
-          docker run --rm -v $PWD:/work -w /work aztecprotocol/aztec:3.0.0-devnet.6-patch.1 bash scripts/compile-all.sh
+          docker run --rm -v $PWD:/work -w /work aztecprotocol/aztec:4.2.1 bash scripts/compile-all.sh
       - name: Codegen TypeScript bindings
         run: |
-          docker run --rm -v $PWD:/work -w /work aztecprotocol/aztec:3.0.0-devnet.6-patch.1 \
+          docker run --rm -v $PWD:/work -w /work aztecprotocol/aztec:4.2.1 \
             bash -c "aztec codegen contracts/token-a/target -o tests/integration/generated && \
                      aztec codegen contracts/token-b/target -o tests/integration/generated"
-      - name: Wait for sandbox
+      - name: Start dev stack (anvil + Aztec local-network) in background
         run: |
-          for i in {1..60}; do
-            curl -sf http://localhost:8080 && break || sleep 2
+          nohup bash scripts/dev.sh > /tmp/dev.log 2>&1 &
+          echo $! > /tmp/dev.pid
+          # Wait for Aztec PXE to expose port 8080 (Aztec returns 405 to GET)
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 || true)
+            if [ "$code" = "405" ] || [ "$code" = "200" ]; then
+              echo "Dev stack ready after ${i}s"
+              exit 0
+            fi
+            sleep 2
           done
+          echo "Dev stack failed to come up; tail of log:"
+          tail -100 /tmp/dev.log
+          exit 1
       - run: pnpm --filter @zswap/tests test
         env:
           PXE_URL: http://localhost:8080
+      - name: Stop dev stack
+        if: always()
+        run: bash scripts/dev.sh --down || true
 ```
-
-(The exact `services` block syntax for a long-running container that needs a non-default startup command may need adjustment based on whether the Aztec image runs `aztec start --local-network` as its default `CMD`. If the default entrypoint differs, switch the `services` block to a `docker run`-based step that backgrounds the sandbox process and waits for readiness. Verify behavior locally with `docker run aztecprotocol/aztec:3.0.0-devnet.6-patch.1` to confirm.)
 
 - [ ] **Step 2: Commit**
 
@@ -1076,7 +1216,7 @@ Expected: Compilation succeeds. All Noir TXE tests pass.
 In a separate terminal:
 
 ```bash
-aztec start --local-network
+scripts/dev.sh
 ```
 
 Wait for readiness, then in the main terminal:

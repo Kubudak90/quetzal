@@ -26,7 +26,7 @@ The design is a faithful adaptation of Penumbra's ZSwap to Aztec's native privat
 3. **Private LP positions.** An LP's share, deposit history, and accrued fees are visible only to their own wallet. Total reserves and total LP supply are public aggregates (Penumbra parity).
 4. **Fee accrual from day one.** 0.3% swap fee on inputs, fully distributed to LPs via cumulative-fee-per-share snapshots in position notes.
 5. **Order cancellation and carryover.** Standing limit orders persist across epochs until filled or cancelled. Over-subscribed epochs (>128 orders) carry the surplus to the next epoch, FIFO.
-6. **Devnet-deployable.** Targets `aztec-packages v3.0.0-devnet.6-patch.1` API surface. CLI-first; no UI in MVP.
+6. **Devnet-deployable.** Targets `aztec-packages v4.2.1` API surface. CLI-first; no UI in MVP.
 
 ### 2.2 Non-goals (deferred to later sub-projects)
 
@@ -44,7 +44,7 @@ The MVP intentionally trades feature breadth for cryptographic depth: it must pr
 
 ## 3. System Architecture
 
-### 3.1 On-chain contracts (Noir, `aztec-nr` v3.0.0-devnet.6)
+### 3.1 On-chain contracts (Noir, `aztec-nr` v4.2.1)
 
 | Contract | Responsibility |
 |---|---|
@@ -661,7 +661,7 @@ GitHub Actions matrix:
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Clearing-proof time exceeds 1 epoch (20 min) | Medium | Week-6 early benchmark. Fallback: reduce `MAX_ORDERS_PER_EPOCH` to 96 or 64, or introduce recursion. |
-| Aztec breaks Noir API mid-project | Low–Medium | Pin `aztec-packages v3.0.0-devnet.6-patch.1`. Migration buffer reserved in week 12. |
+| Aztec breaks Noir API mid-project | Low–Medium | Pin `aztec-packages v4.2.1`. Migration buffer reserved in week 12. |
 | Reveal channel UX is awful in CLI | Medium | Week-9 prototype with relay; if friction is too high, defer p2p to sub-project 3 and accept centralized relay for MVP. |
 | FIFO constraint blows up circuit size 4× from baseline | Low | Week-6 benchmark. If real, switch to "soft FIFO" (orders within ±5 blocks treated as equal). |
 | L1 bridge complexity creeps into MVP scope | Medium | Explicitly **out of scope**. Test tokens are mintable on Aztec only. Bridge = sub-project 5. |
