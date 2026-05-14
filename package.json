@@ -10,7 +10,7 @@
   "scripts": {
     "compile": "bash scripts/compile-all.sh",
     "test": "pnpm -r --filter './tests/**' test",
-    "test:noir": "bash scripts/compile-all.sh && for d in contracts/*/; do (cd \"$d\" && aztec test) ; done",
+    "test:noir": "bash scripts/compile-all.sh && for d in contracts/*/; do (cd \"$d\" && VERSION=$(tr -d '[:space:]' < ../../.aztec-version) && docker run --rm --entrypoint bash -v \"$PWD:/work\" -w /work \"aztecprotocol/aztec:$VERSION\" -c 'export LOG_LEVEL=info; node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js start --txe --port 8081 & while ! nc -z 127.0.0.1 8081 >/dev/null 2>&1; do sleep 0.2; done; export NARGO_FOREIGN_CALL_TIMEOUT=300000; /usr/src/noir/noir-repo/target/release/nargo test --silence-warnings --show-output --oracle-resolver http://127.0.0.1:8081') ; done",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck"
   }

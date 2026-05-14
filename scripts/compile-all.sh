@@ -14,7 +14,10 @@ fi
 for dir in contracts/*/; do
   if [ -f "$dir/Nargo.toml" ]; then
     echo "→ Compiling $dir"
-    (cd "$dir" && VERSION="$VERSION" aztec compile)
+    (cd "$dir" && docker run --rm --entrypoint bash \
+      -v "$PWD:/work" -w /work \
+      "aztecprotocol/aztec:$VERSION" \
+      -c 'export PATH=/usr/src/noir/noir-repo/target/release:$PATH && node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js compile')
   fi
 done
 
