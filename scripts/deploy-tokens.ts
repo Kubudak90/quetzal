@@ -16,6 +16,7 @@ import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
 
 import { TokenContract } from "../tests/integration/generated/Token.js";
+import { OrderbookContract } from "../tests/integration/generated/Orderbook.js";
 
 const NODE_URL = process.env.PXE_URL ?? process.env.AZTEC_NODE_URL ?? "http://localhost:8080";
 
@@ -57,11 +58,20 @@ async function main() {
     admin,
   ).send({ from: admin });
 
+  // Deploy Orderbook referencing both tokens; admin acts as clearing_addr placeholder.
+  const deployedOB = await OrderbookContract.deploy(
+    wallet,
+    tokenA.contract.address,
+    tokenB.contract.address,
+    admin,
+  ).send({ from: admin });
+
   console.log(
     JSON.stringify(
       {
         tUSDC: tokenA.contract.address.toString(),
         tETH: tokenB.contract.address.toString(),
+        orderbook: deployedOB.contract.address.toString(),
         admin: admin.toString(),
       },
       null,
