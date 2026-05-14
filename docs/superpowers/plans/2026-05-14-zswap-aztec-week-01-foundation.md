@@ -1,5 +1,7 @@
 # ZSwap-on-Aztec — Week 1: Foundation Implementation Plan
 
+> **Status:** Executed and tagged as `week-01-foundation` at commit `6435b8c`. See "What Actually Shipped" section below for deviations from this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Scaffold the ZSwap monorepo with Aztec toolchain pinned, two deployable test-token contracts (tUSDC and tETH), green Noir TXE tests, green TypeScript integration tests, and CI compiling on every PR.
@@ -9,6 +11,27 @@
 **Tech Stack:** Aztec `v4.2.1` (Aztec Sandbox, `aztec-nr`, Noir, Barretenberg Honk prover), `@aztec/aztec.js`, Node 22, pnpm 9+, TypeScript 5.6+, Vitest.
 
 **Reference spec:** `docs/superpowers/specs/2026-05-14-zswap-aztec-mvp-design.md`
+
+---
+
+## ⚠ What Actually Shipped (Deviations from this Plan)
+
+This section documents what was actually built. The plan body below is kept intact for historical reference — do not follow it literally; use the actual repo files instead.
+
+**1. Test runner: Vitest → node:test + tsx.** (Commit `62300ad`)
+The plan specified Vitest for TypeScript integration tests. This was abandoned because `@aztec/*` packages use `import ... with { type: "json" }` ESM import attributes; vite-node (used by Vitest 2.x/3.x under Vite 5/6) strips these attributes before delegating to Node, which then rejects the import with a syntax error. The actual runner is `node --import tsx --test` (`tsx` is esbuild-based and preserves import attributes). `tests/package.json` and `tests/tsconfig.json` reflect this; `tests/vitest.config.ts` was never created.
+
+**2. Aztec CLI direct invocations → Docker entrypoint bypass.** (Commit `915d2be`)
+The plan calls `aztec compile` and `aztec test` directly. The `~/.aztec/bin/aztec` wrapper for v4.2.1 has two bugs: `nargo` is not in the container PATH when invoked through the wrapper, and it passes a `--pedantic-solving` flag that does not exist in this version. All compile and TXE-test invocations in `scripts/compile-all.sh` and the root `package.json` `test:noir` script use `docker run --entrypoint bash ... aztecprotocol/aztec:4.2.1` directly. The `aztec codegen` wrapper works correctly and is used as-is for codegen.
+
+**3. Aztec-standards dep → vendored Token contract.** (Commits `821a9ec`, `853c851`)
+The plan uses `aztec_standards = { git = "...", tag = "v4.2.1" }` and re-exports `TokenContract`. The Aztec `#[aztec]` macro requires the full contract definition to be present in-file; there is no re-export mechanism. The 425-line Token contract from `defi-wonderland/aztec-standards@v4.2.0` is copied verbatim into each `contracts/token-*/src/main.nr` with token-specific constants (`TOKEN_NAME`, `TOKEN_SYMBOL`, `TOKEN_DECIMALS`) overridden at the top.
+
+**4. Plan's `v4.2.1` Nargo tag → `v4.2.0`.** (Commits `821a9ec`, `853c851`)
+The plan pins Nargo dependencies to `aztec-packages@v4.2.1`. That tag does not exist on the `AztecProtocol/aztec-packages` repo. The actual `Nargo.toml` files use `tag = "v4.2.0"` (the highest available tag at implementation time). This is a different semantic axis from the Docker runtime tag (`4.2.1` in `.aztec-version`) — Nargo deps point to where the Noir library source code lives; the Docker image tag is the CLI/runtime version. They are intentionally different.
+
+**5. TS API names in spec are aspirational, not literal.**
+Function names like `transfer_to_orderbook` in the spec do not exist on the vendored Token contract. The actual public interface is `transfer_private_to_public(from, to, amount, nonce)`, `transfer_public_to_private(from, to, amount)`, `mint_to_private(to, amount)`, and `balance_of_private(owner)`. The integration tests and deploy script use these real names. Week 2 will build the Orderbook on top of these primitives.
 
 ---
 
