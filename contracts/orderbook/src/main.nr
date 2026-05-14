@@ -4,10 +4,11 @@ use aztec::macros::aztec;
 pub contract Orderbook {
     use aztec::{
         macros::{
-            functions::{external, initializer},
+            functions::{external, initializer, only_self},
             notes::note,
             storage::storage,
         },
+        messages::message_delivery::MessageDelivery,
         protocol::{
             address::AztecAddress,
             traits::{Deserialize, Packable, Serialize},
@@ -15,9 +16,19 @@ pub contract Orderbook {
         state_vars::{Owned, PrivateSet, PublicImmutable, PublicMutable},
     };
 
+    use token::Token;
+
     /// Number of L2 blocks per epoch. Each freshly opened epoch closes
     /// `EPOCH_LENGTH` blocks after its opening block.
     global EPOCH_LENGTH: u32 = 100;
+
+    /// Maximum number of input notes considered when reading user-side state. Currently unused
+    /// inside `submit_order` (which never reads existing OrderNotes), but reserved for upcoming
+    /// `cancel_order` / clearing flows that will sweep notes from the private set.
+    pub global MAX_INPUT_NOTES: u32 = 8;
+
+    /// Epoch state machine value indicating the epoch is OPEN and accepting new orders.
+    global EPOCH_STATE_OPEN: u8 = 0;
 
     /// Private note representing a single resting order on the orderbook.
     ///
@@ -82,6 +93,93 @@ pub contract Orderbook {
             opened_at_block: block,
             closes_at_block: block + EPOCH_LENGTH,
         });
+    }
+
+    // ============================ ORDER SUBMISSION ============================
+
+    /// Submit a new private order to the orderbook.
+    ///
+    /// Flow:
+    /// 1. Validate inputs (`amount_in > 0`, `limit_price > 0`).
+    /// 2. Read the input token address from public-immutable storage (decided by `side`).
+    /// 3. Escrow the maker's tokens by calling `Token.transfer_private_to_public`, moving
+    ///    `amount_in` of the input token from the maker's private balance into the orderbook
+    ///    contract's PUBLIC balance. This contract becomes the custodian until the order is
+    ///    cancelled (Week 3) or cleared (Week 6+).
+    /// 4. Commit an encrypted `OrderNote` to the maker's private set so they can prove ownership
+    ///    later (for cancellation / clearing).
+    /// 5. Enqueue a public callback to assert the epoch is still OPEN at the time the tx is mined.
+    ///    Epoch state lives in a `PublicMutable`, which is not directly readable from private
+    ///    context in Aztec v4.2.0, so the check is deferred to public execution.
+    ///
+    /// # Arguments
+    /// - `side`: `false` = bid (deposit token A), `true` = ask (deposit token B).
+    /// - `amount_in`: amount of the input token to escrow (must be > 0).
+    /// - `limit_price`: quote-per-base price scaled to 18 decimals (must be > 0).
+    /// - `nonce`: authwit nonce for the inner `Token.transfer_private_to_public` call.
+    /// - `order_nonce`: per-order random salt embedded into the `OrderNote` for uniqueness.
+    ///
+    /// The `nonce` and `order_nonce` are intentionally distinct so the authwit nonce cannot
+    /// collide with the note-identity nonce.
+    #[external("private")]
+    fn submit_order(
+        side: bool,
+        amount_in: u128,
+        limit_price: u128,
+        nonce: Field,
+        order_nonce: Field,
+    ) {
+        assert(amount_in > 0 as u128, "amount_in must be positive");
+        assert(limit_price > 0 as u128, "limit_price must be positive");
+
+        let maker = self.msg_sender();
+
+        // PublicImmutable can be read from a private context (it is initialized once at deploy
+        // time and the value is therefore historically fixed). PublicMutable cannot, hence the
+        // epoch check is deferred to the enqueued public callback below.
+        let token_addr: AztecAddress = if side {
+            self.storage.token_b_addr.read()
+        } else {
+            self.storage.token_a_addr.read()
+        };
+
+        // Escrow: drain the maker's private balance, credit the orderbook's PUBLIC balance.
+        // This is a private->private call (transfer_private_to_public is itself a private
+        // function on Token that internally enqueues a public balance increase).
+        self.call(Token::at(token_addr).transfer_private_to_public(
+            maker,
+            self.address,
+            amount_in,
+            nonce,
+        ));
+
+        // Build the OrderNote and insert it into the maker's private set, with on-chain
+        // constrained encrypted delivery so the maker is guaranteed to discover and decrypt it.
+        let submitted_at_block: u32 = self.context.get_anchor_block_header().block_number();
+        let order = OrderNote {
+            submitted_at_block,
+            side,
+            amount_in,
+            limit_price,
+            nonce: order_nonce,
+            owner: maker,
+        };
+        self.storage.orders.at(maker).insert(order).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
+
+        // Defer the OPEN-state check to public execution (PublicMutable is not readable from
+        // private context). This callback runs atomically with the rest of the tx: if the
+        // epoch has already advanced past OPEN at mine time, the whole tx (escrow + note
+        // emission) reverts.
+        self.enqueue_self._assert_epoch_open();
+    }
+
+    /// Public callback used by `submit_order` to enforce that the current epoch state is OPEN.
+    /// `only_self` ensures the callback can only be invoked by this contract via `enqueue_self`.
+    #[external("public")]
+    #[only_self]
+    fn _assert_epoch_open() {
+        let epoch = self.storage.current_epoch.read();
+        assert(epoch.state == EPOCH_STATE_OPEN, "epoch is not OPEN");
     }
 
     // ============================ UNCONSTRAINED GETTERS ============================

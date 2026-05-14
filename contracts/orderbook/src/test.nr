@@ -109,6 +109,46 @@ unconstrained fn constructor_sets_initial_epoch_state() {
     );
 }
 
+// Input-validation negative tests for submit_order. We deliberately do NOT exercise the
+// happy path here: that would require deploying the Token contract from inside the orderbook's
+// TXE test, seeding a private balance, and wiring authwits, which is integration-test territory
+// (Task 8). The two tests below are valid because the input-validation asserts fire BEFORE any
+// cross-contract call, so we never actually need a Token at the placeholder address.
+
+#[test(should_fail_with = "amount_in must be positive")]
+unconstrained fn submit_order_rejects_amount_zero() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Three placeholder addresses are fine: the assertion on amount_in fires before any
+    // token-contract call is attempted.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, deployer);
+
+    let maker = env.create_light_account();
+
+    // side=false (bid token A), amount_in=0 must revert with "amount_in must be positive".
+    env.call_private(
+        maker,
+        Orderbook::at(orderbook).submit_order(false, 0 as u128, 1 as u128, 0, 0),
+    );
+}
+
+#[test(should_fail_with = "limit_price must be positive")]
+unconstrained fn submit_order_rejects_limit_price_zero() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, deployer);
+
+    let maker = env.create_light_account();
+
+    // amount_in=100 passes the first assert; limit_price=0 must trigger the second.
+    env.call_private(
+        maker,
+        Orderbook::at(orderbook).submit_order(false, 100 as u128, 0 as u128, 0, 0),
+    );
+}
+
 #[test]
 unconstrained fn constructor_records_contract_addresses() {
     let mut env = TestEnvironment::new();
