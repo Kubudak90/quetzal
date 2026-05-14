@@ -7,6 +7,9 @@ target/
 *.json.gz
 codegenCache.json
 
+# Generated TS contract bindings (regenerated from contracts/*/target/ artifacts)
+tests/integration/generated/
+
 # Aztec PXE local state
 store/
 .aztec-store/
