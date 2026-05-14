@@ -7,8 +7,7 @@ import type { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
 
-import { TokenAContract } from "./generated/TokenA.js";
-import { TokenBContract } from "./generated/TokenB.js";
+import { TokenContract } from "./generated/Token.js";
 
 // Brand constants must match the contract globals.
 // The constructor_with_minter takes str<31>; right-pad both strings.
@@ -42,7 +41,7 @@ describe("tokens (live integration)", () => {
   });
 
   it("deploys tUSDC, mints 1M to admin privately, balance matches", { timeout: 600_000 }, async () => {
-    const deployed = await TokenAContract.deployWithOpts(
+    const deployed = await TokenContract.deployWithOpts(
       { wallet, method: "constructor_with_minter" },
       TUSDC_NAME,
       TUSDC_SYMBOL,
@@ -63,7 +62,7 @@ describe("tokens (live integration)", () => {
   });
 
   it("deploys tETH, mints 5 tETH to admin, transfers 2 tETH private->private to alice", { timeout: 600_000 }, async () => {
-    const deployed = await TokenBContract.deployWithOpts(
+    const deployed = await TokenContract.deployWithOpts(
       { wallet, method: "constructor_with_minter" },
       TETH_NAME,
       TETH_SYMBOL,

@@ -15,8 +15,7 @@ import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
 
-import { TokenAContract } from "../tests/integration/generated/TokenA.js";
-import { TokenBContract } from "../tests/integration/generated/TokenB.js";
+import { TokenContract } from "../tests/integration/generated/Token.js";
 
 const NODE_URL = process.env.PXE_URL ?? process.env.AZTEC_NODE_URL ?? "http://localhost:8080";
 
@@ -42,7 +41,7 @@ async function main() {
   const admin = accounts[0];
   if (!admin) throw new Error("no test wallets available");
 
-  const tokenA = await TokenAContract.deployWithOpts(
+  const tokenA = await TokenContract.deployWithOpts(
     { wallet, method: "constructor_with_minter" },
     TUSDC_NAME,
     TUSDC_SYMBOL,
@@ -50,7 +49,7 @@ async function main() {
     admin,
   ).send({ from: admin });
 
-  const tokenB = await TokenBContract.deployWithOpts(
+  const tokenB = await TokenContract.deployWithOpts(
     { wallet, method: "constructor_with_minter" },
     TETH_NAME,
     TETH_SYMBOL,

@@ -15,9 +15,8 @@
 #   pnpm codegen                     # same, via npm script alias
 #
 # Output:
-#   tests/integration/generated/TokenA.ts
-#   tests/integration/generated/TokenB.ts
-#   (and their companion .js / .d.ts artefacts produced by the Aztec codegen)
+#   tests/integration/generated/Token.ts
+#   (and its companion .js / .d.ts artefacts produced by the Aztec codegen)
 #
 
 set -euo pipefail
