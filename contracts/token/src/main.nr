@@ -1,24 +1,13 @@
-// tETH -- brand-wrap of the @defi-wonderland/aztec-standards Token contract.
-// Compiled artifact: target/token_b-TokenB.json
-//
-// Why a verbatim wrap rather than a `pub use`/import re-export:
-// Aztec's #[aztec] macro produces contract bytecode from the in-file
-// `pub contract` definition. There is no contract-level inheritance or
-// re-export. To brand the artifact (name: tETH, 18 decimals) while staying
-// API-compatible with aztec-standards, we vendor the upstream Token contract
-// here under the name TokenB and expose brand constants for deploy helpers.
+// Token -- generic reusable token contract.
+// Brand (name, symbol, decimals) is passed as deploy-time constructor arguments.
+// Compiled artifact: target/token-Token.json
 
 pub mod test;
 
 use aztec::macros::aztec;
 
-// Brand metadata. Padded to str<31> at deploy time by helpers.
-pub global TOKEN_NAME: str<4> = "tETH";
-pub global TOKEN_SYMBOL: str<4> = "tETH";
-pub global TOKEN_DECIMALS: u8 = 18;
-
 #[aztec]
-pub contract TokenB {
+pub contract Token {
     // aztec library
     use aztec::{
         macros::{

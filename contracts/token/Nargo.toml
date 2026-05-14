@@ -1,5 +1,5 @@
 [package]
-name = "token_b"
+name = "token"
 type = "contract"
 authors = [""]
 compiler_version = ">=1.0.0"
