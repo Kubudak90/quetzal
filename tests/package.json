@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --import tsx --test --test-reporter=spec 'integration/**/*.test.ts'",
-    "test:watch": "node --import tsx --test --watch 'integration/**/*.test.ts'",
+    "test": "node --import tsx --test --test-concurrency=1 --test-reporter=spec 'integration/**/*.test.ts'",
+    "test:watch": "node --import tsx --test --test-concurrency=1 --watch 'integration/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
