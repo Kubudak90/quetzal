@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Pre-alpha. Week 1 of MVP implementation.
+**Status:** Week 1 complete. Repo scaffolded; tUSDC and tETH test tokens deploy and pass mint/transfer tests in Noir TXE and TypeScript integration suites. CI defined. Week 2 begins the OrderbookContract.
 
 ## Quickstart
 
