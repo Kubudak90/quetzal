@@ -26,10 +26,15 @@ pnpm compile
 # Run Noir TXE tests (no sandbox needed)
 pnpm test:noir
 
+# Generate TypeScript bindings from compiled contracts
+# (runs automatically as a pretest hook, but you can run it explicitly)
+pnpm codegen
+
 # In a separate terminal, start the local dev stack (anvil + aztec)
 scripts/dev.sh
 
 # Then run TypeScript integration tests
+# (codegen runs automatically before tests via the pretest hook)
 pnpm test
 ```
 
