@@ -1,0 +1,17 @@
+{
+  "name": "zswap-aztec",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "compile": "bash scripts/compile-all.sh",
+    "test": "pnpm -r --filter './tests/**' test",
+    "test:noir": "bash scripts/compile-all.sh && for d in contracts/*/; do (cd \"$d\" && aztec test) ; done",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}
