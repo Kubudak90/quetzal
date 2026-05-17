@@ -197,7 +197,8 @@ pub contract Orderbook {
     /// 1. Retrieve (and nullify) the caller's `OrderNote` whose identity nonce equals
     ///    `order_nonce`. Exactly one note must match.
     /// 2. Read the escrowed token address from public-immutable storage, decided by the
-    ///    note's `side` (false -> token A, true -> token B) - identical to `submit_order`.
+    ///    note's `side` (false -> token A, true -> token B) - mirrors the same
+    ///    side->token mapping as `submit_order` (symmetric, using `order.side`).
     /// 3. Call `Token.transfer_public_to_private` to move `amount_in` of that token from
     ///    the orderbook's PUBLIC balance back into the maker's PRIVATE balance. Because
     ///    `from` is this contract and this contract is the caller, the Token's
@@ -216,6 +217,9 @@ pub contract Orderbook {
         // Retrieve + nullify the maker's resting order matching `order_nonce`. `pop_notes`
         // both reads and nullifies in one constrained call, so a cancelled order can never
         // be cancelled (or cleared) twice.
+        // `order_nonce` is a per-order unique salt, so at most one note can ever match
+        // the selector. `set_limit(1)` only bounds the query; the
+        // `assert(notes.len() == 1, ...)` below is what enforces "exactly one".
         let options = NoteGetterOptions::new().select(
             OrderNote::properties().nonce,
             Comparator.EQ,
@@ -242,8 +246,10 @@ pub contract Orderbook {
             nonce,
         ));
 
-        // Defer the OPEN-state check to public execution (PublicMutable is not readable
-        // from private context), atomic with the rest of the tx.
+        // Gate cancellation to the OPEN epoch state: the MVP design forbids cancelling
+        // mid-clearing so makers cannot race the clearing tx (an MEV-resistance property).
+        // PublicMutable is not readable from private context, so the check is deferred to
+        // this enqueued public callback, atomic with the rest of the tx.
         self.enqueue_self._assert_epoch_open();
     }
 
@@ -278,6 +284,10 @@ pub contract Orderbook {
     /// Note: in aztec-nr v4.2.0 a `PrivateSet` in a `UtilityContext` exposes only
     /// `view_notes(NoteViewerOptions)` (there is no `get_notes` on the utility context),
     /// and `view_notes` is bounded by `MAX_NOTES_PER_PAGE` (= 10), not `MAX_INPUT_NOTES`.
+    ///
+    /// The returned orders are UNORDERED: they are NOT sorted by `submitted_at_block`
+    /// (or any other field). Callers must not assume any particular ordering and should
+    /// sort themselves if order matters.
     #[external("utility")]
     unconstrained fn get_orders(owner: AztecAddress) -> BoundedVec<OrderNote, MAX_NOTES_PER_PAGE> {
         self.storage.orders.at(owner).view_notes(NoteViewerOptions::new())
