@@ -60,6 +60,15 @@ function randomField(): bigint {
   return n;
 }
 
+// `get_orders` returns a Noir BoundedVec<OrderNote, 10>. The ABI decoder
+// deserialises it as { storage: OrderNote[10], len: bigint }.  Pass
+// `sim.result` (the unwrapped simulation return value) directly here.
+function extractNonces(boundedVec: unknown): bigint[] {
+  const bv = boundedVec as { storage: { nonce: bigint | number }[]; len: bigint | number };
+  const len = Number(bv.len);
+  return bv.storage.slice(0, len).map((o) => BigInt(o.nonce));
+}
+
 async function readPrivateBalance(
   token: TokenContract,
   owner: AztecAddress,
@@ -220,5 +229,156 @@ describe("orderbook (live integration)", () => {
       ORDER4A_USDC + ORDER4B_USDC,
       "alice private balance drained by the sum of both orders",
     );
+  });
+});
+
+describe("orderbook cancel_order (live integration)", () => {
+  let node: AztecNode;
+  let wallet: EmbeddedWallet;
+  let admin: AztecAddress;
+  let alice: AztecAddress;
+  let bob: AztecAddress;
+  let tUSDC: TokenContract;
+  let tETH: TokenContract;
+  let orderbook: OrderbookContract;
+
+  const MINT = 1_000n * ONE_TUSDC;
+  const MINT_ETH = 10n * ONE_TETH;
+  const ORDER_USDC = 100n * ONE_TUSDC;
+  const ORDER_ETH = 3n * ONE_TETH;
+
+  before(async () => {
+    node = await connectToSandbox();
+    const env = await getTestWallets(node, 3);
+    wallet = env.wallet;
+    admin = env.accounts[0]!;
+    alice = env.accounts[1]!;
+    bob = env.accounts[2]!;
+
+    const dU = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    tUSDC = dU.contract;
+
+    const dE = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    tETH = dE.contract;
+
+    const dOB = await OrderbookContract.deploy(
+      wallet, tUSDC.address, tETH.address, admin,
+    ).send({ from: admin });
+    orderbook = dOB.contract;
+
+    await tUSDC.methods.mint_to_private(alice, MINT).send({ from: admin });
+    await tETH.methods.mint_to_private(alice, MINT_ETH).send({ from: admin });
+  });
+
+  after(async () => {
+    const stop = (wallet as unknown as { stop?: () => Promise<void> }).stop;
+    if (typeof stop === "function") await stop.call(wallet);
+  });
+
+  it("submit then cancel restores alice's private balance", { timeout: 600_000 }, async () => {
+    const before = await readPrivateBalance(tUSDC, alice);
+    const orderNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .send({ from: alice });
+
+    assert.equal(await readPrivateBalance(tUSDC, alice), before - ORDER_USDC, "escrowed");
+
+    // nonce MUST be 0n: cancel_order calls Token.transfer_public_to_private with
+    // from=orderbook.address; because from == msg_sender (self-call), the
+    // authorize_once macro requires nonce == 0.
+    await orderbook.methods
+      .cancel_order(orderNonce, 0n)
+      .send({ from: alice });
+
+    assert.equal(await readPrivateBalance(tUSDC, alice), before, "private balance fully restored");
+    assert.equal(
+      await readPublicBalance(tUSDC, orderbook.address, admin), 0n,
+      "orderbook public escrow drained back to zero",
+    );
+  });
+
+  it("cancel returns the correct token on the ask side", { timeout: 600_000 }, async () => {
+    const beforeETH = await readPrivateBalance(tETH, alice);
+    const beforeUSDC = await readPrivateBalance(tUSDC, alice);
+    const orderNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(SIDE_B_TO_A, ORDER_ETH, PRICE_2, randomField(), orderNonce)
+      .send({ from: alice });
+    await orderbook.methods
+      .cancel_order(orderNonce, 0n)
+      .send({ from: alice });
+
+    assert.equal(await readPrivateBalance(tETH, alice), beforeETH, "tETH restored");
+    assert.equal(await readPrivateBalance(tUSDC, alice), beforeUSDC, "tUSDC untouched");
+  });
+
+  it("cancelling one of two orders leaves the other resting", { timeout: 600_000 }, async () => {
+    const keepNonce = randomField();
+    const dropNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), keepNonce)
+      .send({ from: alice });
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), dropNonce)
+      .send({ from: alice });
+
+    const escrowBoth = await readPublicBalance(tUSDC, orderbook.address, admin);
+    assert.equal(escrowBoth, 2n * ORDER_USDC, "both orders escrowed");
+
+    await orderbook.methods
+      .cancel_order(dropNonce, 0n)
+      .send({ from: alice });
+
+    assert.equal(
+      await readPublicBalance(tUSDC, orderbook.address, admin), ORDER_USDC,
+      "exactly one order's escrow remains",
+    );
+
+    const sim = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+    const nonces = extractNonces(sim.result);
+    assert.ok(nonces.includes(keepNonce), "the kept order is still listed");
+    assert.ok(!nonces.includes(dropNonce), "the cancelled order is gone");
+  });
+
+  it("double cancel of the same order fails", { timeout: 600_000 }, async () => {
+    const orderNonce = randomField();
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .send({ from: alice });
+    await orderbook.methods
+      .cancel_order(orderNonce, 0n)
+      .send({ from: alice });
+
+    await assert.rejects(
+      orderbook.methods.cancel_order(orderNonce, 0n).send({ from: alice }),
+      /order not found/i,
+      "second cancel of the same order must revert",
+    );
+  });
+
+  it("a non-owner cannot cancel another maker's order", { timeout: 600_000 }, async () => {
+    const orderNonce = randomField();
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .send({ from: alice });
+
+    await assert.rejects(
+      orderbook.methods.cancel_order(orderNonce, 0n).send({ from: bob }),
+      /order not found/i,
+      "bob cannot cancel alice's order (her PrivateSet yields no match for him)",
+    );
+
+    // Clean up so the suite leaves no resting escrow.
+    await orderbook.methods.cancel_order(orderNonce, 0n).send({ from: alice });
   });
 });
