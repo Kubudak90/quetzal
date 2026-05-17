@@ -176,3 +176,37 @@ unconstrained fn constructor_records_contract_addresses() {
     assert(stored_b == token_b, "stored token_b must round-trip");
     assert(stored_clearing == clearing, "stored clearing must round-trip");
 }
+
+// ============================ CANCEL ORDER + GET ORDERS ============================
+// Only paths that fail BEFORE the cross-contract Token call can run in pure TXE.
+// cancelling when no order exists fires "order not found" during note retrieval,
+// before any token-contract call is attempted. get_orders on a fresh account is
+// a pure utility getter with no cross-contract calls at all.
+
+#[test(should_fail_with = "order not found")]
+unconstrained fn cancel_order_rejects_unknown_nonce() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Placeholder addresses are fine: the "order not found" assertion fires during note
+    // retrieval, before any token-contract call is attempted.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, deployer);
+
+    let maker = env.create_light_account();
+
+    // No orders were ever submitted, so cancelling any nonce must revert.
+    env.call_private(maker, Orderbook::at(orderbook).cancel_order(0x1234, 0));
+}
+
+#[test]
+unconstrained fn get_orders_empty_for_fresh_account() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, deployer);
+
+    let owner = env.create_light_account();
+    let orders = env.execute_utility(Orderbook::at(orderbook).get_orders(owner));
+
+    assert(orders.len() == 0, "a fresh account must have no resting orders");
+}
