@@ -9,11 +9,18 @@ pub contract Orderbook {
             storage::storage,
         },
         messages::message_delivery::MessageDelivery,
+        note::{
+            constants::MAX_NOTES_PER_PAGE,
+            note_getter_options::NoteGetterOptions,
+            note_interface::NoteProperties,
+            note_viewer_options::NoteViewerOptions,
+        },
         protocol::{
             address::AztecAddress,
             traits::{Deserialize, Packable, Serialize},
         },
         state_vars::{Owned, PrivateSet, PublicImmutable, PublicMutable},
+        utils::comparison::Comparator,
     };
 
     use token::Token;
@@ -182,6 +189,64 @@ pub contract Orderbook {
         assert(epoch.state == EPOCH_STATE_OPEN, "epoch is not OPEN");
     }
 
+    // ============================ ORDER CANCELLATION ============================
+
+    /// Cancel a resting order and return its escrow to the maker's PRIVATE balance.
+    ///
+    /// Flow:
+    /// 1. Retrieve (and nullify) the caller's `OrderNote` whose identity nonce equals
+    ///    `order_nonce`. Exactly one note must match.
+    /// 2. Read the escrowed token address from public-immutable storage, decided by the
+    ///    note's `side` (false -> token A, true -> token B) - identical to `submit_order`.
+    /// 3. Call `Token.transfer_public_to_private` to move `amount_in` of that token from
+    ///    the orderbook's PUBLIC balance back into the maker's PRIVATE balance. Because
+    ///    `from` is this contract and this contract is the caller, the Token's
+    ///    `authorize_once("from", _nonce)` guard passes without an authwit.
+    /// 4. Enqueue the `_assert_epoch_open` callback so the whole tx reverts if the epoch
+    ///    is no longer OPEN at mine time.
+    ///
+    /// # Arguments
+    /// - `order_nonce`: the per-order identity nonce embedded in the target `OrderNote`
+    ///   (the same value passed as `order_nonce` to `submit_order`).
+    /// - `nonce`: authwit nonce for the inner `Token.transfer_public_to_private` call.
+    #[external("private")]
+    fn cancel_order(order_nonce: Field, nonce: Field) {
+        let maker = self.msg_sender();
+
+        // Retrieve + nullify the maker's resting order matching `order_nonce`. `pop_notes`
+        // both reads and nullifies in one constrained call, so a cancelled order can never
+        // be cancelled (or cleared) twice.
+        let options = NoteGetterOptions::new().select(
+            OrderNote::properties().nonce,
+            Comparator.EQ,
+            order_nonce,
+        ).set_limit(1);
+        let notes = self.storage.orders.at(maker).pop_notes(options);
+        assert(notes.len() == 1, "order not found");
+        let order = notes.get(0);
+
+        // Defence-in-depth: the per-owner PrivateSet already scopes retrieval to `maker`.
+        assert(order.owner == maker, "not order owner");
+
+        let token_addr: AztecAddress = if order.side {
+            self.storage.token_b_addr.read()
+        } else {
+            self.storage.token_a_addr.read()
+        };
+
+        // Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
+        self.call(Token::at(token_addr).transfer_public_to_private(
+            self.address,
+            maker,
+            order.amount_in,
+            nonce,
+        ));
+
+        // Defer the OPEN-state check to public execution (PublicMutable is not readable
+        // from private context), atomic with the rest of the tx.
+        self.enqueue_self._assert_epoch_open();
+    }
+
     // ============================ UNCONSTRAINED GETTERS ============================
     // These utility functions exist so TXE tests (and off-chain callers) can read state
     // without requiring an on-chain transaction.
@@ -204,6 +269,18 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_clearing_addr() -> AztecAddress {
         self.storage.clearing_addr.read()
+    }
+
+    /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is
+    /// passed explicitly rather than read from `msg_sender` because utility functions are
+    /// simulated, and only the owner's PXE holds the encrypted notes to resolve.
+    ///
+    /// Note: in aztec-nr v4.2.0 a `PrivateSet` in a `UtilityContext` exposes only
+    /// `view_notes(NoteViewerOptions)` (there is no `get_notes` on the utility context),
+    /// and `view_notes` is bounded by `MAX_NOTES_PER_PAGE` (= 10), not `MAX_INPUT_NOTES`.
+    #[external("utility")]
+    unconstrained fn get_orders(owner: AztecAddress) -> BoundedVec<OrderNote, MAX_NOTES_PER_PAGE> {
+        self.storage.orders.at(owner).view_notes(NoteViewerOptions::new())
     }
 
     pub mod test;
