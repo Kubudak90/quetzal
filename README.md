@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 1 complete. Repo scaffolded; tUSDC and tETH test tokens deploy and pass mint/transfer tests in Noir TXE and TypeScript integration suites. CI defined. Week 2 begins the OrderbookContract.
+**Status:** Week 2 complete. OrderbookContract scaffolded; `submit_order` escrows user tokens via `Token.transfer_private_to_public`; 6 integration tests + 10 TXE tests green. Week 3 adds `cancel_order`, epoch transitions, and the CLI scaffold.
 
 ## Quickstart
 
@@ -49,6 +49,8 @@ pnpm test
 - [MVP Design Spec](docs/superpowers/specs/2026-05-14-zswap-aztec-mvp-design.md)
 - [Protocol Roadmap](docs/superpowers/specs/2026-05-14-zswap-aztec-roadmap.md)
 - [Week 1 Implementation Plan](docs/superpowers/plans/2026-05-14-zswap-aztec-week-01-foundation.md)
+- [Week 2 Orderbook Design](docs/superpowers/specs/2026-05-14-zswap-aztec-week-02-orderbook-design.md)
+- [Week 2 Implementation Plan](docs/superpowers/plans/2026-05-14-zswap-aztec-week-02-orderbook.md)
 
 ## License
 
