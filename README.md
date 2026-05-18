@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 2 complete. OrderbookContract scaffolded; `submit_order` escrows user tokens via `Token.transfer_private_to_public`; 6 integration tests + 10 TXE tests green. Week 3 adds `cancel_order`, epoch transitions, and the CLI scaffold.
+**Status:** Week 3 complete. `OrderbookContract` supports `submit_order` and `cancel_order` (escrow returned to the maker's private balance); a `zswap` CLI submits, lists, and cancels orders. 12 integration tests + 8 TXE tests green. Week 4 adds epoch transitions and the `ClearingContract`.
 
 ## Quickstart
 
@@ -36,6 +36,12 @@ scripts/dev.sh
 # Then run TypeScript integration tests
 # (codegen runs automatically before tests via the pretest hook)
 pnpm test
+
+# Use the CLI (after deploy-tokens.ts has written zswap.config.json)
+pnpm tsx scripts/deploy-tokens.ts
+pnpm --filter @zswap/cli zswap order --side buy --amount 100000000 --limit 2000000000000000000
+pnpm --filter @zswap/cli zswap orders
+pnpm --filter @zswap/cli zswap cancel --nonce <order-nonce-from-above>
 ```
 
 ## Testing
@@ -51,6 +57,8 @@ pnpm test
 - [Week 1 Implementation Plan](docs/superpowers/plans/2026-05-14-zswap-aztec-week-01-foundation.md)
 - [Week 2 Orderbook Design](docs/superpowers/specs/2026-05-14-zswap-aztec-week-02-orderbook-design.md)
 - [Week 2 Implementation Plan](docs/superpowers/plans/2026-05-14-zswap-aztec-week-02-orderbook.md)
+- [Week 3 cancel + CLI Design](docs/superpowers/specs/2026-05-17-zswap-aztec-week-03-cancel-cli-design.md)
+- [Week 3 Implementation Plan](docs/superpowers/plans/2026-05-17-zswap-aztec-week-03-cancel-cli.md)
 
 ## License
 
