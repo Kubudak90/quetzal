@@ -20,3 +20,6 @@ store/
 
 # pnpm
 .pnpm-debug.log
+
+# CLI runtime config (environment-specific contract addresses, written by deploy-tokens.ts)
+zswap.config.json

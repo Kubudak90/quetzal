@@ -1,0 +1,107 @@
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { writeFileSync, rmSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { AztecAddress } from "@aztec/aztec.js/addresses";
+import type { AztecNode } from "@aztec/aztec.js/node";
+import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+
+import { connectToSandbox } from "./helpers/sandbox.js";
+import { getTestWallets } from "./helpers/wallets.js";
+import { TokenContract } from "./generated/Token.js";
+import { OrderbookContract } from "./generated/Orderbook.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, "../..");
+const CLI_ENTRY = resolve(REPO_ROOT, "cli/src/index.ts");
+const CONFIG_PATH = resolve(REPO_ROOT, "zswap.config.cli-test.json");
+
+const ONE_TUSDC = 10n ** 6n;
+const MINT = 1_000n * ONE_TUSDC;
+const ORDER_AMOUNT = 100n * ONE_TUSDC;
+const PRICE_2 = 2_000_000_000_000_000_000n;
+
+/** Run the CLI as a child process from the repo root; return its stdout. */
+function zswap(...args: string[]): string {
+  return execFileSync(
+    process.execPath,
+    ["--import", "tsx", CLI_ENTRY, "--config", CONFIG_PATH, ...args],
+    { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+}
+
+describe("cli smoke (live integration)", () => {
+  let node: AztecNode;
+  let wallet: EmbeddedWallet;
+  let admin: AztecAddress;
+  let tUSDC: TokenContract;
+  let tETH: TokenContract;
+  let orderbook: OrderbookContract;
+
+  before(async () => {
+    node = await connectToSandbox();
+    const env = await getTestWallets(node, 1);
+    wallet = env.wallet;
+    admin = env.accounts[0]!;
+
+    const dU = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    tUSDC = dU.contract;
+
+    const dE = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    tETH = dE.contract;
+
+    const dOB = await OrderbookContract.deploy(
+      wallet, tUSDC.address, tETH.address, admin,
+    ).send({ from: admin });
+    orderbook = dOB.contract;
+
+    await tUSDC.methods.mint_to_private(admin, MINT).send({ from: admin });
+
+    writeFileSync(
+      CONFIG_PATH,
+      JSON.stringify(
+        {
+          nodeUrl: process.env.PXE_URL ?? process.env.AZTEC_NODE_URL ?? "http://localhost:8080",
+          tUSDC: tUSDC.address.toString(),
+          tETH: tETH.address.toString(),
+          orderbook: orderbook.address.toString(),
+          admin: admin.toString(),
+        },
+        null,
+        2,
+      ),
+    );
+  });
+
+  after(async () => {
+    rmSync(CONFIG_PATH, { force: true });
+    const stop = (wallet as unknown as { stop?: () => Promise<void> }).stop;
+    if (typeof stop === "function") await stop.call(wallet);
+  });
+
+  it("order -> orders -> cancel -> orders round-trip", { timeout: 600_000 }, () => {
+    const orderOut = zswap(
+      "order", "--side", "buy", "--amount", ORDER_AMOUNT.toString(), "--limit", PRICE_2.toString(),
+    );
+    const nonceMatch = orderOut.match(/order nonce:\s*(0x[0-9a-fA-F]+)/);
+    assert.ok(nonceMatch, `\`zswap order\` should print an order nonce; got:\n${orderOut}`);
+    const nonce = nonceMatch![1]!;
+
+    const listed = zswap("orders");
+    assert.match(listed, new RegExp(nonce, "i"), "the new order must appear in `zswap orders`");
+
+    const cancelOut = zswap("cancel", "--nonce", nonce);
+    assert.match(cancelOut, /cancelled/i, "`zswap cancel` should confirm cancellation");
+
+    const afterCancel = zswap("orders");
+    assert.match(afterCancel, /no resting orders/i, "the order list must be empty after cancel");
+  });
+});

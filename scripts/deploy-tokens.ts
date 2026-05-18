@@ -11,6 +11,8 @@
 // Usage:
 //   pnpm tsx scripts/deploy-tokens.ts
 //
+import { writeFileSync } from "node:fs";
+
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
@@ -66,18 +68,17 @@ async function main() {
     admin,
   ).send({ from: admin });
 
-  console.log(
-    JSON.stringify(
-      {
-        tUSDC: tokenA.contract.address.toString(),
-        tETH: tokenB.contract.address.toString(),
-        orderbook: deployedOB.contract.address.toString(),
-        admin: admin.toString(),
-      },
-      null,
-      2,
-    ),
-  );
+  const result = {
+    nodeUrl: NODE_URL,
+    tUSDC: tokenA.contract.address.toString(),
+    tETH: tokenB.contract.address.toString(),
+    orderbook: deployedOB.contract.address.toString(),
+    admin: admin.toString(),
+  };
+
+  // Persist for the CLI (zswap reads zswap.config.json by default).
+  writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
 
   await wallet.stop();
 }
