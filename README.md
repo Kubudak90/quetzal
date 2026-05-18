@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 5 complete. `LiquidityPool` is live: LPs `deposit` / `withdraw` against a constant-product AMM with private positions; reserves are public, positions are private. 23 integration tests + 21 TXE tests green. Week 5b adds the off-chain clearing aggregator.
+**Status:** Week 5b complete. The off-chain clearing aggregator (`@zswap/aggregator`) computes the frequent-batch-auction clearing — FIFO selection, uniform clearing price, the net imbalance through the AMM with the 0.3% LP fee. 23 aggregator unit tests + 23 integration tests + 21 TXE tests green. Week 5c wires an on-chain ClearingContract.
 
 ## Quickstart
 
@@ -67,6 +67,8 @@ pnpm --filter @zswap/cli zswap withdraw --nonce <position-nonce-from-above>
 - [Week 4 Implementation Plan](docs/superpowers/plans/2026-05-18-zswap-aztec-week-04-epoch-transitions.md)
 - [Week 5 Liquidity Pool Design](docs/superpowers/specs/2026-05-18-zswap-aztec-week-05-liquidity-pool-design.md)
 - [Week 5 Implementation Plan](docs/superpowers/plans/2026-05-18-zswap-aztec-week-05-liquidity-pool.md)
+- [Week 5b Clearing Aggregator Design](docs/superpowers/specs/2026-05-19-zswap-aztec-week-05b-clearing-aggregator-design.md)
+- [Week 5b Implementation Plan](docs/superpowers/plans/2026-05-19-zswap-aztec-week-05b-clearing-aggregator.md)
 
 ## License
 
