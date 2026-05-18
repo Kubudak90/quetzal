@@ -88,6 +88,23 @@ async function readPublicBalance(
   return BigInt(sim.result as bigint | number);
 }
 
+// Advance the L2 chain until its block height reaches `target`, by sending cheap
+// txs (each mints 1 unit to `minter`, mining at least one block). `node.getBlockNumber`
+// is the standard Aztec node RPC for the current height.
+// Uses mint_to_public to avoid exhausting the PXE's private note tagging window.
+async function mineUntilBlock(
+  node: AztecNode,
+  token: TokenContract,
+  minter: AztecAddress,
+  target: number,
+): Promise<void> {
+  let guard = 0;
+  while (Number(await node.getBlockNumber()) < target) {
+    if (++guard > 50) throw new Error("mineUntilBlock: exceeded 50 txs without reaching target");
+    await token.methods.mint_to_public(minter, 1n).send({ from: minter });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -378,5 +395,131 @@ describe("orderbook cancel_order (live integration)", () => {
 
     // Clean up so the suite leaves no resting escrow.
     await orderbook.methods.cancel_order(orderNonce, 0n).send({ from: alice });
+  });
+});
+
+describe("orderbook epoch transitions (live integration)", () => {
+  let node: AztecNode;
+  let wallet: EmbeddedWallet;
+  let admin: AztecAddress;
+  let alice: AztecAddress;
+  let tUSDC: TokenContract;
+  let tETH: TokenContract;
+  let orderbook: OrderbookContract;
+
+  const EPOCH_LEN = 12;
+  const MINT = 1_000n * ONE_TUSDC;
+  const ORDER_USDC = 100n * ONE_TUSDC;
+
+  before(async () => {
+    node = await connectToSandbox();
+    const env = await getTestWallets(node, 2);
+    wallet = env.wallet;
+    admin = env.accounts[0]!;
+    alice = env.accounts[1]!;
+
+    const dU = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    tUSDC = dU.contract;
+
+    const dE = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    tETH = dE.contract;
+
+    const dOB = await OrderbookContract.deploy(
+      wallet, tUSDC.address, tETH.address, EPOCH_LEN,
+    ).send({ from: admin });
+    orderbook = dOB.contract;
+
+    await tUSDC.methods.mint_to_private(alice, MINT).send({ from: admin });
+  });
+
+  after(async () => {
+    const stop = (wallet as unknown as { stop?: () => Promise<void> }).stop;
+    if (typeof stop === "function") await stop.call(wallet);
+  });
+
+  it("close_epoch reverts before the epoch has expired", { timeout: 600_000 }, async () => {
+    const epoch = await orderbook.methods.get_epoch().simulate({ from: admin });
+    const e = (epoch as { result: { closes_at_block: bigint } }).result;
+    assert.ok(
+      Number(await node.getBlockNumber()) < Number(e.closes_at_block),
+      "precondition: epoch not yet expired",
+    );
+    await assert.rejects(
+      orderbook.methods.close_epoch().send({ from: admin }),
+      /epoch has not expired/i,
+      "close_epoch must revert before closes_at_block",
+    );
+  });
+
+  it("close_epoch advances the epoch once it has expired", { timeout: 600_000 }, async () => {
+    const before = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { epoch_id: bigint; closes_at_block: bigint };
+    };
+    await mineUntilBlock(node, tUSDC, admin, Number(before.result.closes_at_block));
+
+    await orderbook.methods.close_epoch().send({ from: admin });
+
+    const after = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { epoch_id: bigint; opened_at_block: bigint; closes_at_block: bigint };
+    };
+    assert.equal(
+      after.result.epoch_id, before.result.epoch_id + 1n,
+      "epoch_id must increment",
+    );
+    assert.equal(
+      after.result.closes_at_block - after.result.opened_at_block, BigInt(EPOCH_LEN),
+      "new epoch closes EPOCH_LEN blocks after opening",
+    );
+  });
+
+  it("submit_order is blocked in the expired window, then works in the new epoch", { timeout: 600_000 }, async () => {
+    // Drive the current epoch to expiry.
+    const epoch = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { closes_at_block: bigint };
+    };
+    await mineUntilBlock(node, tUSDC, admin, Number(epoch.result.closes_at_block));
+
+    // submit_order must revert while the epoch is expired-but-not-closed.
+    await assert.rejects(
+      orderbook.methods
+        .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField())
+        .send({ from: alice }),
+      /epoch has expired/i,
+      "submit_order must revert once the epoch window has elapsed",
+    );
+
+    // Close the epoch, then submit_order works again in the fresh epoch.
+    await orderbook.methods.close_epoch().send({ from: admin });
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField())
+      .send({ from: alice });
+  });
+
+  it("resting orders survive an epoch boundary", { timeout: 600_000 }, async () => {
+    // One order rests in the current (fresh) epoch.
+    const orderNonce = randomField();
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .send({ from: alice });
+
+    const escrowBefore = await readPublicBalance(tUSDC, orderbook.address, admin);
+    assert.ok(escrowBefore > 0n, "precondition: the submitted order escrowed a non-zero balance");
+
+    // Expire and close the epoch.
+    const epoch = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { closes_at_block: bigint };
+    };
+    await mineUntilBlock(node, tUSDC, admin, Number(epoch.result.closes_at_block));
+    await orderbook.methods.close_epoch().send({ from: admin });
+
+    // The order's escrow is untouched by the epoch advance.
+    const escrowAfter = await readPublicBalance(tUSDC, orderbook.address, admin);
+    assert.equal(escrowAfter, escrowBefore, "close_epoch must not touch resting escrow");
   });
 });
