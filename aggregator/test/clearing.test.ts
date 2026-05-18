@@ -145,3 +145,121 @@ describe("findClearingPrice", () => {
     assert.ok(abs <= p! / 1_000n, `residual ${abs} small vs P* ${p}`);
   });
 });
+
+import { computeClearing } from "../src/clearing.js";
+
+describe("computeClearing", () => {
+  const pool: PoolSnapshot = {
+    reserveA: 1_000_000_000_000n,
+    reserveB: 1_000_000_000_000n,
+    lpSupply: 1_000_000_000_000n,
+  };
+
+  it("empty order list -> epoch skipped, reserves unchanged", () => {
+    const r = computeClearing(pool, []);
+    assert.equal(r.cleared, false);
+    assert.equal(r.clearingPrice, 0n);
+    assert.deepEqual(r.fills, []);
+    assert.equal(r.newReserveA, pool.reserveA);
+    assert.equal(r.newReserveB, pool.reserveB);
+    assert.equal(r.feeAPerShareIncrement, 0n);
+    assert.equal(r.feeBPerShareIncrement, 0n);
+  });
+
+  it("a degenerate (empty) pool -> epoch skipped", () => {
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 1_000n, limitPrice: SCALE, submittedAtBlock: 1, orderNonce: 1n },
+    ];
+    const r = computeClearing({ reserveA: 0n, reserveB: 0n, lpSupply: 0n }, batch);
+    assert.equal(r.cleared, false);
+  });
+
+  it("one-sided book (buys only): net token A swaps through the AMM, all buys filled", () => {
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 5_000_000n, limitPrice: 5n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: false, amountIn: 3_000_000n, limitPrice: 5n * SCALE, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    assert.equal(r.fills.length, 2, "both buys filled");
+    assert.ok(r.newReserveA > pool.reserveA, "reserve A grew (token A flowed in)");
+    assert.ok(r.newReserveB < pool.reserveB, "reserve B fell");
+    assert.ok(r.feeAPerShareIncrement > 0n, "LP fee accrued in token A");
+    assert.equal(r.feeBPerShareIncrement, 0n);
+    // The fee is withheld from reserves, so k cannot grow; it shrinks only by dust.
+    assert.ok(r.newReserveA * r.newReserveB <= pool.reserveA * pool.reserveB, "k does not grow");
+  });
+
+  it("a buy below P* is gated out and carries over", () => {
+    // A generous buy and a sell clear well above 1.0; a second buy with a low
+    // limit (0.5) is ineligible at that P* and must be absent from fills.
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 8_000_000n, limitPrice: 10n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 1_000_000n, limitPrice: SCALE / 10n, submittedAtBlock: 2, orderNonce: 2n },
+      { side: false, amountIn: 1_000_000n, limitPrice: SCALE / 2n, submittedAtBlock: 3, orderNonce: 3n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    assert.ok(r.clearingPrice > SCALE / 2n, "P* is above the gated buy's limit");
+    const nonces = r.fills.map((f) => f.orderNonce);
+    assert.ok(!nonces.includes(3n), "the low-limit buy is gated out");
+  });
+
+  it("the 128-cap keeps the oldest, drops the newest", () => {
+    const batch: ClearingOrder[] = [];
+    for (let i = 0; i < 130; i++) {
+      // Even i = buy @ 10.0, odd i = sell @ 0.1 -> they cross for any p in [0.1, 10].
+      const isBuy = i % 2 === 0;
+      batch.push({
+        side: !isBuy,
+        amountIn: 1_000_000n,
+        limitPrice: isBuy ? 10n * SCALE : SCALE / 10n,
+        submittedAtBlock: i,
+        orderNonce: BigInt(i),
+      });
+    }
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    assert.ok(r.fills.length <= 128, "no more than 128 orders cleared");
+    const nonces = r.fills.map((f) => f.orderNonce);
+    assert.ok(!nonces.includes(128n) && !nonces.includes(129n), "the two newest are not cleared");
+  });
+
+  it("fee-per-share increment equals fee / lpSupply", () => {
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 9_000_000n, limitPrice: 5n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 1_000_000n, limitPrice: SCALE / 5n, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    // Re-derive the net swap at P* and check the fee maths.
+    const ev = clearingAt(pool, batch, r.clearingPrice);
+    const expected = (ev.swap.feeAmountA * SCALE) / pool.lpSupply;
+    assert.equal(r.feeAPerShareIncrement, expected);
+  });
+
+  it("is deterministic - identical inputs yield deep-equal output", () => {
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 4_000_000n, limitPrice: 3n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 2_000_000n, limitPrice: SCALE / 3n, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    assert.deepEqual(computeClearing(pool, batch), computeClearing(pool, batch));
+  });
+
+  it("value conservation: every filled buy gets B, every sell gets A; k does not grow", () => {
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 6_000_000n, limitPrice: 4n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 3_000_000n, limitPrice: SCALE / 4n, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    for (const f of r.fills) {
+      assert.ok(f.amountOut > 0n, `fill ${f.orderNonce} received output`);
+      assert.ok(f.filledIn > 0n, "full fill");
+    }
+    assert.ok(
+      r.newReserveA * r.newReserveB <= pool.reserveA * pool.reserveB,
+      "constant product does not grow (fee withheld from reserves; shrinks only by dust)",
+    );
+  });
+});

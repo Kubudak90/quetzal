@@ -162,12 +162,13 @@ export function clearingAt(pool: PoolSnapshot, batch: ClearingOrder[], p: bigint
 /**
  * Step 3: binary-search the uniform clearing price P* where the net flow's AMM
  * execution price equals P* itself. Returns null when the pool is degenerate,
- * when the search band does not bracket a root, or on non-convergence - the
- * caller treats null as "epoch skipped".
+ * when the search band does not bracket a root, when the book cannot cross, or
+ * on non-convergence - the caller treats null as "epoch skipped".
  *
- * The residual `realizedP(P) - P` is treated as monotonically decreasing in P
- * over the band: at a low P many buys / few sells are eligible (large positive
- * netA, high realized price, positive residual); at a high P the reverse.
+ * On the region where orders are eligible the residual `realizedP(P) - P` is
+ * monotonically decreasing. Outside it (every order gated out) the residual
+ * would be a spurious 0; `probe` instead reports a direction so the search is
+ * steered back onto the eligible region.
  */
 export function findClearingPrice(pool: PoolSnapshot, batch: ClearingOrder[]): bigint | null {
   if (pool.reserveA === 0n || pool.reserveB === 0n) return null;
@@ -175,18 +176,106 @@ export function findClearingPrice(pool: PoolSnapshot, batch: ClearingOrder[]): b
   let lo = spot / PRICE_BAND;
   if (lo < 1n) lo = 1n;
   let hi = spot * PRICE_BAND;
-  const residual = (p: bigint): bigint => clearingAt(pool, batch, p).swap.realizedP - p;
 
-  // The band must bracket a root: residual(lo) >= 0 >= residual(hi).
-  if (residual(lo) < 0n || residual(hi) > 0n) return null;
+  const hasBuys = batch.some((o) => !o.side);
+  const hasSells = batch.some((o) => o.side);
+
+  // Probe a price: a residual when orders are eligible, else a direction
+  // ("tooHigh" / "tooLow") or "gap" (a mixed book whose sides never overlap).
+  type Probe = { residual: bigint } | { dir: "tooHigh" | "tooLow" | "gap" };
+  const probe = (p: bigint): Probe => {
+    const ev = clearingAt(pool, batch, p);
+    if (ev.eligibleBuys.length === 0 && ev.eligibleSells.length === 0) {
+      if (hasBuys && hasSells) return { dir: "gap" };
+      if (hasBuys) return { dir: "tooHigh" }; // buys-only: every buy limit < p
+      return { dir: "tooLow" }; // sells-only: every sell limit > p
+    }
+    return { residual: ev.swap.realizedP - p };
+  };
+
+  const loP = probe(lo);
+  const hiP = probe(hi);
+  if (("dir" in loP && loP.dir === "gap") || ("dir" in hiP && hiP.dir === "gap")) return null;
+  // lo must sit at-or-below the root; hi at-or-above.
+  const loOk = "dir" in loP ? loP.dir === "tooLow" : loP.residual >= 0n;
+  const hiOk = "dir" in hiP ? hiP.dir === "tooHigh" : hiP.residual <= 0n;
+  if (!loOk || !hiOk) return null;
 
   for (let i = 0; i < MAX_ITERS; i++) {
     const mid = (lo + hi) / 2n;
-    const r = residual(mid);
-    if (r >= -TOLERANCE && r <= TOLERANCE) return mid;
-    if (r > 0n) lo = mid;
-    else hi = mid;
-    if (hi - lo <= 1n) return mid;
+    const m = probe(mid);
+    if ("dir" in m) {
+      if (m.dir === "gap") return null;
+      if (m.dir === "tooLow") lo = mid;
+      else hi = mid;
+    } else {
+      if (m.residual >= -TOLERANCE && m.residual <= TOLERANCE) return mid;
+      if (m.residual > 0n) lo = mid;
+      else hi = mid;
+    }
+    if (hi - lo <= 1n) {
+      // Settle on an endpoint that actually has eligible orders.
+      if ("residual" in probe(lo)) return lo;
+      if ("residual" in probe(hi)) return hi;
+      return null;
+    }
   }
   return null; // did not converge within MAX_ITERS
+}
+
+/** The "epoch skipped" result - reserves unchanged, nothing cleared. */
+function skipped(pool: PoolSnapshot): ClearingResult {
+  return {
+    cleared: false,
+    clearingPrice: 0n,
+    fills: [],
+    newReserveA: pool.reserveA,
+    newReserveB: pool.reserveB,
+    feeAPerShareIncrement: 0n,
+    feeBPerShareIncrement: 0n,
+  };
+}
+
+/**
+ * Clear one epoch: select the FIFO batch, discover the uniform clearing price,
+ * cross every eligible order fully at that price, route the net imbalance through
+ * the AMM, and accrue the 0.3% fee to LPs.
+ *
+ * Returns `{ cleared: false, ... }` (a safe no-op) when the batch is empty, the
+ * price search does not converge, or no order is eligible at P*.
+ */
+export function computeClearing(pool: PoolSnapshot, orders: ClearingOrder[]): ClearingResult {
+  const batch = selectBatch(orders);
+  if (batch.length === 0) return skipped(pool);
+
+  const pStar = findClearingPrice(pool, batch);
+  if (pStar === null) return skipped(pool);
+
+  const ev = clearingAt(pool, batch, pStar);
+  if (ev.eligibleBuys.length === 0 && ev.eligibleSells.length === 0) return skipped(pool);
+
+  const fills: OrderFill[] = [];
+  for (const o of ev.eligibleBuys) {
+    // A buy pays `amountIn` token A, receives token A / P* of token B.
+    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut: mulDiv(o.amountIn, SCALE, pStar) });
+  }
+  for (const o of ev.eligibleSells) {
+    // A sell pays `amountIn` token B, receives token B * P* of token A.
+    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut: mulDiv(o.amountIn, pStar, SCALE) });
+  }
+
+  const feeAPerShareIncrement =
+    pool.lpSupply === 0n ? 0n : mulDiv(ev.swap.feeAmountA, SCALE, pool.lpSupply);
+  const feeBPerShareIncrement =
+    pool.lpSupply === 0n ? 0n : mulDiv(ev.swap.feeAmountB, SCALE, pool.lpSupply);
+
+  return {
+    cleared: true,
+    clearingPrice: pStar,
+    fills,
+    newReserveA: ev.swap.newReserveA,
+    newReserveB: ev.swap.newReserveB,
+    feeAPerShareIncrement,
+    feeBPerShareIncrement,
+  };
 }
