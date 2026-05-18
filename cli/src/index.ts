@@ -4,6 +4,9 @@ import { registerOrder } from "./commands/order.js";
 import { registerCancel } from "./commands/cancel.js";
 import { registerOrders } from "./commands/orders.js";
 import { registerCloseEpoch } from "./commands/close-epoch.js";
+import { registerDeposit } from "./commands/deposit.js";
+import { registerWithdraw } from "./commands/withdraw.js";
+import { registerPositions } from "./commands/positions.js";
 
 const program = new Command();
 program
@@ -16,6 +19,9 @@ registerOrder(program);
 registerCancel(program);
 registerOrders(program);
 registerCloseEpoch(program);
+registerDeposit(program);
+registerWithdraw(program);
+registerPositions(program);
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e instanceof Error ? e.message : String(e));

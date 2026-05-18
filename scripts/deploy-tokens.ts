@@ -19,6 +19,7 @@ import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/test
 
 import { TokenContract } from "../tests/integration/generated/Token.js";
 import { OrderbookContract } from "../tests/integration/generated/Orderbook.js";
+import { LiquidityPoolContract } from "../tests/integration/generated/LiquidityPool.js";
 
 const NODE_URL = process.env.PXE_URL ?? process.env.AZTEC_NODE_URL ?? "http://localhost:8080";
 
@@ -68,11 +69,18 @@ async function main() {
     100,
   ).send({ from: admin });
 
+  const deployedPool = await LiquidityPoolContract.deploy(
+    wallet,
+    tokenA.contract.address,
+    tokenB.contract.address,
+  ).send({ from: admin });
+
   const result = {
     nodeUrl: NODE_URL,
     tUSDC: tokenA.contract.address.toString(),
     tETH: tokenB.contract.address.toString(),
     orderbook: deployedOB.contract.address.toString(),
+    pool: deployedPool.contract.address.toString(),
     admin: admin.toString(),
   };
 

@@ -12,6 +12,7 @@ import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
 import { TokenContract } from "./generated/Token.js";
 import { OrderbookContract } from "./generated/Orderbook.js";
+import { LiquidityPoolContract } from "./generated/LiquidityPool.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
@@ -19,7 +20,9 @@ const CLI_ENTRY = resolve(REPO_ROOT, "cli/src/index.ts");
 const CONFIG_PATH = resolve(REPO_ROOT, "zswap.config.cli-test.json");
 
 const ONE_TUSDC = 10n ** 6n;
+const ONE_TETH = 10n ** 18n;
 const MINT = 1_000n * ONE_TUSDC;
+const MINT_ETH = 10n * ONE_TETH; // 10 tETH — covers the 1 tETH deposit smoke test
 const ORDER_AMOUNT = 100n * ONE_TUSDC;
 const PRICE_2 = 2_000_000_000_000_000_000n;
 
@@ -39,6 +42,7 @@ describe("cli smoke (live integration)", () => {
   let tUSDC: TokenContract;
   let tETH: TokenContract;
   let orderbook: OrderbookContract;
+  let pool: LiquidityPoolContract;
 
   before(async () => {
     node = await connectToSandbox();
@@ -63,7 +67,13 @@ describe("cli smoke (live integration)", () => {
     ).send({ from: admin });
     orderbook = dOB.contract;
 
+    const dP = await LiquidityPoolContract.deploy(
+      wallet, tUSDC.address, tETH.address,
+    ).send({ from: admin });
+    pool = dP.contract;
+
     await tUSDC.methods.mint_to_private(admin, MINT).send({ from: admin });
+    await tETH.methods.mint_to_private(admin, MINT_ETH).send({ from: admin });
 
     writeFileSync(
       CONFIG_PATH,
@@ -73,6 +83,7 @@ describe("cli smoke (live integration)", () => {
           tUSDC: tUSDC.address.toString(),
           tETH: tETH.address.toString(),
           orderbook: orderbook.address.toString(),
+          pool: pool.address.toString(),
           admin: admin.toString(),
         },
         null,
@@ -127,5 +138,23 @@ describe("cli smoke (live integration)", () => {
       result: { epoch_id: bigint };
     };
     assert.equal(after.result.epoch_id, before.result.epoch_id + 1n, "epoch_id must increment");
+  });
+
+  it("deposit -> positions -> withdraw round-trip", { timeout: 600_000 }, async () => {
+    const depositOut = zswap(
+      "deposit", "--amount-a", (1000n * 10n ** 6n).toString(), "--amount-b", (10n ** 18n).toString(),
+    );
+    const nonceMatch = depositOut.match(/position nonce:\s*(0x[0-9a-fA-F]+)/);
+    assert.ok(nonceMatch, `\`zswap deposit\` should print a position nonce; got:\n${depositOut}`);
+    const nonce = nonceMatch![1]!;
+
+    const listed = zswap("positions");
+    assert.match(listed, new RegExp(nonce, "i"), "the new position must appear in `zswap positions`");
+
+    const withdrawOut = zswap("withdraw", "--nonce", nonce);
+    assert.match(withdrawOut, /withdrawn/i, "`zswap withdraw` should confirm the withdrawal");
+
+    const afterList = zswap("positions");
+    assert.match(afterList, /no LP positions/i, "positions must be empty after withdraw");
   });
 });

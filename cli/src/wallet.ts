@@ -3,6 +3,7 @@ import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
 import { OrderbookContract } from "../../tests/integration/generated/Orderbook.js";
+import { LiquidityPoolContract } from "../../tests/integration/generated/LiquidityPool.js";
 import { TokenContract } from "../../tests/integration/generated/Token.js";
 import type { ZswapConfig } from "./config.js";
 
@@ -41,8 +42,9 @@ export async function openCli(config: ZswapConfig, accountIndex: number): Promis
     );
   }
 
-  const contracts: [string, "orderbook" | "tUSDC" | "tETH"][] = [
+  const contracts: [string, "orderbook" | "pool" | "tUSDC" | "tETH"][] = [
     [config.orderbook, "orderbook"],
+    [config.pool, "pool"],
     [config.tUSDC, "tUSDC"],
     [config.tETH, "tETH"],
   ];
@@ -51,7 +53,10 @@ export async function openCli(config: ZswapConfig, accountIndex: number): Promis
     if (!instance) {
       throw new Error(`${label} contract not found on-chain at ${addr} — is the config stale?`);
     }
-    const artifact = label === "orderbook" ? OrderbookContract.artifact : TokenContract.artifact;
+    let artifact;
+    if (label === "orderbook") artifact = OrderbookContract.artifact;
+    else if (label === "pool") artifact = LiquidityPoolContract.artifact;
+    else artifact = TokenContract.artifact;
     await wallet.registerContract(instance, artifact);
   }
 

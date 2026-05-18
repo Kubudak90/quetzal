@@ -6,10 +6,11 @@ export interface ZswapConfig {
   tUSDC: string;
   tETH: string;
   orderbook: string;
+  pool: string;
   admin: string;
 }
 
-const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin"];
+const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
 
 /** Load and validate zswap.config.json (written by scripts/deploy-tokens.ts). */
 export function loadConfig(path = "zswap.config.json"): ZswapConfig {
