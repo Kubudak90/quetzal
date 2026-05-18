@@ -102,3 +102,42 @@ unconstrained fn integer_sqrt_is_correct() {
     let big: u128 = 1_000_000_000_000_000_000_000_000;
     assert(integer_sqrt(big) == 1_000_000_000_000 as u128, "sqrt(1e24)");
 }
+
+// A zeroed PoolState, usable as the `hint` for first-deposit / negative tests.
+unconstrained fn zero_pool_state() -> PoolState {
+    PoolState {
+        reserve_a: 0 as u128,
+        reserve_b: 0 as u128,
+        lp_supply: 0 as u128,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    }
+}
+
+#[test(should_fail_with = "amount_a must be positive")]
+unconstrained fn deposit_rejects_zero_amount_a() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+    let lp = env.create_light_account();
+
+    // amount_a = 0 must revert before any token-contract call.
+    env.call_private(
+        lp,
+        LiquidityPool::at(pool).deposit(0 as u128, 100 as u128, zero_pool_state(), 0, 0, 0),
+    );
+}
+
+#[test(should_fail_with = "amount_b must be positive")]
+unconstrained fn deposit_rejects_zero_amount_b() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+    let lp = env.create_light_account();
+
+    // amount_a passes; amount_b = 0 must revert.
+    env.call_private(
+        lp,
+        LiquidityPool::at(pool).deposit(100 as u128, 0 as u128, zero_pool_state(), 0, 0, 0),
+    );
+}

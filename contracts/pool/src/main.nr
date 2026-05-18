@@ -119,6 +119,91 @@ pub contract LiquidityPool {
         });
     }
 
+    // ============================ DEPOSIT ============================
+
+    /// Supply liquidity. `amount_a` / `amount_b` are the maxima the LP is willing to
+    /// provide; the V2 ratio match uses only the proportional `used_a` / `used_b` and
+    /// escrows exactly those (the unmatched remainder never leaves the LP's wallet).
+    ///
+    /// `hint` is the caller's snapshot of the live `PoolState`; the privately-computed
+    /// shares are validated by `_apply_deposit`, which asserts the hint still matches
+    /// the actual state at mine time.
+    ///
+    /// Note on overflow: the share-math products are plain `u128`. For the MVP's
+    /// test-token amounts they never overflow; a pathologically large deposit would
+    /// overflow and revert (a safe failure - no fund loss, no share inflation).
+    #[external("private")]
+    fn deposit(
+        amount_a: u128,
+        amount_b: u128,
+        hint: PoolState,
+        nonce_a: Field,
+        nonce_b: Field,
+        position_nonce: Field,
+    ) {
+        assert(amount_a > 0 as u128, "amount_a must be positive");
+        assert(amount_b > 0 as u128, "amount_b must be positive");
+        let lp = self.msg_sender();
+
+        let mut used_a = amount_a;
+        let mut used_b = amount_b;
+        let mut shares: u128 = 0 as u128;
+        if hint.lp_supply == 0 as u128 {
+            // First deposit sets the pool ratio; both maxima are used in full.
+            shares = integer_sqrt(amount_a * amount_b);
+            assert(shares > 0 as u128, "initial deposit too small");
+        } else {
+            let shares_from_a = amount_a * hint.lp_supply / hint.reserve_a;
+            let shares_from_b = amount_b * hint.lp_supply / hint.reserve_b;
+            if shares_from_a <= shares_from_b {
+                shares = shares_from_a;
+                used_a = amount_a;
+                used_b = amount_a * hint.reserve_b / hint.reserve_a;
+            } else {
+                shares = shares_from_b;
+                used_b = amount_b;
+                used_a = amount_b * hint.reserve_a / hint.reserve_b;
+            }
+            assert(shares > 0 as u128, "deposit too small for any shares");
+        }
+
+        // Escrow exactly the used amounts: LP private balance -> pool PUBLIC balance.
+        let token_a = self.storage.token_a_addr.read();
+        let token_b = self.storage.token_b_addr.read();
+        self.call(Token::at(token_a).transfer_private_to_public(lp, self.address, used_a, nonce_a));
+        self.call(Token::at(token_b).transfer_private_to_public(lp, self.address, used_b, nonce_b));
+
+        // Commit the private position note to the LP's set.
+        let position = PositionNote {
+            lp_share: shares,
+            cum_fee_a_per_share_at_deposit: hint.cum_fee_a_per_share,
+            cum_fee_b_per_share_at_deposit: hint.cum_fee_b_per_share,
+            nonce: position_nonce,
+            owner: lp,
+        };
+        self.storage.positions.at(lp).insert(position).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
+
+        // Apply the reserve mutation publicly, validating the hint against live state.
+        self.enqueue_self._apply_deposit(hint, used_a, used_b, shares);
+    }
+
+    /// Public callback: assert the deposit's hint still matches live state, then add
+    /// the used amounts and minted shares to the pool. `only_self` - enqueued by
+    /// `deposit` only.
+    #[external("public")]
+    #[only_self]
+    fn _apply_deposit(hint: PoolState, used_a: u128, used_b: u128, shares: u128) {
+        let actual = self.storage.pool_state.read();
+        assert(actual == hint, "pool state changed; retry deposit");
+        self.storage.pool_state.write(PoolState {
+            reserve_a: actual.reserve_a + used_a,
+            reserve_b: actual.reserve_b + used_b,
+            lp_supply: actual.lp_supply + shares,
+            cum_fee_a_per_share: actual.cum_fee_a_per_share,
+            cum_fee_b_per_share: actual.cum_fee_b_per_share,
+        });
+    }
+
     // ============================ UNCONSTRAINED GETTERS ============================
 
     #[external("utility")]
