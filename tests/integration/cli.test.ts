@@ -87,6 +87,15 @@ describe("cli smoke (live integration)", () => {
     if (typeof stop === "function") await stop.call(wallet);
   });
 
+  // Advance the L2 chain to `target` by sending cheap mint txs (each mines >=1 block).
+  async function mineUntilBlock(target: number): Promise<void> {
+    let guard = 0;
+    while (Number(await node.getBlockNumber()) < target) {
+      if (++guard > 50) throw new Error("mineUntilBlock: exceeded 50 txs");
+      await tUSDC.methods.mint_to_public(admin, 1n).send({ from: admin });
+    }
+  }
+
   it("order -> orders -> cancel -> orders round-trip", { timeout: 600_000 }, () => {
     const orderOut = zswap(
       "order", "--side", "buy", "--amount", ORDER_AMOUNT.toString(), "--limit", PRICE_2.toString(),
@@ -103,5 +112,20 @@ describe("cli smoke (live integration)", () => {
 
     const afterCancel = zswap("orders");
     assert.match(afterCancel, /no resting orders/i, "the order list must be empty after cancel");
+  });
+
+  it("close-epoch advances the epoch once it has expired", { timeout: 600_000 }, async () => {
+    const before = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { epoch_id: bigint; closes_at_block: bigint };
+    };
+    await mineUntilBlock(Number(before.result.closes_at_block));
+
+    const out = zswap("close-epoch");
+    assert.match(out, /epoch advanced/i, "`zswap close-epoch` should confirm the advance");
+
+    const after = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
+      result: { epoch_id: bigint };
+    };
+    assert.equal(after.result.epoch_id, before.result.epoch_id + 1n, "epoch_id must increment");
   });
 });
