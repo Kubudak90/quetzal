@@ -1,0 +1,22 @@
+{
+  "name": "@zswap/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "zswap": "src/index.ts" },
+  "scripts": {
+    "zswap": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aztec/aztec.js": "4.2.1",
+    "@aztec/accounts": "4.2.1",
+    "@aztec/wallets": "4.2.1",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
