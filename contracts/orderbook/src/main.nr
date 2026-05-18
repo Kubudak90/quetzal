@@ -29,9 +29,9 @@ pub contract Orderbook {
     /// `EPOCH_LENGTH` blocks after its opening block.
     global EPOCH_LENGTH: u32 = 100;
 
-    /// Maximum number of input notes considered when reading user-side state. Currently unused
-    /// inside `submit_order` (which never reads existing OrderNotes), but reserved for upcoming
-    /// `cancel_order` / clearing flows that will sweep notes from the private set.
+    /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
+    /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
+    /// clearing circuit (Week 6+) which will sweep many resting notes at once.
     pub global MAX_INPUT_NOTES: u32 = 8;
 
     /// Epoch state machine value indicating the epoch is OPEN and accepting new orders.

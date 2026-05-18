@@ -12,14 +12,12 @@ interface OrderRow {
   submitted_at_block: bigint;
 }
 
-// `get_orders` returns a Noir BoundedVec<OrderNote, 10>. The Aztec ABI decoder
-// yields it as { storage: OrderNote[], len: bigint }; `.simulate()` wraps the
-// return value in { result }.
+// `get_orders` returns a Noir BoundedVec<OrderNote, 10>, which the Aztec ABI
+// decoder yields as { storage: OrderNote[], len: bigint }.
 function normalise(result: unknown): OrderRow[] {
-  const bv = result as { storage?: unknown[]; len?: bigint | number };
-  const arr = bv.storage ?? [];
-  const len = Number(bv.len ?? arr.length);
-  return arr.slice(0, len).map((o) => {
+  const bv = result as { storage: unknown[]; len: bigint | number };
+  const len = Number(bv.len);
+  return bv.storage.slice(0, len).map((o) => {
     const r = o as Record<string, bigint | number | boolean>;
     return {
       nonce: BigInt(r.nonce as bigint),
@@ -47,7 +45,7 @@ export function registerOrders(program: Command): void {
         const sim = await orderbook.methods
           .get_orders(ctx.account)
           .simulate({ from: ctx.account });
-        const rows = normalise((sim as { result?: unknown }).result ?? sim);
+        const rows = normalise((sim as { result: unknown }).result);
 
         if (rows.length === 0) {
           console.log("no resting orders");

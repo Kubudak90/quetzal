@@ -9,8 +9,8 @@ export function randomField(): bigint {
   return n;
 }
 
-/** Parse a CLI-supplied field value: accepts decimal or `0x`-prefixed hex. */
+/** Parse a CLI-supplied field value. `BigInt` natively accepts both decimal
+ *  and `0x`-prefixed hex strings. */
 export function parseField(raw: string): bigint {
-  const v = raw.trim();
-  return v.startsWith("0x") || v.startsWith("0X") ? BigInt(v) : BigInt(v);
+  return BigInt(raw.trim());
 }
