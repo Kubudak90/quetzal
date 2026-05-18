@@ -204,6 +204,69 @@ pub contract LiquidityPool {
         });
     }
 
+    // ============================ WITHDRAW ============================
+
+    /// Burn an LP position and reclaim principal (+ accrued fees) to the LP's PRIVATE
+    /// balance. All-or-nothing: the whole `PositionNote` is nullified.
+    ///
+    /// `hint` is the caller's snapshot of the live `PoolState`; `_apply_withdraw`
+    /// asserts it still matches at mine time. In Week 5 `cum_fee_*` are 0, so the fee
+    /// terms are 0 and the payout is principal only.
+    #[external("private")]
+    fn withdraw(position_nonce: Field, hint: PoolState) {
+        let lp = self.msg_sender();
+        assert(hint.lp_supply > 0 as u128, "pool is empty");
+
+        // Retrieve + nullify the LP's position note matching `position_nonce`.
+        let options = NoteGetterOptions::new().select(
+            PositionNote::properties().nonce,
+            Comparator.EQ,
+            position_nonce,
+        ).set_limit(1);
+        let notes = self.storage.positions.at(lp).pop_notes(options);
+        assert(notes.len() == 1, "position not found");
+        let position = notes.get(0);
+        assert(position.owner == lp, "not position owner");
+
+        // Principal is the position's pro-rata slice of reserves; fees are the
+        // MasterChef delta since deposit (0 in Week 5).
+        let principal_a = position.lp_share * hint.reserve_a / hint.lp_supply;
+        let principal_b = position.lp_share * hint.reserve_b / hint.lp_supply;
+        let fees_a =
+            position.lp_share * (hint.cum_fee_a_per_share - position.cum_fee_a_per_share_at_deposit)
+            / FEE_SCALE;
+        let fees_b =
+            position.lp_share * (hint.cum_fee_b_per_share - position.cum_fee_b_per_share_at_deposit)
+            / FEE_SCALE;
+        let payout_a = principal_a + fees_a;
+        let payout_b = principal_b + fees_b;
+
+        // Return the escrow: pool PUBLIC balance -> LP PRIVATE balance. `from` is this
+        // contract (a self-call), so the authwit nonce MUST be 0.
+        let token_a = self.storage.token_a_addr.read();
+        let token_b = self.storage.token_b_addr.read();
+        self.call(Token::at(token_a).transfer_public_to_private(self.address, lp, payout_a, 0));
+        self.call(Token::at(token_b).transfer_public_to_private(self.address, lp, payout_b, 0));
+
+        self.enqueue_self._apply_withdraw(hint, payout_a, payout_b, position.lp_share);
+    }
+
+    /// Public callback: assert the withdraw's hint still matches live state, then
+    /// subtract the payouts and burned shares from the pool. `only_self`.
+    #[external("public")]
+    #[only_self]
+    fn _apply_withdraw(hint: PoolState, payout_a: u128, payout_b: u128, shares: u128) {
+        let actual = self.storage.pool_state.read();
+        assert(actual == hint, "pool state changed; retry withdraw");
+        self.storage.pool_state.write(PoolState {
+            reserve_a: actual.reserve_a - payout_a,
+            reserve_b: actual.reserve_b - payout_b,
+            lp_supply: actual.lp_supply - shares,
+            cum_fee_a_per_share: actual.cum_fee_a_per_share,
+            cum_fee_b_per_share: actual.cum_fee_b_per_share,
+        });
+    }
+
     // ============================ UNCONSTRAINED GETTERS ============================
 
     #[external("utility")]

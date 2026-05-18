@@ -141,3 +141,22 @@ unconstrained fn deposit_rejects_zero_amount_b() {
         LiquidityPool::at(pool).deposit(100 as u128, 0 as u128, zero_pool_state(), 0, 0, 0),
     );
 }
+
+#[test(should_fail_with = "position not found")]
+unconstrained fn withdraw_rejects_unknown_nonce() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+    let lp = env.create_light_account();
+
+    // A non-empty hint passes the "pool is empty" guard; no position exists, so the
+    // "position not found" assertion fires during note retrieval.
+    let hint = PoolState {
+        reserve_a: 100 as u128,
+        reserve_b: 100 as u128,
+        lp_supply: 100 as u128,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    env.call_private(lp, LiquidityPool::at(pool).withdraw(0x9999, hint));
+}
