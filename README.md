@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 4 complete. The orderbook epoch now cycles: `close_epoch` advances to a fresh epoch once the time window expires, and `submit_order` / `cancel_order` are blocked in the expired window. `EPOCH_LENGTH` is a constructor parameter. 17 integration tests + 10 TXE tests green. Week 5+ adds the `ClearingContract` and the clearing circuit.
+**Status:** Week 5 complete. `LiquidityPool` is live: LPs `deposit` / `withdraw` against a constant-product AMM with private positions; reserves are public, positions are private. 23 integration tests + 21 TXE tests green. Week 5b adds the off-chain clearing aggregator.
 
 ## Quickstart
 
@@ -43,6 +43,9 @@ pnpm --filter @zswap/cli zswap order --side buy --amount 100000000 --limit 20000
 pnpm --filter @zswap/cli zswap orders
 pnpm --filter @zswap/cli zswap cancel --nonce <order-nonce-from-above>
 pnpm --filter @zswap/cli zswap close-epoch
+pnpm --filter @zswap/cli zswap deposit --amount-a 1000000000 --amount-b 1000000000000000000
+pnpm --filter @zswap/cli zswap positions
+pnpm --filter @zswap/cli zswap withdraw --nonce <position-nonce-from-above>
 ```
 
 ## Testing
@@ -62,6 +65,8 @@ pnpm --filter @zswap/cli zswap close-epoch
 - [Week 3 Implementation Plan](docs/superpowers/plans/2026-05-17-zswap-aztec-week-03-cancel-cli.md)
 - [Week 4 Epoch Transitions Design](docs/superpowers/specs/2026-05-18-zswap-aztec-week-04-epoch-transitions-design.md)
 - [Week 4 Implementation Plan](docs/superpowers/plans/2026-05-18-zswap-aztec-week-04-epoch-transitions.md)
+- [Week 5 Liquidity Pool Design](docs/superpowers/specs/2026-05-18-zswap-aztec-week-05-liquidity-pool-design.md)
+- [Week 5 Implementation Plan](docs/superpowers/plans/2026-05-18-zswap-aztec-week-05-liquidity-pool.md)
 
 ## License
 
