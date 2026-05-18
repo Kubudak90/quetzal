@@ -25,10 +25,6 @@ pub contract Orderbook {
 
     use token::Token;
 
-    /// Number of L2 blocks per epoch. Each freshly opened epoch closes
-    /// `EPOCH_LENGTH` blocks after its opening block.
-    global EPOCH_LENGTH: u32 = 100;
-
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
     /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
     /// clearing circuit (Week 6+) which will sweep many resting notes at once.
@@ -78,27 +74,27 @@ pub contract Orderbook {
         current_epoch: PublicMutable<EpochState, Context>,
         token_a_addr: PublicImmutable<AztecAddress, Context>,
         token_b_addr: PublicImmutable<AztecAddress, Context>,
-        clearing_addr: PublicImmutable<AztecAddress, Context>,
+        epoch_length: PublicImmutable<u32, Context>,
     }
 
     /// Deploy-time initializer.
     ///
-    /// - Records the three contract addresses that the orderbook will interact with
-    ///   (the two tradable tokens and the off-chain clearing/auctioneer contract).
-    /// - Opens epoch 0 at the current block, closing `EPOCH_LENGTH` blocks later.
+    /// - Records the two tradable token addresses.
+    /// - Stores `epoch_length` (number of L2 blocks an epoch stays OPEN).
+    /// - Opens epoch 0 at the current block, closing `epoch_length` blocks later.
     #[external("public")]
     #[initializer]
-    fn constructor(token_a: AztecAddress, token_b: AztecAddress, clearing: AztecAddress) {
+    fn constructor(token_a: AztecAddress, token_b: AztecAddress, epoch_length: u32) {
         self.storage.token_a_addr.initialize(token_a);
         self.storage.token_b_addr.initialize(token_b);
-        self.storage.clearing_addr.initialize(clearing);
+        self.storage.epoch_length.initialize(epoch_length);
 
         let block: u32 = self.context.block_number();
         self.storage.current_epoch.write(EpochState {
             epoch_id: 0,
-            state: 0,
+            state: EPOCH_STATE_OPEN,
             opened_at_block: block,
-            closes_at_block: block + EPOCH_LENGTH,
+            closes_at_block: block + epoch_length,
         });
     }
 
@@ -273,8 +269,8 @@ pub contract Orderbook {
     }
 
     #[external("utility")]
-    unconstrained fn get_clearing_addr() -> AztecAddress {
-        self.storage.clearing_addr.read()
+    unconstrained fn get_epoch_length() -> u32 {
+        self.storage.epoch_length.read()
     }
 
     /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is

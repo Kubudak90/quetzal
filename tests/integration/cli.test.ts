@@ -59,7 +59,7 @@ describe("cli smoke (live integration)", () => {
     tETH = dE.contract;
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, admin,
+      wallet, tUSDC.address, tETH.address, 8,
     ).send({ from: admin });
     orderbook = dOB.contract;
 

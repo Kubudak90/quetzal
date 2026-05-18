@@ -60,12 +60,12 @@ async function main() {
     admin,
   ).send({ from: admin });
 
-  // Deploy Orderbook referencing both tokens; admin acts as clearing_addr placeholder.
+  // 100-block epochs in deployed environments; tests deploy with a short epoch.
   const deployedOB = await OrderbookContract.deploy(
     wallet,
     tokenA.contract.address,
     tokenB.contract.address,
-    admin,
+    100,
   ).send({ from: admin });
 
   const result = {

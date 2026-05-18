@@ -127,14 +127,12 @@ describe("orderbook (live integration)", () => {
     ).send({ from: admin });
     tETH = deployedETH.contract;
 
-    // Deploy the orderbook bound to (tUSDC, tETH). clearing_addr is just a placeholder
-    // for now - we use admin's address so it is a valid AztecAddress; nothing reads it
-    // in the submit_order path.
+    // Deploy the orderbook bound to (tUSDC, tETH).
     const deployedOB = await OrderbookContract.deploy(
       wallet,
       tUSDC.address,
       tETH.address,
-      admin,
+      100,
     ).send({ from: admin });
     orderbook = deployedOB.contract;
 
@@ -268,7 +266,7 @@ describe("orderbook cancel_order (live integration)", () => {
     tETH = dE.contract;
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, admin,
+      wallet, tUSDC.address, tETH.address, 100,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
