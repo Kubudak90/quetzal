@@ -28,6 +28,45 @@ pub contract LiquidityPool {
     /// Fixed-point scale for the MasterChef cumulative-fee-per-share counters.
     global FEE_SCALE: u128 = 1_000_000_000_000_000_000;
 
+    /// Unconstrained hint: computes `floor(sqrt(x))` by binary search. Its result is
+    /// NOT trusted - `integer_sqrt` constrains it.
+    #[contract_library_method]
+    unconstrained fn sqrt_hint(x: u128) -> u128 {
+        if x < 2 as u128 {
+            x
+        } else {
+            let mut lo: u128 = 1 as u128;
+            let mut hi: u128 = x;
+            // 128 iterations is enough to converge for any u128 input.
+            for _ in 0..128 {
+                if lo < hi {
+                    let mid = lo + (hi - lo + 1 as u128) / 2 as u128;
+                    // mid <= x / mid  is  mid*mid <= x  without overflowing.
+                    if mid <= x / mid {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1 as u128;
+                    }
+                }
+            }
+            lo
+        }
+    }
+
+    /// `floor(sqrt(x))`, constrained. Returns the largest `s` with `s*s <= x`.
+    ///
+    /// Verification avoids forming `(s+1)*(s+1)` (which can overflow u128 for the
+    /// largest inputs): `x < (s+1)^2` is equivalent to `x - s*s <= 2*s`.
+    #[contract_library_method]
+    pub fn integer_sqrt(x: u128) -> u128 {
+        // Safety: `s` is verified to be floor(sqrt(x)) by the two asserts below.
+        let s = unsafe { sqrt_hint(x) };
+        let sq = s * s;
+        assert(sq <= x, "integer_sqrt: hint too large");
+        assert(x - sq <= 2 as u128 * s, "integer_sqrt: hint too small");
+        s
+    }
+
     /// Public, mutable state of the pool. All five fields start at 0 (empty pool).
     /// `cum_fee_*_per_share` are scaled by `FEE_SCALE` and only ever move via clearing
     /// (Week 5b+); in Week 5 they remain 0.

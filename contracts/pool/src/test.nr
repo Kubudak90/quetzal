@@ -2,7 +2,7 @@
 // Run with: pnpm test:noir
 
 use crate::LiquidityPool;
-use crate::LiquidityPool::{PoolState, PositionNote};
+use crate::LiquidityPool::{integer_sqrt, PoolState, PositionNote};
 use aztec::{
     protocol::{
         address::AztecAddress,
@@ -81,4 +81,24 @@ unconstrained fn get_positions_empty_for_fresh_account() {
     let owner = env.create_light_account();
     let positions = env.execute_utility(LiquidityPool::at(pool).get_positions(owner));
     assert(positions.len() == 0, "a fresh account must have no positions");
+}
+
+#[test]
+unconstrained fn integer_sqrt_is_correct() {
+    // Exact squares.
+    assert(integer_sqrt(0 as u128) == 0 as u128, "sqrt(0)");
+    assert(integer_sqrt(1 as u128) == 1 as u128, "sqrt(1)");
+    assert(integer_sqrt(4 as u128) == 2 as u128, "sqrt(4)");
+    assert(integer_sqrt(144 as u128) == 12 as u128, "sqrt(144)");
+    assert(integer_sqrt(1_000_000 as u128) == 1_000 as u128, "sqrt(1e6)");
+
+    // Non-squares: floor.
+    assert(integer_sqrt(2 as u128) == 1 as u128, "sqrt(2) floors to 1");
+    assert(integer_sqrt(3 as u128) == 1 as u128, "sqrt(3) floors to 1");
+    assert(integer_sqrt(8 as u128) == 2 as u128, "sqrt(8) floors to 2");
+    assert(integer_sqrt(143 as u128) == 11 as u128, "sqrt(143) floors to 11");
+
+    // Large value: 10^24 = (10^12)^2.
+    let big: u128 = 1_000_000_000_000_000_000_000_000;
+    assert(integer_sqrt(big) == 1_000_000_000_000 as u128, "sqrt(1e24)");
 }
