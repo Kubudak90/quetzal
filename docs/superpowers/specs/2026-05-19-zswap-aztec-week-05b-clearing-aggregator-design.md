@@ -207,9 +207,27 @@ root, the search returns `cleared: false`. See 7 (Risks).
   reserveA*reserveB`. (A Uniswap-V2 pool grows `k` by the fee because it adds the
   full input to reserves; here the fee is extracted, so `k` only shrinks by
   sub-unit rounding dust.) The fee lives entirely in the counter.
-- Each eligible **buy** receives token B: `amountOut = mulDiv(amountIn, 1e18, P*)`.
-- Each eligible **sell** receives token A: `amountOut = mulDiv(amountIn, P*, 1e18)`.
-- `fills` = one `OrderFill` per eligible buy and sell, `filledIn == amountIn`.
+- **Per-order payouts must sum exactly to the AMM-sized aggregate.** A naive
+  per-order `mulDiv(amountIn, P*, 1e18)` floors each payout independently, and
+  `Sum(floor(x_i))` does not equal the aggregate the AMM swap was sized for - the
+  pool would be over- or under-drawn by up to ~`numOrders` base units, and a
+  verifier (Week 5d) would reject the result. Instead, compute the exact aggregate
+  token totals from the swap and distribute them:
+  - `xTotal` = total token A paid to sellers = `sumAIn - ammAIn + ammAOut`
+  - `yTotal` = total token B paid to buyers = `sumBIn - ammBIn + ammBOut`
+
+  where `ammAIn`/`ammBIn`/`ammAOut`/`ammBOut` are the AMM's gross token flows
+  (`netA > 0`: `ammAIn = netA`, `ammBOut = outB`, others 0; `netA < 0`:
+  `ammBIn = inB`, `ammAOut = outA`, others 0; `netA == 0`: all 0).
+  Distribute `yTotal` among the eligible buys pro-rata by `amountIn / sumAIn`
+  (`amountOut_i = mulDiv(yTotal, amountIn_i, sumAIn)`), and `xTotal` among the
+  eligible sells pro-rata by `amountIn / sumBIn`. The **last** order on each side
+  receives the running remainder (`total - Sum(previous)`) so the per-order sum
+  equals the aggregate **exactly**. Because `Sum(floor(total*x_i/sum)) <= total`,
+  the last order's remainder is always non-negative.
+- `fills` = one `OrderFill` per eligible buy and sell, `filledIn == amountIn`
+  (full fills); `Sum(buys.amountOut) == yTotal` and `Sum(sells.amountOut) == xTotal`
+  exactly.
 
 **Step 5 - fee accrual.** The fee amount from Step 4 is in token A if `netA > 0`,
 token B if `netA < 0`, zero if `netA == 0`. Convert to a per-share increment:
