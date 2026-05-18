@@ -246,20 +246,79 @@ describe("computeClearing", () => {
     assert.deepEqual(computeClearing(pool, batch), computeClearing(pool, batch));
   });
 
-  it("value conservation: every filled buy gets B, every sell gets A; k does not grow", () => {
+  it("value conservation: per-order payouts sum exactly to the aggregate totals", () => {
     const batch: ClearingOrder[] = [
       { side: false, amountIn: 6_000_000n, limitPrice: 4n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
-      { side: true, amountIn: 3_000_000n, limitPrice: SCALE / 4n, submittedAtBlock: 2, orderNonce: 2n },
+      { side: false, amountIn: 2_500_000n, limitPrice: 4n * SCALE, submittedAtBlock: 2, orderNonce: 2n },
+      { side: true, amountIn: 3_000_000n, limitPrice: SCALE / 4n, submittedAtBlock: 3, orderNonce: 3n },
+      { side: true, amountIn: 1_700_000n, limitPrice: SCALE / 4n, submittedAtBlock: 4, orderNonce: 4n },
     ];
     const r = computeClearing(pool, batch);
     assert.equal(r.cleared, true);
+    const ev = clearingAt(pool, batch, r.clearingPrice);
+    let sumAIn = 0n;
+    for (const o of ev.eligibleBuys) sumAIn += o.amountIn;
+    let sumBIn = 0n;
+    for (const o of ev.eligibleSells) sumBIn += o.amountIn;
+    const xTotal = sumAIn - ev.swap.ammAIn + ev.swap.ammAOut;
+    const yTotal = sumBIn - ev.swap.ammBIn + ev.swap.ammBOut;
+    const buyNonces = new Set(ev.eligibleBuys.map((o) => o.orderNonce));
+    let buyOut = 0n;
+    let sellOut = 0n;
     for (const f of r.fills) {
-      assert.ok(f.amountOut > 0n, `fill ${f.orderNonce} received output`);
-      assert.ok(f.filledIn > 0n, "full fill");
+      assert.ok(f.amountOut > 0n, `fill ${f.orderNonce} received positive output`);
+      if (buyNonces.has(f.orderNonce)) buyOut += f.amountOut;
+      else sellOut += f.amountOut;
     }
+    assert.equal(buyOut, yTotal, "buyers' token B payouts sum exactly to yTotal");
+    assert.equal(sellOut, xTotal, "sellers' token A payouts sum exactly to xTotal");
     assert.ok(
       r.newReserveA * r.newReserveB <= pool.reserveA * pool.reserveB,
-      "constant product does not grow (fee withheld from reserves; shrinks only by dust)",
+      "constant product does not grow",
     );
+  });
+
+  it("one-sided book (sells only): net token B swaps through the AMM, all sells filled", () => {
+    const batch: ClearingOrder[] = [
+      { side: true, amountIn: 4_000_000n, limitPrice: SCALE / 10n, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 2_000_000n, limitPrice: SCALE / 10n, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    assert.equal(r.fills.length, 2, "both sells filled");
+    assert.ok(r.newReserveB > pool.reserveB, "reserve B grew (token B flowed in)");
+    assert.ok(r.newReserveA < pool.reserveA, "reserve A fell");
+    assert.ok(r.feeBPerShareIncrement > 0n, "LP fee accrued in token B");
+    assert.equal(r.feeAPerShareIncrement, 0n);
+    for (const f of r.fills) assert.ok(f.amountOut > 0n, "each seller received token A");
+  });
+
+  it("a sell above P* is gated out and carries over", () => {
+    // A buy and a sell cross near 1.0; a second sell with a high limit (5.0) is
+    // ineligible at that P* (a sell needs P* >= its limit) and must be absent.
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 5_000_000n, limitPrice: 3n * SCALE, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 4_000_000n, limitPrice: SCALE / 3n, submittedAtBlock: 2, orderNonce: 2n },
+      { side: true, amountIn: 1_000_000n, limitPrice: 5n * SCALE, submittedAtBlock: 3, orderNonce: 3n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, true);
+    assert.ok(r.clearingPrice < 5n * SCALE, "P* is below the gated sell's limit");
+    const nonces = r.fills.map((f) => f.orderNonce);
+    assert.ok(!nonces.includes(3n), "the high-limit sell is gated out");
+  });
+
+  it("a book whose sides never overlap -> epoch skipped (no convergence)", () => {
+    // Buys limited at 0.1, sells limited at 10.0: no price satisfies both, so the
+    // clearing-price search cannot bracket a root and the epoch is skipped.
+    const batch: ClearingOrder[] = [
+      { side: false, amountIn: 3_000_000n, limitPrice: SCALE / 10n, submittedAtBlock: 1, orderNonce: 1n },
+      { side: true, amountIn: 3_000_000n, limitPrice: 10n * SCALE, submittedAtBlock: 2, orderNonce: 2n },
+    ];
+    const r = computeClearing(pool, batch);
+    assert.equal(r.cleared, false, "uncrossable book is skipped");
+    assert.equal(r.fills.length, 0);
+    assert.equal(r.newReserveA, pool.reserveA);
+    assert.equal(r.newReserveB, pool.reserveB);
   });
 });

@@ -90,6 +90,14 @@ export interface NetSwap {
   feeAmountA: bigint;
   /** LP fee withheld, in token B (non-zero only when token B flows in). */
   feeAmountB: bigint;
+  /** Gross token A into the AMM (netA > 0 only). */
+  ammAIn: bigint;
+  /** Gross token A out of the AMM (netA < 0 only). */
+  ammAOut: bigint;
+  /** Gross token B into the AMM (netA < 0 only). */
+  ammBIn: bigint;
+  /** Gross token B out of the AMM (netA > 0 only). */
+  ammBOut: bigint;
 }
 
 /**
@@ -106,7 +114,17 @@ export function simulateNet(
   p: bigint,
 ): NetSwap {
   if (netA === 0n) {
-    return { newReserveA: reserveA, newReserveB: reserveB, realizedP: p, feeAmountA: 0n, feeAmountB: 0n };
+    return {
+      newReserveA: reserveA,
+      newReserveB: reserveB,
+      realizedP: p,
+      feeAmountA: 0n,
+      feeAmountB: 0n,
+      ammAIn: 0n,
+      ammAOut: 0n,
+      ammBIn: 0n,
+      ammBOut: 0n,
+    };
   }
   if (netA > 0n) {
     const afterFee = (netA * FEE_NUM) / FEE_DEN;
@@ -118,6 +136,10 @@ export function simulateNet(
       realizedP: outB === 0n ? 0n : mulDiv(netA, SCALE, outB),
       feeAmountA,
       feeAmountB: 0n,
+      ammAIn: netA,
+      ammAOut: 0n,
+      ammBIn: 0n,
+      ammBOut: outB,
     };
   }
   // netA < 0: token B flows in. Its size is the token-A deficit valued at p.
@@ -131,6 +153,10 @@ export function simulateNet(
     realizedP: inB === 0n ? 0n : mulDiv(outA, SCALE, inB),
     feeAmountA: 0n,
     feeAmountB,
+    ammAIn: 0n,
+    ammAOut: outA,
+    ammBIn: inB,
+    ammBOut: 0n,
   };
 }
 
@@ -171,7 +197,7 @@ export function clearingAt(pool: PoolSnapshot, batch: ClearingOrder[], p: bigint
  * steered back onto the eligible region.
  */
 export function findClearingPrice(pool: PoolSnapshot, batch: ClearingOrder[]): bigint | null {
-  if (pool.reserveA === 0n || pool.reserveB === 0n) return null;
+  if (pool.reserveA === 0n || pool.reserveB === 0n || pool.lpSupply === 0n) return null;
   const spot = mulDiv(pool.reserveA, SCALE, pool.reserveB);
   let lo = spot / PRICE_BAND;
   if (lo < 1n) lo = 1n;
@@ -254,15 +280,35 @@ export function computeClearing(pool: PoolSnapshot, orders: ClearingOrder[]): Cl
   const ev = clearingAt(pool, batch, pStar);
   if (ev.eligibleBuys.length === 0 && ev.eligibleSells.length === 0) return skipped(pool);
 
+  // Sum the eligible amounts on each side.
+  let sumAIn = 0n;
+  for (const o of ev.eligibleBuys) sumAIn += o.amountIn;
+  let sumBIn = 0n;
+  for (const o of ev.eligibleSells) sumBIn += o.amountIn;
+
+  // Exact aggregate token totals the crossing + AMM swap actually move:
+  //   xTotal = total token A paid to sellers, yTotal = total token B paid to buyers.
+  const xTotal = sumAIn - ev.swap.ammAIn + ev.swap.ammAOut;
+  const yTotal = sumBIn - ev.swap.ammBIn + ev.swap.ammBOut;
+
   const fills: OrderFill[] = [];
-  for (const o of ev.eligibleBuys) {
-    // A buy pays `amountIn` token A, receives token A / P* of token B.
-    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut: mulDiv(o.amountIn, SCALE, pStar) });
-  }
-  for (const o of ev.eligibleSells) {
-    // A sell pays `amountIn` token B, receives token B * P* of token A.
-    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut: mulDiv(o.amountIn, pStar, SCALE) });
-  }
+  // Buyers receive token B: distribute yTotal pro-rata by amountIn / sumAIn,
+  // the LAST buy absorbs the rounding remainder so the sum is exact.
+  let buyAcc = 0n;
+  ev.eligibleBuys.forEach((o, i) => {
+    const isLast = i === ev.eligibleBuys.length - 1;
+    const amountOut = isLast ? yTotal - buyAcc : mulDiv(yTotal, o.amountIn, sumAIn);
+    buyAcc += amountOut;
+    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut });
+  });
+  // Sellers receive token A: distribute xTotal pro-rata by amountIn / sumBIn.
+  let sellAcc = 0n;
+  ev.eligibleSells.forEach((o, i) => {
+    const isLast = i === ev.eligibleSells.length - 1;
+    const amountOut = isLast ? xTotal - sellAcc : mulDiv(xTotal, o.amountIn, sumBIn);
+    sellAcc += amountOut;
+    fills.push({ orderNonce: o.orderNonce, filledIn: o.amountIn, amountOut });
+  });
 
   const feeAPerShareIncrement =
     pool.lpSupply === 0n ? 0n : mulDiv(ev.swap.feeAmountA, SCALE, pool.lpSupply);
