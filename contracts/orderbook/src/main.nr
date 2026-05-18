@@ -176,13 +176,44 @@ pub contract Orderbook {
         self.enqueue_self._assert_epoch_open();
     }
 
-    /// Public callback used by `submit_order` to enforce that the current epoch state is OPEN.
-    /// `only_self` ensures the callback can only be invoked by this contract via `enqueue_self`.
+    /// Public callback used by `submit_order` / `cancel_order` to enforce that the
+    /// current epoch is OPEN *and* its time window has not elapsed. `only_self`
+    /// ensures the callback can only be invoked by this contract via `enqueue_self`.
     #[external("public")]
     #[only_self]
     fn _assert_epoch_open() {
         let epoch = self.storage.current_epoch.read();
         assert(epoch.state == EPOCH_STATE_OPEN, "epoch is not OPEN");
+        let block: u32 = self.context.block_number();
+        assert(block < epoch.closes_at_block, "epoch has expired; awaiting close_epoch");
+    }
+
+    // ============================ EPOCH TRANSITIONS ============================
+
+    /// Advance the orderbook to a fresh epoch once the current epoch's time window
+    /// has elapsed.
+    ///
+    /// Permissionless and time-gated: anyone may call it, but it reverts unless the
+    /// current epoch has expired (`block >= closes_at_block`). It only advances a
+    /// counter - there is nothing to abuse - so permissionless triggering is purely
+    /// a liveness win (no dependency on a trusted aggregator).
+    ///
+    /// Week 4 performs NO clearing: the `orders` PrivateSet is untouched, so every
+    /// resting order carries into the new epoch. Filling/settlement arrive with the
+    /// clearing circuit (Week 6+).
+    #[external("public")]
+    fn close_epoch() {
+        let current = self.storage.current_epoch.read();
+        let block: u32 = self.context.block_number();
+        assert(block >= current.closes_at_block, "epoch has not expired yet");
+
+        let epoch_length = self.storage.epoch_length.read();
+        self.storage.current_epoch.write(EpochState {
+            epoch_id: current.epoch_id + 1,
+            state: EPOCH_STATE_OPEN,
+            opened_at_block: block,
+            closes_at_block: block + epoch_length,
+        });
     }
 
     // ============================ ORDER CANCELLATION ============================

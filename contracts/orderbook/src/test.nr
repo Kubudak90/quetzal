@@ -204,3 +204,47 @@ unconstrained fn get_orders_empty_for_fresh_account() {
 
     assert(orders.len() == 0, "a fresh account must have no resting orders");
 }
+
+// ============================ EPOCH TRANSITIONS ============================
+// aztec-nr v4.2.0 `TestEnvironment` exposes no count-parametrized block advance:
+// the only block-mining method is `mine_block()`, which mines a single empty
+// block (`txe_oracles::advance_blocks_by(1)`). To advance the L2 height by N
+// blocks we loop `mine_block()` N times. `#[external("public")]` functions are
+// invoked via `env.call_public(from, Contract::at(addr).fn())`.
+
+#[test]
+unconstrained fn close_epoch_advances_to_next_epoch() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Short epoch so we can cheaply advance past it.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 3);
+
+    let before: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
+
+    // Advance the L2 block height past `closes_at_block`, then close the epoch.
+    for _ in 0..4 {
+        env.mine_block();
+    }
+    env.call_public(deployer, Orderbook::at(orderbook).close_epoch());
+
+    let after: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
+    assert(after.epoch_id == before.epoch_id + 1, "epoch_id must increment");
+    assert(after.state == 0, "new epoch must be OPEN");
+    assert(
+        after.closes_at_block == after.opened_at_block + 3,
+        "new epoch must close epoch_length blocks after opening",
+    );
+    assert(after.opened_at_block >= before.closes_at_block, "new epoch opens at/after the old close");
+}
+
+#[test(should_fail_with = "epoch has not expired yet")]
+unconstrained fn close_epoch_rejects_before_expiry() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Long epoch; we do NOT advance, so the epoch is still open and close must revert.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+
+    env.call_public(deployer, Orderbook::at(orderbook).close_epoch());
+}
