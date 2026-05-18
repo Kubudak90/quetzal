@@ -57,7 +57,7 @@ pub contract Orderbook {
     ///
     /// Fields:
     /// - `epoch_id`: monotonically increasing epoch counter (starts at 0).
-    /// - `state`: epoch state machine value (0 = OPEN, future values reserved for SEALED / SETTLING / CLOSED).
+    /// - `state`: epoch state machine value (0 = OPEN; 1 = CLOSING, 2 = SETTLED reserved for the clearing circuit, Week 6+).
     /// - `opened_at_block`: L2 block number at which this epoch was opened.
     /// - `closes_at_block`: L2 block number at/after which this epoch may transition out of OPEN.
     #[derive(Deserialize, Eq, Packable, Serialize)]
