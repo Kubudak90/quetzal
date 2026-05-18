@@ -193,8 +193,15 @@ root, the search returns `cleared: false`. See 7 (Risks).
 **Step 4 - fills and reserves at `P*`.** With `P*` fixed, recompute `eligibleBuys`
 / `eligibleSells`, `sumAIn`, `sumBIn`, `netA`.
 
-- Apply the net AMM swap exactly as in Step 3 to get `newReserveA` / `newReserveB`
-  and the fee amount (the `0.3%` taken on the swap input, in the swapped-in token).
+- Apply the net AMM swap as in Step 3. **The fee is extracted, not retained in
+  reserves** (ZSwap uses a separate MasterChef counter, so the fee must NOT be
+  added to `reserve_*` or the Week-5 `withdraw` - which pays `principal` from
+  reserves and `fees` from the counter - would double-count it). Concretely, for
+  `netA > 0`: `feeAmountA = netA - amountInAfterFee`, `newReserveA = reserveA +
+  amountInAfterFee` (the fee portion is held by the pool but tracked in the
+  counter, not in `reserve_a`), `newReserveB = reserveB - outB`. Symmetric for
+  `netA < 0`. The constant product is therefore preserved across the net swap
+  (equal up to floor-division dust), and the fee lives entirely in the counter.
 - Each eligible **buy** receives token B: `amountOut = mulDiv(amountIn, 1e18, P*)`.
 - Each eligible **sell** receives token A: `amountOut = mulDiv(amountIn, P*, 1e18)`.
 - `fills` = one `OrderFill` per eligible buy and sell, `filledIn == amountIn`.
@@ -226,12 +233,13 @@ tests account for floor-rounding dust.
 output, with no reliance on `Date`, randomness, or iteration order of unsorted
 collections (Step 1's sort is total, ties broken by `orderNonce`).
 
-Value conservation, verified by tests: no token is created or destroyed except
-the LP fee. The matched volume crosses 1:1 in value at `P*`; the net imbalance
-through the AMM satisfies the constant-product invariant
-`newReserveA * newReserveB >= reserveA * reserveB` (the product grows precisely by
-the retained fee). The sum of `fills[].amountOut` reconciles with the crossed
-volume plus the AMM output, up to floor-division dust.
+Value conservation, verified by tests: no token is created or destroyed. The
+matched volume crosses 1:1 in value at `P*`. The fee is extracted from the swap
+input and booked to `cum_fee_*_per_share` (not retained in reserves - see Step 4),
+so the constant product is **preserved** across the net swap:
+`newReserveA * newReserveB >= reserveA * reserveB`, equal up to floor-division
+dust. The sum of `fills[].amountOut` reconciles with the crossed volume plus the
+AMM output, up to floor-division dust.
 
 ---
 
