@@ -4,6 +4,7 @@ import { LiquidityPoolContract } from "../../../tests/integration/generated/Liqu
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { randomField } from "../field.js";
+import { readPoolHint } from "../pool-hint.js";
 
 export function registerDeposit(program: Command): void {
   program
@@ -23,8 +24,7 @@ export function registerDeposit(program: Command): void {
           AztecAddress.fromString(config.pool),
           ctx.wallet,
         );
-        const sim = await pool.methods.get_pool_state().simulate({ from: ctx.account });
-        const hint = (sim as { result: { reserve_a: bigint; reserve_b: bigint; lp_supply: bigint; cum_fee_a_per_share: bigint; cum_fee_b_per_share: bigint } }).result;
+        const hint = await readPoolHint(pool, ctx.account);
 
         const positionNonce = randomField();
         await pool.methods

@@ -4,6 +4,7 @@ import { LiquidityPoolContract } from "../../../tests/integration/generated/Liqu
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { parseField } from "../field.js";
+import { readPoolHint } from "../pool-hint.js";
 
 export function registerWithdraw(program: Command): void {
   program
@@ -21,8 +22,7 @@ export function registerWithdraw(program: Command): void {
           AztecAddress.fromString(config.pool),
           ctx.wallet,
         );
-        const sim = await pool.methods.get_pool_state().simulate({ from: ctx.account });
-        const hint = (sim as { result: { reserve_a: bigint; reserve_b: bigint; lp_supply: bigint; cum_fee_a_per_share: bigint; cum_fee_b_per_share: bigint } }).result;
+        const hint = await readPoolHint(pool, ctx.account);
 
         await pool.methods.withdraw(positionNonce, hint).send({ from: ctx.account });
         console.log(`position 0x${positionNonce.toString(16)} withdrawn; liquidity returned`);

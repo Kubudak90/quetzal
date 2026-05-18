@@ -48,7 +48,10 @@ export function registerPositions(program: Command): void {
         }
         console.log(`LP positions for account ${opts.account}:`);
         for (const r of rows) {
-          console.log(`  nonce=0x${r.nonce.toString(16)}  lp_share=${r.lp_share}`);
+          console.log(
+            `  nonce=0x${r.nonce.toString(16)}  lp_share=${r.lp_share}  ` +
+              `fee_snapshot=(${r.cum_fee_a_per_share_at_deposit}, ${r.cum_fee_b_per_share_at_deposit})`,
+          );
         }
       } finally {
         await ctx.stop();
