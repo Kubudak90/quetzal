@@ -200,8 +200,13 @@ root, the search returns `cleared: false`. See 7 (Risks).
   `netA > 0`: `feeAmountA = netA - amountInAfterFee`, `newReserveA = reserveA +
   amountInAfterFee` (the fee portion is held by the pool but tracked in the
   counter, not in `reserve_a`), `newReserveB = reserveB - outB`. Symmetric for
-  `netA < 0`. The constant product is therefore preserved across the net swap
-  (equal up to floor-division dust), and the fee lives entirely in the counter.
+  `netA < 0`. Because the fee is withheld from reserves, the constant product is
+  **not retained or grown** across the net swap - it can only decrease by
+  floor-division dust: `newReserveB = floor(reserveA*reserveB/(reserveA+amountInAfterFee))`,
+  so `newReserveA*newReserveB = (reserveA+amountInAfterFee)*newReserveB <=
+  reserveA*reserveB`. (A Uniswap-V2 pool grows `k` by the fee because it adds the
+  full input to reserves; here the fee is extracted, so `k` only shrinks by
+  sub-unit rounding dust.) The fee lives entirely in the counter.
 - Each eligible **buy** receives token B: `amountOut = mulDiv(amountIn, 1e18, P*)`.
 - Each eligible **sell** receives token A: `amountOut = mulDiv(amountIn, P*, 1e18)`.
 - `fills` = one `OrderFill` per eligible buy and sell, `filledIn == amountIn`.
@@ -236,10 +241,11 @@ collections (Step 1's sort is total, ties broken by `orderNonce`).
 Value conservation, verified by tests: no token is created or destroyed. The
 matched volume crosses 1:1 in value at `P*`. The fee is extracted from the swap
 input and booked to `cum_fee_*_per_share` (not retained in reserves - see Step 4),
-so the constant product is **preserved** across the net swap:
-`newReserveA * newReserveB >= reserveA * reserveB`, equal up to floor-division
-dust. The sum of `fills[].amountOut` reconciles with the crossed volume plus the
-AMM output, up to floor-division dust.
+so the constant product across the net swap satisfies
+`newReserveA * newReserveB <= reserveA * reserveB` - it cannot grow (no fee is
+retained in reserves) and decreases only by floor-division dust. The sum of
+`fills[].amountOut` reconciles with the crossed volume plus the AMM output, up to
+floor-division dust.
 
 ---
 
@@ -255,13 +261,13 @@ Hand-computed fixtures:
 | `one-sided book (buys only)` | All net flow swaps token A through the AMM; `newReserveA` up, `newReserveB` down; every buy filled. |
 | `one-sided book (sells only)` | Symmetric: token B swaps in. |
 | `exact cross` | Buys and sells net to ~0 -> `P*` ~ spot, near-zero AMM flow, near-zero fee, all orders filled. |
-| `net imbalance + fee` | Verify the AMM swap output, the 0.3% fee amount, and `newReserveA*newReserveB >= reserveA*reserveB`. |
+| `net imbalance + fee` | Verify the AMM swap output, the 0.3% fee amount, and `newReserveA*newReserveB <= reserveA*reserveB` (k cannot grow - the fee is withheld from reserves; it shrinks only by dust). |
 | `limit price gates a buy out` | A buy with `limitPrice < P*` is absent from `fills`; it carries over. |
 | `limit price gates a sell out` | A sell with `limitPrice > P*` is absent from `fills`. |
 | `128-cap` | With 130 orders, only the 128 oldest (by `submittedAtBlock`) are in `fills`; the 2 newest are absent. |
 | `FIFO tie-break` | Orders with equal `submittedAtBlock` are ordered by `orderNonce` deterministically. |
 | `fee-per-share increment` | `feeAPerShareIncrement == mulDiv(feeAmount, 1e18, lpSupply)`; the other increment is 0. |
-| `value conservation` | For a representative clearing: `Sum(fills.amountOut)` reconciles with crossed volume + AMM output within dust; constant-product preserved-or-grown. |
+| `value conservation` | For a representative clearing: `Sum(fills.amountOut)` reconciles with crossed volume + AMM output within dust; constant product `<=` the pre-clearing product (shrinks only by dust). |
 | `determinism` | Same inputs called twice -> deep-equal results. |
 | `mulDiv` unit tests | Floor behaviour, divide-by-zero throws, large operands (no overflow). |
 

@@ -695,8 +695,8 @@ describe("computeClearing", () => {
     assert.ok(r.newReserveB < pool.reserveB, "reserve B fell");
     assert.ok(r.feeAPerShareIncrement > 0n, "LP fee accrued in token A");
     assert.equal(r.feeBPerShareIncrement, 0n);
-    // Constant product is preserved (fee is extracted, not retained).
-    assert.ok(r.newReserveA * r.newReserveB >= pool.reserveA * pool.reserveB);
+    // The fee is withheld from reserves, so k cannot grow; it shrinks only by dust.
+    assert.ok(r.newReserveA * r.newReserveB <= pool.reserveA * pool.reserveB, "k does not grow");
   });
 
   it("a buy below P* is gated out and carries over", () => {
@@ -766,8 +766,8 @@ describe("computeClearing", () => {
       assert.ok(f.filledIn > 0n, "full fill");
     }
     assert.ok(
-      r.newReserveA * r.newReserveB >= pool.reserveA * pool.reserveB,
-      "constant product preserved or grown by dust",
+      r.newReserveA * r.newReserveB <= pool.reserveA * pool.reserveB,
+      "constant product does not grow (fee withheld from reserves; shrinks only by dust)",
     );
   });
 });
