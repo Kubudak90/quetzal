@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 5b complete. The off-chain clearing aggregator (`@zswap/aggregator`) computes the frequent-batch-auction clearing — FIFO selection, uniform clearing price, the net imbalance through the AMM with the 0.3% LP fee. 23 aggregator unit tests + 23 integration tests + 21 TXE tests green. Week 5c wires an on-chain ClearingContract.
+**Status:** Week 5b complete. The off-chain clearing aggregator (`@zswap/aggregator`) computes the frequent-batch-auction clearing — FIFO selection, uniform clearing price, the net imbalance through the AMM with the 0.3% LP fee, per-order payouts reconciling exactly to the aggregate. 26 aggregator unit tests + 23 integration tests + 21 TXE tests green. Week 5c wires an on-chain ClearingContract.
 
 ## Quickstart
 
