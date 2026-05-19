@@ -17,7 +17,7 @@ pub contract LiquidityPool {
         },
         protocol::{
             address::AztecAddress,
-            traits::{Deserialize, Packable, Serialize},
+            traits::{Deserialize, FromField, Packable, Serialize},
         },
         state_vars::{Owned, PrivateSet, PublicImmutable, PublicMutable},
         utils::comparison::Comparator,
@@ -96,12 +96,33 @@ pub contract LiquidityPool {
         pub owner: AztecAddress,
     }
 
+    /// The aggregate net AMM swap for one epoch's clearing, pre-computed by the
+    /// off-chain aggregator and relayed verbatim (trusted slice). The physical
+    /// token moves (`*_to_pool` / `*_from_pool`) and the reserve-accounting deltas
+    /// (`reserve_*_add` / `reserve_*_sub`) are passed separately: the fee is
+    /// withheld from reserves, so the Pool receives the full net input but only
+    /// `reserve_*_add` of it counts as reserve.
+    #[derive(Deserialize, Eq, Packable, Serialize)]
+    pub struct ClearingSwap {
+        pub a_to_pool: u128,
+        pub b_to_pool: u128,
+        pub a_from_pool: u128,
+        pub b_from_pool: u128,
+        pub reserve_a_add: u128,
+        pub reserve_a_sub: u128,
+        pub reserve_b_add: u128,
+        pub reserve_b_sub: u128,
+        pub fee_a_per_share_increment: u128,
+        pub fee_b_per_share_increment: u128,
+    }
+
     #[storage]
     struct Storage<Context> {
         positions: Owned<PrivateSet<PositionNote, Context>, Context>,
         pool_state: PublicMutable<PoolState, Context>,
         token_a_addr: PublicImmutable<AztecAddress, Context>,
         token_b_addr: PublicImmutable<AztecAddress, Context>,
+        orderbook_addr: PublicMutable<AztecAddress, Context>,
     }
 
     /// Deploy-time initializer: records the two token addresses and opens an empty pool.
@@ -116,6 +137,58 @@ pub contract LiquidityPool {
             lp_supply: 0 as u128,
             cum_fee_a_per_share: 0 as u128,
             cum_fee_b_per_share: 0 as u128,
+        });
+        self.storage.orderbook_addr.write(AztecAddress::from_field(0));
+    }
+
+    // ============================ CLEARING WIRING ============================
+
+    /// One-shot setter for the OrderbookContract address. The Pool is deployed
+    /// before the Orderbook, so the address is wired in post-deploy. Settable
+    /// exactly once (the stored value starts at the zero address), so it cannot
+    /// be re-pointed later.
+    #[external("public")]
+    fn set_orderbook(orderbook: AztecAddress) {
+        let current = self.storage.orderbook_addr.read();
+        assert(current == AztecAddress::from_field(0), "orderbook already set");
+        self.storage.orderbook_addr.write(orderbook);
+    }
+
+    /// Apply one epoch's net AMM swap. Called only by the OrderbookContract from
+    /// within `close_epoch_and_clear`. The Orderbook has already transferred the
+    /// net INPUT token into this pool; `apply_clearing` returns the net OUTPUT
+    /// token and updates the pool accounting (reserves by the explicit deltas,
+    /// the cumulative fee-per-share counters by the increments). `lp_supply` is
+    /// unchanged - clearing never mints or burns LP shares.
+    #[external("public")]
+    fn apply_clearing(swap: ClearingSwap) {
+        let orderbook = self.storage.orderbook_addr.read();
+        assert(self.msg_sender() == orderbook, "not the orderbook");
+
+        if swap.a_from_pool > 0 as u128 {
+            self.call(Token::at(self.storage.token_a_addr.read()).transfer_public_to_public(
+                self.address,
+                orderbook,
+                swap.a_from_pool,
+                0,
+            ));
+        }
+        if swap.b_from_pool > 0 as u128 {
+            self.call(Token::at(self.storage.token_b_addr.read()).transfer_public_to_public(
+                self.address,
+                orderbook,
+                swap.b_from_pool,
+                0,
+            ));
+        }
+
+        let s = self.storage.pool_state.read();
+        self.storage.pool_state.write(PoolState {
+            reserve_a: s.reserve_a + swap.reserve_a_add - swap.reserve_a_sub,
+            reserve_b: s.reserve_b + swap.reserve_b_add - swap.reserve_b_sub,
+            lp_supply: s.lp_supply,
+            cum_fee_a_per_share: s.cum_fee_a_per_share + swap.fee_a_per_share_increment,
+            cum_fee_b_per_share: s.cum_fee_b_per_share + swap.fee_b_per_share_increment,
         });
     }
 

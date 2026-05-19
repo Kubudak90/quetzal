@@ -160,3 +160,46 @@ unconstrained fn withdraw_rejects_unknown_nonce() {
     };
     env.call_private(lp, LiquidityPool::at(pool).withdraw(0x9999, hint));
 }
+
+#[test]
+unconstrained fn set_orderbook_can_be_set_once() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+
+    let orderbook = env.create_light_account();
+    env.call_public(deployer, LiquidityPool::at(pool).set_orderbook(orderbook));
+    // No revert == success; a follow-up read is covered by the integration suite.
+}
+
+#[test(should_fail_with = "orderbook already set")]
+unconstrained fn set_orderbook_rejects_a_second_set() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+
+    let first = env.create_light_account();
+    env.call_public(deployer, LiquidityPool::at(pool).set_orderbook(first));
+    let second = env.create_light_account();
+    env.call_public(deployer, LiquidityPool::at(pool).set_orderbook(second));
+}
+
+#[test(should_fail_with = "not the orderbook")]
+unconstrained fn apply_clearing_rejects_non_orderbook_caller() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+
+    let orderbook = env.create_light_account();
+    env.call_public(deployer, LiquidityPool::at(pool).set_orderbook(orderbook));
+
+    // A caller that is not the wired orderbook must be rejected. An all-zero swap
+    // is fine: the assertion fires before the swap body runs.
+    let zero_swap = LiquidityPool::ClearingSwap {
+        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
+        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
+        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
+    };
+    let stranger = env.create_light_account();
+    env.call_public(stranger, LiquidityPool::at(pool).apply_clearing(zero_swap));
+}
