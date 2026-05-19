@@ -97,7 +97,7 @@ function buildClearingSwap(
   };
 }
 
-async function readPrivateBalanceEth(
+async function readPrivateBalance(
   token: TokenContract,
   owner: AztecAddress,
 ): Promise<bigint> {
@@ -153,7 +153,7 @@ describe("clearing (live integration)", () => {
     await tUSDC.methods.mint_to_private(alice, 100_000n * ONE_USDC).send({ from: admin });
     await tETH.methods.mint_to_private(bob, 100n * ONE_ETH).send({ from: admin });
 
-    // LP deposits a balanced 100k tUSDC : 100k tUSDC pool. The book is 1:1-priced,
+    // LP deposits a balanced 100k tUSDC : 100k tETH pool. The book is 1:1-priced,
     // so we deposit equal *scaled* sides: spot = reserveA*1e18/reserveB = 1.0.
     const hint0 = (await pool.methods.get_pool_state().simulate({ from: admin })).result;
     await pool.methods
@@ -216,12 +216,15 @@ describe("clearing (live integration)", () => {
     const bobFill = BigInt((await orderbook.methods.get_fill(bobNonce).simulate({ from: bob })).result);
     assert.ok(aliceFill > 0n && bobFill > 0n, "both orders recorded as filled");
 
-    const aliceEthBefore = await readPrivateBalanceEth(tETH, alice);
+    const aliceEthBefore = await readPrivateBalance(tETH, alice);
     await orderbook.methods.claim_fill(aliceNonce, aliceFill).send({ from: alice });
-    const aliceEthAfter = await readPrivateBalanceEth(tETH, alice);
+    const aliceEthAfter = await readPrivateBalance(tETH, alice);
     assert.equal(aliceEthAfter - aliceEthBefore, aliceFill, "alice received her token B fill");
 
+    const bobUsdcBefore = await readPrivateBalance(tUSDC, bob);
     await orderbook.methods.claim_fill(bobNonce, bobFill).send({ from: bob });
+    const bobUsdcAfter = await readPrivateBalance(tUSDC, bob);
+    assert.equal(bobUsdcAfter - bobUsdcBefore, bobFill, "bob received his token A fill");
 
     // The claimed orders are gone; a re-claim fails.
     await assert.rejects(
