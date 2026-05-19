@@ -717,11 +717,13 @@ describe("computeClearing", () => {
   it("the 128-cap keeps the oldest, drops the newest", () => {
     const batch: ClearingOrder[] = [];
     for (let i = 0; i < 130; i++) {
-      // Mix buys and sells so a clearing price exists.
+      // Mix buys and sells that genuinely cross: even i = buy with a high limit
+      // (10.0), odd i = sell with a low limit (0.1) -> overlap at any p in [0.1, 10].
+      const isBuy = i % 2 === 0;
       batch.push({
-        side: i % 2 === 0,
+        side: !isBuy,
         amountIn: 1_000_000n,
-        limitPrice: i % 2 === 0 ? 10n * SCALE : SCALE / 10n,
+        limitPrice: isBuy ? 10n * SCALE : SCALE / 10n,
         submittedAtBlock: i,
         orderNonce: BigInt(i),
       });
