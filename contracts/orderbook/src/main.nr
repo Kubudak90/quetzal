@@ -212,6 +212,19 @@ pub contract Orderbook {
         assert(block < epoch.closes_at_block, "epoch has expired; awaiting close_epoch");
     }
 
+    /// Public callback used by `cancel_order` to reject cancelling an order that
+    /// has already been filled by a clearing. A filled order must be redeemed via
+    /// `claim_fill`, not cancelled - cancelling it would reclaim input escrow that
+    /// the clearing already spent. `only_self`.
+    #[external("public")]
+    #[only_self]
+    fn _assert_not_filled(order_nonce: Field) {
+        assert(
+            self.storage.fills.at(order_nonce).read() == 0 as u128,
+            "order already filled; use claim_fill",
+        );
+    }
+
     // ============================ EPOCH TRANSITIONS ============================
 
     /// Advance the orderbook to a fresh epoch once the current epoch's time window
@@ -360,6 +373,9 @@ pub contract Orderbook {
 
     /// Cancel a resting order and return its escrow to the maker's PRIVATE balance.
     ///
+    /// Cancellation is rejected once an order has been filled by a clearing - a
+    /// filled order must be redeemed via `claim_fill` instead.
+    ///
     /// Flow:
     /// 1. Retrieve (and nullify) the caller's `OrderNote` whose identity nonce equals
     ///    `order_nonce`. Exactly one note must match.
@@ -405,6 +421,19 @@ pub contract Orderbook {
             self.storage.token_a_addr.read()
         };
 
+        // Gate cancellation to the OPEN epoch state: the MVP design forbids cancelling
+        // mid-clearing so makers cannot race the clearing tx (an MEV-resistance property).
+        // PublicMutable is not readable from private context, so the check is deferred to
+        // this enqueued public callback, atomic with the rest of the tx.
+        //
+        // Both guards are enqueued BEFORE the escrow-return public call so they execute
+        // first in public context. A filled order's input escrow was already spent by the
+        // clearing, so the escrow return would otherwise revert with a balance underflow
+        // - enqueuing `_assert_not_filled` first makes the rejection deterministic and
+        // surfaces the intended "order already filled" error instead.
+        self.enqueue_self._assert_epoch_open();
+        self.enqueue_self._assert_not_filled(order_nonce);
+
         // Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
         self.call(Token::at(token_addr).transfer_public_to_private(
             self.address,
@@ -412,12 +441,6 @@ pub contract Orderbook {
             order.amount_in,
             nonce,
         ));
-
-        // Gate cancellation to the OPEN epoch state: the MVP design forbids cancelling
-        // mid-clearing so makers cannot race the clearing tx (an MEV-resistance property).
-        // PublicMutable is not readable from private context, so the check is deferred to
-        // this enqueued public callback, atomic with the rest of the tx.
-        self.enqueue_self._assert_epoch_open();
     }
 
     // ============================ UNCONSTRAINED GETTERS ============================

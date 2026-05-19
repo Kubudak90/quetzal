@@ -216,6 +216,15 @@ describe("clearing (live integration)", () => {
     const bobFill = BigInt((await orderbook.methods.get_fill(bobNonce).simulate({ from: bob })).result);
     assert.ok(aliceFill > 0n && bobFill > 0n, "both orders recorded as filled");
 
+    // A filled order cannot be cancelled - it must be claimed. nonce MUST be 0n
+    // (cancel_order self-calls transfer_public_to_private; from == msg_sender, so
+    // the authwit nonce must be zero). The filled-order guard reverts the whole tx.
+    await assert.rejects(
+      orderbook.methods.cancel_order(aliceNonce, 0n).send({ from: alice }),
+      /already filled/i,
+      "a filled order cannot be cancelled",
+    );
+
     const aliceEthBefore = await readPrivateBalance(tETH, alice);
     await orderbook.methods.claim_fill(aliceNonce, aliceFill).send({ from: alice });
     const aliceEthAfter = await readPrivateBalance(tETH, alice);
