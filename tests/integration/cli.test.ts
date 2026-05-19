@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, rmSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { webcrypto } from "node:crypto";
 import type { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -13,6 +14,13 @@ import { getTestWallets } from "./helpers/wallets.js";
 import { TokenContract } from "./generated/Token.js";
 import { OrderbookContract } from "./generated/Orderbook.js";
 import { LiquidityPoolContract } from "./generated/LiquidityPool.js";
+import {
+  computeClearing,
+  clearingAt,
+  selectBatch,
+  type ClearingOrder,
+  type ClearingResult,
+} from "../../aggregator/src/clearing.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
@@ -33,6 +41,63 @@ function zswap(...args: string[]): string {
     ["--import", "tsx", CLI_ENTRY, "--config", CONFIG_PATH, ...args],
     { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
+}
+
+/** A random BN254 field element (31 random bytes stay under the field modulus). */
+function randomField(): bigint {
+  const buf = new Uint8Array(31);
+  webcrypto.getRandomValues(buf);
+  let n = 0n;
+  for (const b of buf) n = (n << 8n) | BigInt(b);
+  return n;
+}
+
+interface PoolStateRaw {
+  reserve_a: bigint | number;
+  reserve_b: bigint | number;
+  lp_supply: bigint | number;
+  cum_fee_a_per_share: bigint | number;
+  cum_fee_b_per_share: bigint | number;
+}
+
+/**
+ * Translate a `ClearingResult` into the ten-field `ClearingSwap` the contract expects.
+ * Mirrors the same helper in clearing.test.ts.
+ */
+function buildClearingSwap(
+  poolState: PoolStateRaw,
+  orders: ClearingOrder[],
+  result: ClearingResult,
+) {
+  const oldReserveA = BigInt(poolState.reserve_a);
+  const oldReserveB = BigInt(poolState.reserve_b);
+
+  const ev = clearingAt(
+    {
+      reserveA: oldReserveA,
+      reserveB: oldReserveB,
+      lpSupply: BigInt(poolState.lp_supply),
+    },
+    selectBatch(orders),
+    result.clearingPrice,
+  );
+  const { swap } = ev;
+
+  const deltaA = result.newReserveA - oldReserveA;
+  const deltaB = result.newReserveB - oldReserveB;
+
+  return {
+    a_to_pool: swap.ammAIn,
+    b_to_pool: swap.ammBIn,
+    a_from_pool: swap.ammAOut,
+    b_from_pool: swap.ammBOut,
+    reserve_a_add: deltaA > 0n ? deltaA : 0n,
+    reserve_a_sub: deltaA < 0n ? -deltaA : 0n,
+    reserve_b_add: deltaB > 0n ? deltaB : 0n,
+    reserve_b_sub: deltaB < 0n ? -deltaB : 0n,
+    fee_a_per_share_increment: result.feeAPerShareIncrement,
+    fee_b_per_share_increment: result.feeBPerShareIncrement,
+  };
 }
 
 describe("cli smoke (live integration)", () => {
@@ -156,5 +221,62 @@ describe("cli smoke (live integration)", () => {
 
     const afterList = zswap("positions");
     assert.match(afterList, /no LP positions/i, "positions must be empty after withdraw");
+  });
+
+  it("order -> clear -> claim round-trip via CLI", { timeout: 900_000 }, async () => {
+    // Wire the pool to the orderbook (required for apply_clearing to accept the caller).
+    await pool.methods.set_orderbook(orderbook.address).send({ from: admin });
+
+    // Seed the pool with a balanced deposit so the aggregator can find a clearing price.
+    // Use same-denomination units on both sides so spot = 1e18 (1:1 book).
+    const POOL_AMOUNT = 500n * ONE_TUSDC; // small enough to stay within admin's balance
+    const hint0 = (await pool.methods.get_pool_state().simulate({ from: admin })).result;
+    await pool.methods
+      .deposit(POOL_AMOUNT, POOL_AMOUNT, hint0, randomField(), randomField(), randomField())
+      .send({ from: admin });
+
+    // Admin submits two crossing orders: a buy (pays tUSDC) and a sell (pays tETH).
+    // Sizes and limits are set to guarantee they cross at the 1:1 spot price.
+    const PRICE_1 = 1_000_000_000_000_000_000n; // 1.0 (1e18-scaled)
+    const BUY_AMOUNT = 10n * ONE_TUSDC;          // admin pays tUSDC
+    const SELL_AMOUNT = 10n * ONE_TUSDC;         // admin pays tETH (same unit scale for 1:1 book)
+    const buyNonce = randomField();
+    const sellNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(false, BUY_AMOUNT, 2n * PRICE_1, randomField(), buyNonce)
+      .send({ from: admin });
+    await orderbook.methods
+      .submit_order(true, SELL_AMOUNT, PRICE_1 / 2n, randomField(), sellNonce)
+      .send({ from: admin });
+
+    // Run the off-chain aggregator.
+    const poolState = (await pool.methods.get_pool_state().simulate({ from: admin })).result;
+    const orders: ClearingOrder[] = [
+      { side: false, amountIn: BUY_AMOUNT, limitPrice: 2n * PRICE_1, submittedAtBlock: 1, orderNonce: buyNonce },
+      { side: true, amountIn: SELL_AMOUNT, limitPrice: PRICE_1 / 2n, submittedAtBlock: 2, orderNonce: sellNonce },
+    ];
+    const result = computeClearing(
+      {
+        reserveA: BigInt(poolState.reserve_a),
+        reserveB: BigInt(poolState.reserve_b),
+        lpSupply: BigInt(poolState.lp_supply),
+      },
+      orders,
+    );
+    assert.equal(result.cleared, true, "the aggregator should clear this crossing book");
+
+    // Build the contract arguments.
+    const fills = result.fills.map((f) => ({ order_nonce: f.orderNonce, amount_out: f.amountOut }));
+    const swap = buildClearingSwap(poolState, orders, result);
+
+    // Mine past epoch expiry.
+    const epoch = (await orderbook.methods.get_epoch().simulate({ from: admin })).result;
+    await mineUntilBlock(Number(epoch.closes_at_block));
+    await orderbook.methods.close_epoch_and_clear(fills, swap).send({ from: admin });
+
+    // The buy order (admin, account 0) should now be claimable via the CLI.
+    const claimOut = zswap("claim", "--nonce", `0x${buyNonce.toString(16)}`);
+    assert.match(claimOut, /claimed .* output tokens/i, "`zswap claim` should confirm the claimed amount");
   });
 });

@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { registerOrder } from "./commands/order.js";
 import { registerCancel } from "./commands/cancel.js";
+import { registerClaim } from "./commands/claim.js";
 import { registerOrders } from "./commands/orders.js";
 import { registerCloseEpoch } from "./commands/close-epoch.js";
 import { registerDeposit } from "./commands/deposit.js";
@@ -17,6 +18,7 @@ program
 
 registerOrder(program);
 registerCancel(program);
+registerClaim(program);
 registerOrders(program);
 registerCloseEpoch(program);
 registerDeposit(program);
