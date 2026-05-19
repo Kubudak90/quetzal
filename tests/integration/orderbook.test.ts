@@ -10,6 +10,7 @@ import { getTestWallets } from "./helpers/wallets.js";
 
 import { TokenContract } from "./generated/Token.js";
 import { OrderbookContract } from "./generated/Orderbook.js";
+import { LiquidityPoolContract } from "./generated/LiquidityPool.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -144,12 +145,19 @@ describe("orderbook (live integration)", () => {
     ).send({ from: admin });
     tETH = deployedETH.contract;
 
+    // Deploy the pool first (orderbook needs pool_addr at construction time).
+    const dPool = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      .send({ from: admin });
+    const pool = dPool.contract;
+
     // Deploy the orderbook bound to (tUSDC, tETH).
     const deployedOB = await OrderbookContract.deploy(
       wallet,
       tUSDC.address,
       tETH.address,
       100,
+      pool.address,
+      admin,
     ).send({ from: admin });
     orderbook = deployedOB.contract;
 
@@ -282,8 +290,11 @@ describe("orderbook cancel_order (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
+    const dPool2 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      .send({ from: admin });
+
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 100,
+      wallet, tUSDC.address, tETH.address, 100, dPool2.contract.address, admin,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -430,8 +441,11 @@ describe("orderbook epoch transitions (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
+    const dPool3 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      .send({ from: admin });
+
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, EPOCH_LEN,
+      wallet, tUSDC.address, tETH.address, EPOCH_LEN, dPool3.contract.address, admin,
     ).send({ from: admin });
     orderbook = dOB.contract;
 

@@ -61,19 +61,25 @@ async function main() {
     admin,
   ).send({ from: admin });
 
-  // 100-block epochs in deployed environments; tests deploy with a short epoch.
+  const deployedPool = await LiquidityPoolContract.deploy(
+    wallet, tokenA.contract.address, tokenB.contract.address,
+  ).send({ from: admin });
+
+  // 100-block epochs in deployed environments; admin stands in as the clearing
+  // authority (the off-chain aggregator's role).
   const deployedOB = await OrderbookContract.deploy(
     wallet,
     tokenA.contract.address,
     tokenB.contract.address,
     100,
+    deployedPool.contract.address,
+    admin,
   ).send({ from: admin });
 
-  const deployedPool = await LiquidityPoolContract.deploy(
-    wallet,
-    tokenA.contract.address,
-    tokenB.contract.address,
-  ).send({ from: admin });
+  // Wire the pool to the orderbook (one-shot).
+  await deployedPool.contract.methods
+    .set_orderbook(deployedOB.contract.address)
+    .send({ from: admin });
 
   const result = {
     nodeUrl: NODE_URL,

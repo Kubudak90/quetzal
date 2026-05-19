@@ -19,11 +19,12 @@ pub contract Orderbook {
             address::AztecAddress,
             traits::{Deserialize, Packable, Serialize},
         },
-        state_vars::{Owned, PrivateSet, PublicImmutable, PublicMutable},
+        state_vars::{Map, Owned, PrivateSet, PublicImmutable, PublicMutable},
         utils::comparison::Comparator,
     };
 
     use token::Token;
+    use pool::LiquidityPool;
 
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
     /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
@@ -75,19 +76,32 @@ pub contract Orderbook {
         token_a_addr: PublicImmutable<AztecAddress, Context>,
         token_b_addr: PublicImmutable<AztecAddress, Context>,
         epoch_length: PublicImmutable<u32, Context>,
+        pool_addr: PublicImmutable<AztecAddress, Context>,
+        clearing_authority: PublicImmutable<AztecAddress, Context>,
+        fills: Map<Field, PublicMutable<u128, Context>, Context>,
     }
 
     /// Deploy-time initializer.
     ///
     /// - Records the two tradable token addresses.
-    /// - Stores `epoch_length` (number of L2 blocks an epoch stays OPEN).
-    /// - Opens epoch 0 at the current block, closing `epoch_length` blocks later.
+    /// - Records `pool_addr` (the LiquidityPool the net clearing flow swaps through)
+    ///   and `clearing_authority` (the only address allowed to call
+    ///   `close_epoch_and_clear`).
+    /// - Stores `epoch_length`; opens epoch 0.
     #[external("public")]
     #[initializer]
-    fn constructor(token_a: AztecAddress, token_b: AztecAddress, epoch_length: u32) {
+    fn constructor(
+        token_a: AztecAddress,
+        token_b: AztecAddress,
+        epoch_length: u32,
+        pool_addr: AztecAddress,
+        clearing_authority: AztecAddress,
+    ) {
         self.storage.token_a_addr.initialize(token_a);
         self.storage.token_b_addr.initialize(token_b);
         self.storage.epoch_length.initialize(epoch_length);
+        self.storage.pool_addr.initialize(pool_addr);
+        self.storage.clearing_authority.initialize(clearing_authority);
 
         let block: u32 = self.context.block_number();
         self.storage.current_epoch.write(EpochState {
@@ -302,6 +316,16 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_epoch_length() -> u32 {
         self.storage.epoch_length.read()
+    }
+
+    #[external("utility")]
+    unconstrained fn get_pool_addr() -> AztecAddress {
+        self.storage.pool_addr.read()
+    }
+
+    #[external("utility")]
+    unconstrained fn get_clearing_authority() -> AztecAddress {
+        self.storage.clearing_authority.read()
     }
 
     /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is

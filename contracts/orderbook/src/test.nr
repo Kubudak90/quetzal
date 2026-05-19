@@ -86,8 +86,11 @@ unconstrained fn deploy_orderbook(
     token_a: AztecAddress,
     token_b: AztecAddress,
     epoch_length: u32,
+    pool_addr: AztecAddress,
+    clearing_authority: AztecAddress,
 ) -> AztecAddress {
-    let initializer_call = Orderbook::interface().constructor(token_a, token_b, epoch_length);
+    let initializer_call =
+        Orderbook::interface().constructor(token_a, token_b, epoch_length, pool_addr, clearing_authority);
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
 
@@ -98,7 +101,7 @@ unconstrained fn constructor_sets_initial_epoch_state() {
 
     // Use the deployer's address as a placeholder for token address arguments - this test
     // only cares about the epoch state, not which token addresses are stored.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     let epoch: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
 
@@ -123,7 +126,7 @@ unconstrained fn submit_order_rejects_amount_zero() {
 
     // Placeholder token addresses are fine: the assertion on amount_in fires before any
     // token-contract call is attempted.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     let maker = env.create_light_account();
 
@@ -139,7 +142,7 @@ unconstrained fn submit_order_rejects_limit_price_zero() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
 
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     let maker = env.create_light_account();
 
@@ -160,15 +163,24 @@ unconstrained fn constructor_records_token_addrs_and_epoch_length() {
     let token_b = env.create_light_account();
     assert(token_a != token_b, "token_a and token_b must be distinct");
 
-    let orderbook = deploy_orderbook(&mut env, deployer, token_a, token_b, 42);
+    // Distinct placeholders for pool_addr and clearing_authority.
+    let pool_placeholder = env.create_light_account();
+    let clearing_placeholder = env.create_light_account();
+    assert(pool_placeholder != clearing_placeholder, "pool and clearing placeholders must be distinct");
+
+    let orderbook = deploy_orderbook(&mut env, deployer, token_a, token_b, 42, pool_placeholder, clearing_placeholder);
 
     let stored_a: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_a_addr());
     let stored_b: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_b_addr());
     let stored_len: u32 = env.execute_utility(Orderbook::at(orderbook).get_epoch_length());
+    let stored_pool: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_addr());
+    let stored_clearing: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_clearing_authority());
 
     assert(stored_a == token_a, "stored token_a must round-trip");
     assert(stored_b == token_b, "stored token_b must round-trip");
     assert(stored_len == 42, "stored epoch_length must round-trip");
+    assert(stored_pool == pool_placeholder, "stored pool_addr must round-trip");
+    assert(stored_clearing == clearing_placeholder, "stored clearing_authority must round-trip");
 }
 
 // ============================ CANCEL ORDER + GET ORDERS ============================
@@ -184,7 +196,7 @@ unconstrained fn cancel_order_rejects_unknown_nonce() {
 
     // Placeholder addresses are fine: the "order not found" assertion fires during note
     // retrieval, before any token-contract call is attempted.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     let maker = env.create_light_account();
 
@@ -197,7 +209,7 @@ unconstrained fn get_orders_empty_for_fresh_account() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
 
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     let owner = env.create_light_account();
     let orders = env.execute_utility(Orderbook::at(orderbook).get_orders(owner));
@@ -218,7 +230,7 @@ unconstrained fn close_epoch_advances_to_next_epoch() {
     let deployer = env.create_light_account();
 
     // Short epoch so we can cheaply advance past it.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 3);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 3, deployer, deployer);
 
     let before: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
 
@@ -244,7 +256,7 @@ unconstrained fn close_epoch_rejects_before_expiry() {
     let deployer = env.create_light_account();
 
     // Long epoch; we do NOT advance, so the epoch is still open and close must revert.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
 
     env.call_public(deployer, Orderbook::at(orderbook).close_epoch());
 }

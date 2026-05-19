@@ -62,15 +62,15 @@ describe("cli smoke (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
-    const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 8,
-    ).send({ from: admin });
-    orderbook = dOB.contract;
-
     const dP = await LiquidityPoolContract.deploy(
       wallet, tUSDC.address, tETH.address,
     ).send({ from: admin });
     pool = dP.contract;
+
+    const dOB = await OrderbookContract.deploy(
+      wallet, tUSDC.address, tETH.address, 8, pool.address, admin,
+    ).send({ from: admin });
+    orderbook = dOB.contract;
 
     await tUSDC.methods.mint_to_private(admin, MINT).send({ from: admin });
     await tETH.methods.mint_to_private(admin, MINT_ETH).send({ from: admin });
