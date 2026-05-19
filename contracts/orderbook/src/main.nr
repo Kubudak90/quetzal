@@ -298,6 +298,64 @@ pub contract Orderbook {
         });
     }
 
+    // ============================ CLAIM FILL ============================
+
+    /// Claim the output of a filled order. The maker nullifies their `OrderNote`
+    /// and receives `claimed_amount_out` of the output token (token B for a buy,
+    /// token A for a sell). `claimed_amount_out` is read off-chain from `get_fill`
+    /// and validated on-chain: the enqueued `_assert_fill` callback asserts it
+    /// equals the recorded fill, so a wrong amount reverts the whole tx.
+    ///
+    /// (The payout `transfer_public_to_private` is a private Token function and
+    /// must run here, in private context; the authoritative fill amount lives in
+    /// the `fills` PublicMutable which a private context cannot read - hence the
+    /// caller supplies it and the public callback validates it.)
+    #[external("private")]
+    fn claim_fill(order_nonce: Field, claimed_amount_out: u128) {
+        let maker = self.msg_sender();
+
+        // Retrieve + nullify the maker's filled OrderNote (the cancel_order pattern;
+        // the nullifier is the double-claim guard).
+        let options = NoteGetterOptions::new().select(
+            OrderNote::properties().nonce,
+            Comparator.EQ,
+            order_nonce,
+        ).set_limit(1);
+        let notes = self.storage.orders.at(maker).pop_notes(options);
+        assert(notes.len() == 1, "order not found");
+        let order = notes.get(0);
+        assert(order.owner == maker, "not order owner");
+
+        // A buy (side=false) is owed token B; a sell (side=true) is owed token A.
+        let token: AztecAddress = if order.side {
+            self.storage.token_a_addr.read()
+        } else {
+            self.storage.token_b_addr.read()
+        };
+
+        // Pay out the claimed amount; `from` is this contract (a self-call), so the
+        // authwit nonce is the literal 0.
+        self.call(Token::at(token).transfer_public_to_private(
+            self.address,
+            maker,
+            claimed_amount_out,
+            0,
+        ));
+
+        // Validate the claimed amount against the recorded fill, atomically.
+        self.enqueue_self._assert_fill(order_nonce, claimed_amount_out);
+    }
+
+    /// Public callback for `claim_fill`: assert the claimed payout matches the
+    /// recorded fill and that the order was actually filled. `only_self`.
+    #[external("public")]
+    #[only_self]
+    fn _assert_fill(order_nonce: Field, claimed_amount_out: u128) {
+        let recorded = self.storage.fills.at(order_nonce).read();
+        assert(recorded == claimed_amount_out, "claimed amount does not match the recorded fill");
+        assert(recorded > 0 as u128, "order not filled");
+    }
+
     // ============================ ORDER CANCELLATION ============================
 
     /// Cancel a resting order and return its escrow to the maker's PRIVATE balance.
@@ -410,6 +468,13 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_orders(owner: AztecAddress) -> BoundedVec<OrderNote, MAX_NOTES_PER_PAGE> {
         self.storage.orders.at(owner).view_notes(NoteViewerOptions::new())
+    }
+
+    /// The recorded clearing payout for `order_nonce` (0 == not filled). A maker
+    /// reads this to pass as `claimed_amount_out` to `claim_fill`.
+    #[external("utility")]
+    unconstrained fn get_fill(order_nonce: Field) -> u128 {
+        self.storage.fills.at(order_nonce).read()
     }
 
     pub mod test;

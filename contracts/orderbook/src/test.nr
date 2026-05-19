@@ -303,3 +303,26 @@ unconstrained fn close_epoch_and_clear_rejects_before_expiry() {
     };
     env.call_public(authority, Orderbook::at(orderbook).close_epoch_and_clear(empty_fills, zero_swap));
 }
+
+// ============================ CLAIM FILL ============================
+
+#[test(should_fail_with = "order not found")]
+unconstrained fn claim_fill_rejects_unknown_order() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+
+    let maker = env.create_light_account();
+    // No order was ever submitted, so claiming any nonce reverts at note retrieval.
+    env.call_private(maker, Orderbook::at(orderbook).claim_fill(0x4242, 1 as u128));
+}
+
+#[test]
+unconstrained fn get_fill_is_zero_for_unknown_order() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+
+    let recorded: u128 = env.execute_utility(Orderbook::at(orderbook).get_fill(0x4242));
+    assert(recorded == 0 as u128, "an unrecorded order must report a zero fill");
+}
