@@ -31,6 +31,9 @@ pub contract Orderbook {
     /// clearing circuit (Week 6+) which will sweep many resting notes at once.
     pub global MAX_INPUT_NOTES: u32 = 8;
 
+    /// Maximum filled orders applied in one clearing (the epoch order cap).
+    pub global MAX_FILLS: u32 = 128;
+
     /// Epoch state machine value indicating the epoch is OPEN and accepting new orders.
     global EPOCH_STATE_OPEN: u8 = 0;
 
@@ -67,6 +70,13 @@ pub contract Orderbook {
         pub state: u8,
         pub opened_at_block: u32,
         pub closes_at_block: u32,
+    }
+
+    /// One filled order in a clearing - the aggregator's per-order payout.
+    #[derive(Deserialize, Eq, Packable, Serialize)]
+    pub struct FillEntry {
+        pub order_nonce: Field,
+        pub amount_out: u128,
     }
 
     #[storage]
@@ -221,6 +231,64 @@ pub contract Orderbook {
         let block: u32 = self.context.block_number();
         assert(block >= current.closes_at_block, "epoch has not expired yet");
 
+        let epoch_length = self.storage.epoch_length.read();
+        self.storage.current_epoch.write(EpochState {
+            epoch_id: current.epoch_id + 1,
+            state: EPOCH_STATE_OPEN,
+            opened_at_block: block,
+            closes_at_block: block + epoch_length,
+        });
+    }
+
+    // ============================ CLEARING ============================
+
+    /// Apply one epoch's clearing on-chain. Authority-gated and trusted: the
+    /// `clearing_authority` (the off-chain aggregator) submits the per-order
+    /// `fills` and the aggregate net `swap`; this function relays them without
+    /// re-deriving (the Week-5d ZK proof will replace that trust). It performs
+    /// the net AMM swap against the Pool, records each fill, and advances the
+    /// epoch. `close_epoch` remains as the permissionless zero-fill fallback.
+    #[external("public")]
+    fn close_epoch_and_clear(
+        fills: BoundedVec<FillEntry, MAX_FILLS>,
+        swap: LiquidityPool::ClearingSwap,
+    ) {
+        assert(self.msg_sender() == self.storage.clearing_authority.read(), "not clearing authority");
+
+        let current = self.storage.current_epoch.read();
+        let block: u32 = self.context.block_number();
+        assert(block >= current.closes_at_block, "epoch has not expired yet");
+
+        // Net AMM swap: send the net input token to the Pool, then apply_clearing
+        // returns the net output token and updates the pool accounting.
+        let pool = self.storage.pool_addr.read();
+        if swap.a_to_pool > 0 as u128 {
+            self.call(Token::at(self.storage.token_a_addr.read()).transfer_public_to_public(
+                self.address, pool, swap.a_to_pool, 0,
+            ));
+        }
+        if swap.b_to_pool > 0 as u128 {
+            self.call(Token::at(self.storage.token_b_addr.read()).transfer_public_to_public(
+                self.address, pool, swap.b_to_pool, 0,
+            ));
+        }
+        self.call(LiquidityPool::at(pool).apply_clearing(swap));
+
+        // Record each fill. Reject a zero payout and a duplicate (an order that
+        // already has a recorded, unclaimed fill).
+        for i in 0..MAX_FILLS {
+            if i < fills.len() {
+                let e = fills.get(i);
+                assert(e.amount_out > 0 as u128, "fill amount must be positive");
+                assert(
+                    self.storage.fills.at(e.order_nonce).read() == 0 as u128,
+                    "order already filled",
+                );
+                self.storage.fills.at(e.order_nonce).write(e.amount_out);
+            }
+        }
+
+        // Advance the epoch (identical to close_epoch).
         let epoch_length = self.storage.epoch_length.read();
         self.storage.current_epoch.write(EpochState {
             epoch_id: current.epoch_id + 1,

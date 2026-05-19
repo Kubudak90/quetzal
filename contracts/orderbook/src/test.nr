@@ -260,3 +260,46 @@ unconstrained fn close_epoch_rejects_before_expiry() {
 
     env.call_public(deployer, Orderbook::at(orderbook).close_epoch());
 }
+
+// ============================ CLOSE EPOCH AND CLEAR ============================
+// The happy path needs a real Token + Pool wired together - that is integration
+// territory (Task 5). Pure-TXE here covers the two authority/deadline gates that
+// fire BEFORE any cross-contract call: an all-zero `ClearingSwap` and an empty
+// `fills` vec are sufficient because neither test reaches the AMM swap body.
+// `ClearingSwap` is the pool contract's `pub struct`, reachable across the dep
+// boundary via the `pool::LiquidityPool` module path.
+
+#[test(should_fail_with = "not clearing authority")]
+unconstrained fn close_epoch_and_clear_rejects_non_authority() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let authority = env.create_light_account();
+    // pool_addr placeholder = deployer; clearing_authority = `authority`.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
+
+    let stranger = env.create_light_account();
+    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_FILLS> = BoundedVec::new();
+    let zero_swap = pool::LiquidityPool::ClearingSwap {
+        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
+        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
+        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
+    };
+    env.call_public(stranger, Orderbook::at(orderbook).close_epoch_and_clear(empty_fills, zero_swap));
+}
+
+#[test(should_fail_with = "epoch has not expired yet")]
+unconstrained fn close_epoch_and_clear_rejects_before_expiry() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let authority = env.create_light_account();
+    // Long epoch; the authority calls immediately, before expiry.
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
+
+    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_FILLS> = BoundedVec::new();
+    let zero_swap = pool::LiquidityPool::ClearingSwap {
+        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
+        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
+        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
+    };
+    env.call_public(authority, Orderbook::at(orderbook).close_epoch_and_clear(empty_fills, zero_swap));
+}
