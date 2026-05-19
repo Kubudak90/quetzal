@@ -137,6 +137,8 @@ describe("cli smoke (live integration)", () => {
     ).send({ from: admin });
     orderbook = dOB.contract;
 
+    await pool.methods.set_orderbook(orderbook.address).send({ from: admin });
+
     await tUSDC.methods.mint_to_private(admin, MINT).send({ from: admin });
     await tETH.methods.mint_to_private(admin, MINT_ETH).send({ from: admin });
 
@@ -224,9 +226,6 @@ describe("cli smoke (live integration)", () => {
   });
 
   it("order -> clear -> claim round-trip via CLI", { timeout: 900_000 }, async () => {
-    // Wire the pool to the orderbook (required for apply_clearing to accept the caller).
-    await pool.methods.set_orderbook(orderbook.address).send({ from: admin });
-
     // Seed the pool with a balanced deposit so the aggregator can find a clearing price.
     // Use same-denomination units on both sides so spot = 1e18 (1:1 book).
     const POOL_AMOUNT = 500n * ONE_TUSDC; // small enough to stay within admin's balance
@@ -239,7 +238,7 @@ describe("cli smoke (live integration)", () => {
     // Sizes and limits are set to guarantee they cross at the 1:1 spot price.
     const PRICE_1 = 1_000_000_000_000_000_000n; // 1.0 (1e18-scaled)
     const BUY_AMOUNT = 10n * ONE_TUSDC;          // admin pays tUSDC
-    const SELL_AMOUNT = 10n * ONE_TUSDC;         // admin pays tETH (same unit scale for 1:1 book)
+    const SELL_AMOUNT = 10n * ONE_TUSDC;         // admin pays tETH, same 1e6 unit scale as tUSDC for the 1:1 book
     const buyNonce = randomField();
     const sellNonce = randomField();
 
@@ -277,6 +276,6 @@ describe("cli smoke (live integration)", () => {
 
     // The buy order (admin, account 0) should now be claimable via the CLI.
     const claimOut = zswap("claim", "--nonce", `0x${buyNonce.toString(16)}`);
-    assert.match(claimOut, /claimed .* output tokens/i, "`zswap claim` should confirm the claimed amount");
+    assert.match(claimOut, /claimed [1-9]\d* output tokens/i, "`zswap claim` should confirm the claimed amount");
   });
 });
