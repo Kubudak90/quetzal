@@ -224,43 +224,53 @@ orders this week; acceptable for the MVP.
 
 ```rust
 #[external("private")]
-fn claim_fill(order_nonce: Field, nonce: Field)
+fn claim_fill(order_nonce: Field, claimed_amount_out: u128)
 ```
 
-`order_nonce` identifies the maker's filled `OrderNote`; `nonce` is the authwit
-nonce for the inner token transfer.
+`order_nonce` identifies the maker's filled `OrderNote`. `claimed_amount_out` is
+the payout the maker expects - read off-chain from the public `fills` map via the
+`get_fill` getter (6.4) - and is **validated on-chain** before the transaction
+can settle (6.2).
 
 ### 6.2 Logic
 
+The payout (`transfer_public_to_private`) is itself a **private** Token function,
+so it must run in `claim_fill`'s private context. But the authoritative fill
+amount lives in the `fills` `PublicMutable`, which a private context cannot read,
+and a public callback cannot perform the payout (a public function cannot invoke
+a private one). The resolution is the **hint-and-validate** pattern (as in the
+Week-5 pool `deposit`): the caller supplies the amount, the private function pays
+it, and an enqueued public callback asserts the amount against the recorded fill
+- atomically, so a wrong amount reverts the whole transaction.
+
 ```
-1. maker = msg_sender()
-2. Retrieve + nullify the maker's OrderNote matching `order_nonce` via pop_notes
-   (NoteGetterOptions.select on OrderNote.nonce, set_limit(1)) - the cancel_order
-   pattern. assert(notes.len() == 1, "order not found"); assert owner == maker.
-3. Read the recorded fill. Because PublicMutable is not readable from private
-   context, the lookup is deferred to a public callback (the _assert_epoch_open
-   pattern): enqueue `_pay_claim(order_nonce, side, maker, nonce)`.
-4. Build nothing else - the OrderNote is consumed; the payout happens in the
-   callback.
+claim_fill (private):
+  1. maker = msg_sender()
+  2. Retrieve + nullify the maker's OrderNote matching `order_nonce` via pop_notes
+     (NoteGetterOptions.select on OrderNote.nonce, set_limit(1)) - the cancel_order
+     pattern. assert(notes.len() == 1, "order not found"); assert owner == maker.
+  3. token = if order.side { token_a } else { token_b }   // a SELL (side=true) is
+                                                           // owed token A, a BUY token B
+  4. Token::at(token).transfer_public_to_private(self.address, maker,
+                                                 claimed_amount_out, 0)
+  5. enqueue_self._assert_fill(order_nonce, claimed_amount_out)
 
-_pay_claim (public, only_self):
-   amount_out = self.storage.fills.at(order_nonce).read()
-   assert(amount_out > 0, "order not filled")
-   token = if side { token_a } else { token_b }   // a SELL (side=true) is owed
-                                                   // token A; a BUY token B
-   Token::at(token).transfer_public_to_private(self.address, maker, amount_out, nonce)
+_assert_fill (public, only_self):
+  recorded = self.storage.fills.at(order_nonce).read()
+  assert(recorded == claimed_amount_out, "claimed amount does not match the recorded fill")
+  assert(recorded > 0, "order not filled")
 ```
 
-Note the token choice: a **buy** (`side == false`) paid token A and is owed
-token B; a **sell** (`side == true`) paid token B and is owed token A. The
-private half nullifies the note (only the owner can); the enqueued public half
-reads `fills` and pays. The pattern mirrors `submit_order`/`cancel_order`:
-private work + an enqueued public callback for the `PublicMutable` access.
+Token choice: a **buy** (`side == false`) paid token A and is owed token B; a
+**sell** (`side == true`) paid token B and is owed token A. `token_a_addr` /
+`token_b_addr` are `PublicImmutable`, so the private context can read them
+directly. `transfer_public_to_private`'s `from` is the Orderbook itself (a
+self-call), so the authwit nonce is the literal `0` (the Week-3 finding) - there
+is no authwit-nonce parameter on `claim_fill`.
 
-`transfer_public_to_private`'s `from` is the Orderbook itself (a self-call), so
-the authwit nonce passed to it MUST be `0` (the Week-3 finding). `claim_fill`'s
-`nonce` parameter is therefore passed as `0` to the token call; it is kept in
-the signature only for interface symmetry and may be dropped in the plan.
+If the maker claims a wrong amount, or claims an unfilled order
+(`recorded == 0`), `_assert_fill` reverts and the whole transaction - including
+the token payout and the note nullification - reverts atomically.
 
 ### 6.3 Failure modes
 
@@ -268,8 +278,16 @@ the signature only for interface symmetry and may be dropped in the plan.
 |---|---|
 | No `OrderNote` matches `order_nonce` | `pop_notes` returns empty -> assert in `claim_fill` |
 | Caller is not the order's owner | per-owner `PrivateSet` yields no match; explicit owner assert |
-| Order was never filled | `fills.at(order_nonce).read() == 0` -> assert in `_pay_claim` |
+| Claimed amount != recorded fill | `_assert_fill`: `recorded == claimed_amount_out` |
+| Order was never filled | `_assert_fill`: `recorded > 0` (a `0` recorded fill fails it) |
 | Double claim | the `OrderNote` nullifier was already emitted -> the tx fails |
+
+### 6.4 `get_fill` getter
+
+`#[external("utility")] unconstrained fn get_fill(order_nonce: Field) -> u128`
+returns `fills.at(order_nonce).read()` so a maker (and the CLI) can read the
+recorded payout to pass as `claimed_amount_out`. `0` means the order is not (yet)
+filled.
 
 An unfilled resting order is untouched by clearing and by `claim_fill`; the
 maker still `cancel_order`s it (escrow returned) or leaves it to a later epoch.
@@ -374,7 +392,7 @@ already carries every contract address; no new field beyond what section 4 adds
 ```
 contracts/orderbook/src/main.nr   ~ constructor (+pool_addr, +clearing_authority);
                                     +fills/pool_addr/clearing_authority storage;
-                                    +close_epoch_and_clear, +claim_fill, +_pay_claim;
+                                    +close_epoch_and_clear, +claim_fill, +_assert_fill, +get_fill;
                                     +FillEntry, +ClearingSwap types
 contracts/orderbook/src/test.nr   ~ update deploy helper; + clearing/claim TXE tests
 contracts/pool/src/main.nr        ~ +orderbook_addr storage, +set_orderbook,
@@ -401,7 +419,7 @@ the first plan task, as in Week 4.
    storage, and update every deploy site; recompile + codegen.
 3. Orderbook: `close_epoch_and_clear` + `FillEntry`/`ClearingSwap` types (+ TXE
    tests for the gates).
-4. Orderbook: `claim_fill` + `_pay_claim` (+ TXE tests).
+4. Orderbook: `claim_fill` + `_assert_fill` + the `get_fill` getter (+ TXE tests).
 5. Integration: the full clear -> claim round trip (`clearing.test.ts`).
 6. CLI `zswap claim` + `deploy-tokens.ts` + the CLI smoke case.
 7. Final clean rebuild + smoke; README; milestone commit + tag `week-05c-onchain-clearing`.
@@ -425,7 +443,7 @@ the first plan task, as in Week 4.
 
 ## 13. Acceptance criteria
 
-- `close_epoch_and_clear`, `claim_fill`, `_pay_claim`, and the Pool's
+- `close_epoch_and_clear`, `claim_fill`, `_assert_fill`, `get_fill`, and the Pool's
   `set_orderbook` / `apply_clearing` compile; `pnpm compile` / `pnpm codegen`
   succeed for all three contracts.
 - All prior tests pass (updated for the constructor change); the new TXE tests
@@ -439,7 +457,6 @@ the first plan task, as in Week 4.
 
 ## 14. Open questions deferred to implementation
 
-- Whether `claim_fill` keeps the `nonce` parameter (passed as `0`) or drops it.
 - Whether `close_epoch_and_clear` should also assert `fills.len() <= MAX_FILLS`
   explicitly or rely on the `BoundedVec` capacity.
 - The exact `BoundedVec` / array spelling for the `fills` argument and whether a
