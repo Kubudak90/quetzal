@@ -417,6 +417,274 @@ describe(
         assert.ok(true, "bb verify exited 0 — proof is valid");
       },
     );
+
+    it(
+      "E2: tampered fills[0].amount_out makes bb prove --verify reject",
+      { timeout: 28 * 60 * 1_000 }, // 28 min per test
+      async () => {
+        // ---------------------------------------------------------------
+        // 1. Re-seed alice + bob for a second round of orders.
+        //    E1 spent their initial balances; mint fresh tokens so E2 can
+        //    submit_order without a "Balance too low" revert.
+        // ---------------------------------------------------------------
+        await tUSDC.methods.mint_to_private(alice, BUY_USDC + ONE_USDC).send({ from: admin });
+        await tETH.methods.mint_to_private(bob, SELL_ETH + ONE_ETH).send({ from: admin });
+
+        // ---------------------------------------------------------------
+        // 3. Submit one buy (alice) and one sell (bob)
+        //    Identical order scenario to E1 — perfectly balanced at spot P*=2e6.
+        // ---------------------------------------------------------------
+        const buyNonce  = randomField();
+        const sellNonce = randomField();
+
+        await orderbook.methods
+          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce)
+          .send({ from: alice });
+
+        await orderbook.methods
+          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce)
+          .send({ from: bob });
+
+        // ---------------------------------------------------------------
+        // 4. Read ALL of alice's and bob's order notes (E1 + E2 notes, cumulative).
+        //    The epoch accumulator now covers all submitted orders; the witness
+        //    builder requires orders.length == epoch.order_count.
+        // ---------------------------------------------------------------
+        const aliceRaw2 = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+        const aliceBv2 = (aliceRaw2 as {
+          result: { storage: OrderNoteFields[]; len: bigint | number };
+        }).result;
+        const aliceLen2 = Number(aliceBv2.len);
+        assert.ok(aliceLen2 >= 2, `alice should have at least 2 orders (E1+E2), got ${aliceLen2}`);
+        const aliceNotes2 = aliceBv2.storage.slice(0, aliceLen2);
+
+        const bobRaw2 = await orderbook.methods.get_orders(bob).simulate({ from: bob });
+        const bobBv2 = (bobRaw2 as {
+          result: { storage: OrderNoteFields[]; len: bigint | number };
+        }).result;
+        const bobLen2 = Number(bobBv2.len);
+        assert.ok(bobLen2 >= 2, `bob should have at least 2 orders (E1+E2), got ${bobLen2}`);
+        const bobNotes2 = bobBv2.storage.slice(0, bobLen2);
+
+        // Spot-check: E2's new orders are present.
+        assert.ok(aliceNotes2.find((n) => BigInt(n.nonce) === buyNonce), "alice's E2 buy order note not found");
+        assert.ok(bobNotes2.find((n) => BigInt(n.nonce) === sellNonce), "bob's E2 sell order note not found");
+
+        // ---------------------------------------------------------------
+        // 5. Read epoch state and pool snapshot
+        // ---------------------------------------------------------------
+        const epochRaw2 = await orderbook.methods.get_epoch().simulate({ from: admin });
+        const epochResult2 = (epochRaw2 as {
+          result: {
+            order_acc: bigint;
+            cancel_acc: bigint;
+            order_count: bigint | number;
+            cancel_count: bigint | number;
+            closes_at_block: bigint;
+          };
+        }).result;
+
+        const poolStateRaw2 = await pool.methods.get_pool_state().simulate({ from: admin });
+        const poolState2 = poolStateRaw2.result;
+
+        // ---------------------------------------------------------------
+        // 6. Build orders[] from ALL notes (E1 + E2), sorted by submission order.
+        //    Order count is 4 (2 from E1 + 2 from E2).
+        // ---------------------------------------------------------------
+        const allNotes2: OrderNotePreimage[] = [
+          ...aliceNotes2.map((n) => ({
+            side: false,
+            amount_in: BigInt(n.amount_in),
+            limit_price: BigInt(n.limit_price),
+            order_nonce: BigInt(n.nonce),
+            submitted_at_block: Number(n.submitted_at_block),
+            owner: BigInt(n.owner),
+          })),
+          ...bobNotes2.map((n) => ({
+            side: true,
+            amount_in: BigInt(n.amount_in),
+            limit_price: BigInt(n.limit_price),
+            order_nonce: BigInt(n.nonce),
+            submitted_at_block: Number(n.submitted_at_block),
+            owner: BigInt(n.owner),
+          })),
+        ].sort((a, b) => {
+          if (a.submitted_at_block !== b.submitted_at_block)
+            return a.submitted_at_block - b.submitted_at_block;
+          return a.order_nonce < b.order_nonce ? -1 : a.order_nonce > b.order_nonce ? 1 : 0;
+        });
+
+        assert.equal(
+          allNotes2.length, Number(epochResult2.order_count),
+          `orders array length (${allNotes2.length}) must match epoch.order_count (${epochResult2.order_count})`,
+        );
+
+        // ---------------------------------------------------------------
+        // 7. Run the off-chain aggregator over ALL 4 orders
+        // ---------------------------------------------------------------
+        const clearingOrders2: ClearingOrder[] = allNotes2.map((o) => ({
+          side: o.side,
+          amountIn: o.amount_in,
+          limitPrice: o.limit_price,
+          submittedAtBlock: o.submitted_at_block,
+          orderNonce: o.order_nonce,
+        }));
+
+        const clearingResult2 = computeClearing(
+          {
+            reserveA: BigInt(poolState2.reserve_a),
+            reserveB: BigInt(poolState2.reserve_b),
+            lpSupply: BigInt(poolState2.lp_supply),
+          },
+          clearingOrders2,
+        );
+
+        assert.equal(clearingResult2.cleared, true, "aggregator must find a clearing price (E2)");
+        // 4 orders total (2 buys + 2 sells), all balanced → 4 fills expected
+        assert.equal(
+          clearingResult2.fills.length, 4,
+          "all 4 orders (2 buys + 2 sells across E1+E2) must be filled",
+        );
+
+        const ordersForWitness2 = allNotes2;
+
+        // ---------------------------------------------------------------
+        // 8. Build the Prover.toml witness
+        // ---------------------------------------------------------------
+        const epoch2: EpochState = {
+          order_acc: epochResult2.order_acc,
+          cancel_acc: epochResult2.cancel_acc,
+          order_count: Number(epochResult2.order_count),
+          cancel_count: Number(epochResult2.cancel_count),
+        };
+        const poolSnap2: PoolSnapshotForCircuit = {
+          reserve_a: BigInt(poolState2.reserve_a),
+          reserve_b: BigInt(poolState2.reserve_b),
+          lp_supply: BigInt(poolState2.lp_supply),
+        };
+
+        const { proverToml: proverTomlOriginal } = buildClearingWitness({
+          epoch: epoch2,
+          pool: poolSnap2,
+          orders: ordersForWitness2,
+          cancellationIndices: [],
+          clearing: clearingResult2,
+          maxOrders: CIRCUIT_MAX_ORDERS,
+        });
+
+        // ---------------------------------------------------------------
+        // 9. Tamper: bump fills[0].amount_out by 1 in the TOML string
+        //    The regex matches the first `amount_out = "<digits>"` occurrence
+        //    in the serialised Prover.toml (which belongs to fills[0]).
+        // ---------------------------------------------------------------
+        const tampered = proverTomlOriginal.replace(
+          /(amount_out\s*=\s*")(\d+)(")/,  // first match only → fills[0].amount_out
+          (_match, prefix: string, num: string, suffix: string) => {
+            return `${prefix}${BigInt(num) + 1n}${suffix}`;
+          },
+        );
+        if (tampered === proverTomlOriginal) {
+          throw new Error(
+            "Tampering regex did not match — Prover.toml format may have changed. " +
+            "Check that buildClearingWitness emits `amount_out = \"<n>\"` in the fills section.",
+          );
+        }
+        console.log("E2: Prover.toml tampered — fills[0].amount_out bumped by 1");
+
+        // ---------------------------------------------------------------
+        // 10. Write the TAMPERED Prover.toml to the circuit directory
+        // ---------------------------------------------------------------
+        const proverTomlPath2 = `${CIRCUIT_DIR}/Prover.toml`;
+        writeFileSync(proverTomlPath2, tampered, "utf8");
+        console.log(`E2: Wrote tampered Prover.toml to ${proverTomlPath2}`);
+
+        // ---------------------------------------------------------------
+        // 11. Run nargo execute with the tampered witness.
+        //    The circuit's per-fill payout assertion should fail here
+        //    (constraint violation during witness generation).
+        //    If nargo execute somehow passes, bb prove must reject.
+        // ---------------------------------------------------------------
+        const execResult2 = spawnSync(
+          "/bin/bash",
+          [
+            "-c",
+            `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
+          ],
+          { encoding: "utf8", timeout: 5 * 60 * 1_000 },
+        );
+
+        if (execResult2.status !== 0) {
+          // Expected path: nargo execute rejects the tampered witness.
+          console.log(
+            "E2 PASS (nargo execute rejected tampered witness):",
+            execResult2.stderr?.slice(0, 500) ?? execResult2.stdout?.slice(0, 500),
+          );
+          assert.ok(true, "nargo execute correctly rejected the tampered Prover.toml");
+          return;
+        }
+
+        // nargo execute unexpectedly passed — try bb prove (must reject).
+        console.log("E2: nargo execute passed unexpectedly; trying bb prove to force rejection...");
+
+        const vkDir2    = `${CIRCUIT_DIR}/target/vk`;
+        const proofDir2 = `${CIRCUIT_DIR}/target/proofdir-tampered`;
+        rmSync(proofDir2, { recursive: true, force: true });
+        mkdirSync(proofDir2, { recursive: true });
+
+        const vkResult2 = spawnSync(
+          BB_BIN,
+          [
+            "write_vk",
+            "-b", `${CIRCUIT_DIR}/target/clearing_test.json`,
+            "-o", vkDir2,
+          ],
+          { encoding: "utf8", timeout: 5 * 60 * 1_000 },
+        );
+        // Non-fatal if vk already exists — proceed regardless.
+        const vkFile2 = `${vkDir2}/vk`;
+
+        const proveResult2 = spawnSync(
+          BB_BIN,
+          [
+            "prove",
+            "-b", `${CIRCUIT_DIR}/target/clearing_test.json`,
+            "-w", `${CIRCUIT_DIR}/target/clearing_test.gz`,
+            "-o", proofDir2,
+            "-k", vkFile2,
+          ],
+          { encoding: "utf8", timeout: 20 * 60 * 1_000 },
+        );
+
+        if (proveResult2.status !== 0) {
+          console.log(
+            "E2 PASS (bb prove rejected tampered witness):",
+            proveResult2.stderr?.slice(0, 500) ?? proveResult2.stdout?.slice(0, 500),
+          );
+          assert.ok(true, "bb prove correctly rejected the tampered witness");
+          return;
+        }
+
+        // Attempt verify — if prove somehow generated an artifact, verify must reject.
+        const verifyResult2 = spawnSync(
+          BB_BIN,
+          [
+            "verify",
+            "-k", vkFile2,
+            "-p", `${proofDir2}/proof`,
+            "-i", `${proofDir2}/public_inputs`,
+          ],
+          { encoding: "utf8", timeout: 5 * 60 * 1_000 },
+        );
+
+        assert.notEqual(
+          verifyResult2.status, 0,
+          "bb verify must reject the tampered proof — the pipeline should NOT produce a valid proof " +
+          "for a tampered witness. Either nargo execute, bb prove, or bb verify must exit non-zero.",
+        );
+
+        console.log("E2 PASS (bb verify rejected tampered proof)");
+      },
+    );
   },
 );
 
