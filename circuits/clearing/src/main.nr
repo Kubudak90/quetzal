@@ -71,7 +71,32 @@ fn main(
         }
     }
 
-    // Silence "unused" for inputs not consumed yet (Tasks 7-9 will use them).
+    // DoS resistance (sec 6.3): every eligible non-cancelled order must be in fills.
+    // Derive is_filled from fill_to_order_index[0..fills_len].
+    let mut is_filled: [bool; MAX_ORDERS_PER_EPOCH] = [false; MAX_ORDERS_PER_EPOCH];
+    for i in 0..MAX_ORDERS_PER_EPOCH {
+        if (i as u32) < fills_len {
+            let j = fill_to_order_index[i];
+            // Scan-and-set, mirroring binding::derive_is_cancelled.
+            for k in 0..MAX_ORDERS_PER_EPOCH {
+                if (k as u32) == j {
+                    is_filled[k] = true;
+                }
+            }
+        }
+    }
+
+    for k in 0..MAX_ORDERS_PER_EPOCH {
+        if (k as u32) < order_count {
+            if !is_cancelled[k] {
+                if pricing::eligible(orders[k], clearing_price) {
+                    assert(is_filled[k], "eligible non-cancelled order missing from fills");
+                }
+            }
+        }
+    }
+
+    // Silence "unused" for inputs not consumed yet (Tasks 8-9 will use them).
     let _ = reserve_a;
     let _ = reserve_b;
     let _ = lp_supply;

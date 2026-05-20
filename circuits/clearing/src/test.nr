@@ -168,3 +168,30 @@ fn u8_payout_ineligible_zero_or_panic() {
     };
     assert(!eligible(buy_under_limit, p_star), "buy limit < P* must NOT be eligible");
 }
+
+// U6: DoS resistance mask derivation - an eligible non-cancelled order omitted
+// from fills shows up as a violation in the mask scan. (We exercise the mask
+// logic in isolation here; main.nr's main assert is what catches the violation
+// in the real proof.)
+#[test]
+fn u6_dos_resistance_mask_derivation() {
+    let mut is_filled: [bool; MAX_ORDERS_PER_EPOCH] = [false; MAX_ORDERS_PER_EPOCH];
+    is_filled[0] = true;
+    is_filled[2] = true;
+
+    let is_cancelled: [bool; MAX_ORDERS_PER_EPOCH] = [false; MAX_ORDERS_PER_EPOCH];
+
+    // Order at index 1 is eligible & not cancelled but not filled -> violation.
+    let order_count: u32 = 3;
+    let mut violation = false;
+    for k in 0..MAX_ORDERS_PER_EPOCH {
+        if (k as u32) < order_count {
+            if !is_cancelled[k] {
+                if !is_filled[k] {
+                    violation = true;
+                }
+            }
+        }
+    }
+    assert(violation, "omitted eligible order must be detected as a violation");
+}
