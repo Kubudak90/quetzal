@@ -346,3 +346,32 @@ unconstrained fn flatten_clearing_public_slot_order() {
     assert(flat[81] == 1009, "slot 81 swap.fee_a_per_share_increment");
     assert(flat[82] == 1010, "slot 82 swap.fee_b_per_share_increment");
 }
+
+// _apply_verified_clearing is #[only_self]; an external public call must reject.
+// The expected error message comes from aztec-nr's only_self diagnostic.
+#[test(should_fail)]
+unconstrained fn apply_verified_clearing_rejects_external_call() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
+
+    let fills: [Orderbook::FillEntry; Orderbook::MAX_ORDERS_PER_EPOCH] = [
+        Orderbook::FillEntry { order_nonce: 0, amount_out: 0 as u128 };
+        Orderbook::MAX_ORDERS_PER_EPOCH
+    ];
+    let zero_swap = pool::LiquidityPool::ClearingSwap {
+        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
+        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
+        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
+    };
+    let pi = Orderbook::ClearingPublic {
+        order_acc: 0, cancel_acc: 0, order_count: 0, cancel_count: 0,
+        reserve_a: 0 as u128, reserve_b: 0 as u128, lp_supply: 0 as u128,
+        clearing_price: 0 as u128,
+        fills, fills_len: 0, swap: zero_swap,
+    };
+
+    let stranger = env.create_light_account();
+    // The #[only_self] guard fires before any body logic.
+    env.call_public(stranger, Orderbook::at(orderbook)._apply_verified_clearing(pi));
+}

@@ -388,22 +388,62 @@ pub contract Orderbook {
 
     // ============================ CLEARING ============================
 
-    /// DEPRECATED (Week 5d-3). Always reverts. Kept until Task 4 removes it.
-    /// Use `close_epoch_and_clear_verified` (Task 4) instead.
-    #[external("public")]
-    fn close_epoch_and_clear(
-        fills: BoundedVec<FillEntry, MAX_ORDERS_PER_EPOCH>,
-        swap: LiquidityPool::ClearingSwap,
+    /// Apply one epoch's clearing on-chain, gated by a recursive verify of the
+    /// Week 5d-2 clearing circuit's proof. The replacement for the W5c
+    /// `close_epoch_and_clear`: no authority gate, no trust -- anyone holding
+    /// `(public_inputs, proof, vk)` for the current epoch may advance it.
+    ///
+    /// The full verification key is passed as a calldata arg because Aztec's
+    /// MAX_PUBLIC_DATA_UPDATE_REQUESTS_PER_TX (~63) makes storing 127 Field
+    /// slots in a single constructor tx infeasible. The contract anchors trust
+    /// via `clearing_vk_hash` (stored at deploy): `std::verify_proof_with_type`
+    /// takes both `vk` and `vk_hash`, and Honk's internal vk-vs-hash binding
+    /// enforces that the supplied `vk` matches `vk_hash`. A mismatched vk
+    /// produces a hash that fails this internal check (revert).
+    ///
+    /// Flow:
+    /// 1. Flatten public_inputs to the [Field; 83] vector matching the prover's view.
+    /// 2. `std::verify_proof_with_type(vk, proof, flat, vk_hash, 1)` -- recursive verify.
+    /// 3. Enqueue `_apply_verified_clearing` which under public-state guards verifies
+    ///    freshness (binding inputs match the current epoch's accumulators), runs the
+    ///    net AMM swap + records fills + advances the epoch.
+    ///
+    /// Replay protection is automatic: an old proof's order_acc cannot match the
+    /// post-clearing epoch's reset acc (=0).
+    #[external("private")]
+    fn close_epoch_and_clear_verified(
+        public_inputs: ClearingPublic,
+        proof: [Field; 456],
+        vk: [Field; 127],
     ) {
-        assert(false, "close_epoch_and_clear deprecated; use close_epoch_and_clear_verified");
+        let vk_hash = self.storage.clearing_vk_hash.read();
+        // 1 = Honk proof type per Aztec/bb conventions.
+        // Honk proofs embed public inputs in the proof bytes (IVC IO); the
+        // public_inputs argument must be empty -- passing a non-empty array
+        // causes bb to abort with "unexpected non-empty public_inputs in HN constraint".
+        std::verify_proof_with_type(vk, proof, [], vk_hash, 1);
+        self.enqueue_self._apply_verified_clearing(public_inputs);
+    }
 
+    /// Public callback: under public-state guards, run the net AMM swap, record
+    /// per-order fills, and advance the epoch. only_self ensures only the matching
+    /// close_epoch_and_clear_verified private call (via enqueue_self) can invoke it.
+    #[external("public")]
+    #[only_self]
+    fn _apply_verified_clearing(public_inputs: ClearingPublic) {
         let current = self.storage.current_epoch.read();
         let block: u32 = self.context.block_number();
         assert(block >= current.closes_at_block, "epoch has not expired yet");
 
-        // Net AMM swap: send the net input token to the Pool, then apply_clearing
-        // returns the net output token and updates the pool accounting.
+        // Freshness: bind to the CURRENT epoch's accumulators. Replay rejects here.
+        assert(public_inputs.order_acc == current.order_acc, "order_acc mismatch");
+        assert(public_inputs.cancel_acc == current.cancel_acc, "cancel_acc mismatch");
+        assert(public_inputs.order_count == current.order_count, "order_count mismatch");
+        assert(public_inputs.cancel_count == current.cancel_count, "cancel_count mismatch");
+
+        // Net AMM swap (identical to the W5c flow).
         let pool = self.storage.pool_addr.read();
+        let swap = public_inputs.swap;
         if swap.a_to_pool > 0 as u128 {
             self.call(Token::at(self.storage.token_a_addr.read()).transfer_public_to_public(
                 self.address, pool, swap.a_to_pool, 0,
@@ -416,11 +456,10 @@ pub contract Orderbook {
         }
         self.call(LiquidityPool::at(pool).apply_clearing(swap));
 
-        // Record each fill. Reject a zero payout and a duplicate (an order that
-        // already has a recorded, unclaimed fill).
+        // Record each fill (same loop as W5c's close_epoch_and_clear).
         for i in 0..MAX_ORDERS_PER_EPOCH {
-            if i < fills.len() {
-                let e = fills.get(i);
+            if (i as u32) < public_inputs.fills_len {
+                let e = public_inputs.fills[i];
                 assert(e.amount_out > 0 as u128, "fill amount must be positive");
                 assert(
                     self.storage.fills.at(e.order_nonce).read() == 0 as u128,
@@ -430,15 +469,15 @@ pub contract Orderbook {
             }
         }
 
-        // Advance the epoch (identical to close_epoch).
+        // Advance the epoch (accumulator fields reset to 0).
         let epoch_length = self.storage.epoch_length.read();
         self.storage.current_epoch.write(EpochState {
             epoch_id: current.epoch_id + 1,
             state: EPOCH_STATE_OPEN,
             opened_at_block: block,
             closes_at_block: block + epoch_length,
-            order_acc: 0,
-            cancel_acc: 0,
+            order_acc:   0,
+            cancel_acc:  0,
             order_count: 0,
             cancel_count: 0,
         });
