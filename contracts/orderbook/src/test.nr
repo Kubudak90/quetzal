@@ -290,3 +290,59 @@ unconstrained fn get_fill_is_zero_for_unknown_order() {
     let recorded: u128 = env.execute_utility(Orderbook::at(orderbook).get_fill(0x4242));
     assert(recorded == 0 as u128, "an unrecorded order must report a zero fill");
 }
+
+#[test]
+unconstrained fn flatten_clearing_public_slot_order() {
+    let mut fills: [Orderbook::FillEntry; Orderbook::MAX_ORDERS_PER_EPOCH] = [
+        Orderbook::FillEntry { order_nonce: 0, amount_out: 0 as u128 };
+        Orderbook::MAX_ORDERS_PER_EPOCH
+    ];
+    fills[0] = Orderbook::FillEntry { order_nonce: 100, amount_out: 200 as u128 };
+    fills[1] = Orderbook::FillEntry { order_nonce: 101, amount_out: 201 as u128 };
+
+    let p = Orderbook::ClearingPublic {
+        order_acc:      11,
+        cancel_acc:     22,
+        order_count:    33,
+        cancel_count:   44,
+        reserve_a:      55 as u128,
+        reserve_b:      66 as u128,
+        lp_supply:      77 as u128,
+        clearing_price: 88 as u128,
+        fills,
+        fills_len:      2,
+        swap: pool::LiquidityPool::ClearingSwap {
+            a_to_pool: 1001 as u128, b_to_pool: 1002 as u128,
+            a_from_pool: 1003 as u128, b_from_pool: 1004 as u128,
+            reserve_a_add: 1005 as u128, reserve_a_sub: 1006 as u128,
+            reserve_b_add: 1007 as u128, reserve_b_sub: 1008 as u128,
+            fee_a_per_share_increment: 1009 as u128, fee_b_per_share_increment: 1010 as u128,
+        },
+    };
+
+    let flat = Orderbook::flatten_clearing_public(p);
+
+    assert(flat[0] == 11, "slot 0 order_acc");
+    assert(flat[1] == 22, "slot 1 cancel_acc");
+    assert(flat[2] == 33, "slot 2 order_count");
+    assert(flat[3] == 44, "slot 3 cancel_count");
+    assert(flat[4] == 55, "slot 4 reserve_a");
+    assert(flat[5] == 66, "slot 5 reserve_b");
+    assert(flat[6] == 77, "slot 6 lp_supply");
+    assert(flat[7] == 88, "slot 7 clearing_price");
+    assert(flat[8] == 100, "slot 8 fills[0].order_nonce");
+    assert(flat[9] == 200, "slot 9 fills[0].amount_out");
+    assert(flat[10] == 101, "slot 10 fills[1].order_nonce");
+    assert(flat[11] == 201, "slot 11 fills[1].amount_out");
+    assert(flat[72] == 2, "slot 72 fills_len");
+    assert(flat[73] == 1001, "slot 73 swap.a_to_pool");
+    assert(flat[74] == 1002, "slot 74 swap.b_to_pool");
+    assert(flat[75] == 1003, "slot 75 swap.a_from_pool");
+    assert(flat[76] == 1004, "slot 76 swap.b_from_pool");
+    assert(flat[77] == 1005, "slot 77 swap.reserve_a_add");
+    assert(flat[78] == 1006, "slot 78 swap.reserve_a_sub");
+    assert(flat[79] == 1007, "slot 79 swap.reserve_b_add");
+    assert(flat[80] == 1008, "slot 80 swap.reserve_b_sub");
+    assert(flat[81] == 1009, "slot 81 swap.fee_a_per_share_increment");
+    assert(flat[82] == 1010, "slot 82 swap.fee_b_per_share_increment");
+}

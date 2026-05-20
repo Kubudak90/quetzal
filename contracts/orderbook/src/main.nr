@@ -90,6 +90,25 @@ pub contract Orderbook {
         pub amount_out: u128,
     }
 
+    /// Mirror of the Week 5d-2 clearing circuit's `ClearingPublic`. Field
+    /// order MUST match `circuits/clearing/src/main.nr`'s fn main pub parameter
+    /// declaration order, otherwise `flatten_clearing_public` produces a vector
+    /// the prover did not flatten to and the verify rejects.
+    #[derive(Deserialize, Eq, Packable, Serialize)]
+    pub struct ClearingPublic {
+        pub order_acc:      Field,
+        pub cancel_acc:     Field,
+        pub order_count:    u32,
+        pub cancel_count:   u32,
+        pub reserve_a:      u128,
+        pub reserve_b:      u128,
+        pub lp_supply:      u128,
+        pub clearing_price: u128,
+        pub fills:          [FillEntry; MAX_ORDERS_PER_EPOCH],
+        pub fills_len:      u32,
+        pub swap:           LiquidityPool::ClearingSwap,
+    }
+
     #[storage]
     struct Storage<Context> {
         orders: Owned<PrivateSet<OrderNote, Context>, Context>,
@@ -327,6 +346,44 @@ pub contract Orderbook {
             order_count: 0,
             cancel_count: 0,
         });
+    }
+
+    /// Flatten a ClearingPublic to the [Field; 83] vector the recursive verifier
+    /// expects. Slot order matches `circuits/clearing/src/main.nr`'s fn main pub
+    /// parameter declaration order: scalars, then `fills`, then `fills_len`, then
+    /// the 10 swap fields. ANY reorder on the circuit side requires the matching
+    /// reorder here.
+    // Module-internal helper; #[contract_library_method] keeps the Aztec macro
+    // from treating this as a contract entry point (no #[external] / no pub on
+    // return). Aztec-nr exposes this attribute for exactly this case: pure
+    // helpers that live inside the contract module.
+    #[contract_library_method]
+    fn flatten_clearing_public(p: ClearingPublic) -> [Field; 83] {
+        let mut out: [Field; 83] = [0 as Field; 83];
+        out[0] = p.order_acc;
+        out[1] = p.cancel_acc;
+        out[2] = p.order_count as Field;
+        out[3] = p.cancel_count as Field;
+        out[4] = p.reserve_a as Field;
+        out[5] = p.reserve_b as Field;
+        out[6] = p.lp_supply as Field;
+        out[7] = p.clearing_price as Field;
+        for i in 0..MAX_ORDERS_PER_EPOCH {
+            out[8 + 2 * i] = p.fills[i].order_nonce;
+            out[9 + 2 * i] = p.fills[i].amount_out as Field;
+        }
+        out[72] = p.fills_len as Field;
+        out[73] = p.swap.a_to_pool as Field;
+        out[74] = p.swap.b_to_pool as Field;
+        out[75] = p.swap.a_from_pool as Field;
+        out[76] = p.swap.b_from_pool as Field;
+        out[77] = p.swap.reserve_a_add as Field;
+        out[78] = p.swap.reserve_a_sub as Field;
+        out[79] = p.swap.reserve_b_add as Field;
+        out[80] = p.swap.reserve_b_sub as Field;
+        out[81] = p.swap.fee_a_per_share_increment as Field;
+        out[82] = p.swap.fee_b_per_share_increment as Field;
+        out
     }
 
     // ============================ CLEARING ============================
