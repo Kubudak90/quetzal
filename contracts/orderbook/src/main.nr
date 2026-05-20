@@ -33,7 +33,7 @@ pub contract Orderbook {
     pub global MAX_INPUT_NOTES: u32 = 8;
 
     /// Maximum orders submitted per epoch (also the cap on fills in one clearing).
-    pub global MAX_ORDERS_PER_EPOCH: u32 = 128;
+    pub global MAX_ORDERS_PER_EPOCH: u32 = 32;
 
     /// Epoch state machine value indicating the epoch is OPEN and accepting new orders.
     global EPOCH_STATE_OPEN: u8 = 0;
@@ -259,7 +259,7 @@ pub contract Orderbook {
     /// epoch's `order_acc` running-hash chain and to enforce the per-epoch cap.
     /// `only_self` keeps this callable only via this contract's `enqueue_self`.
     ///
-    /// Capacity revert message is the user-visible signal that 128 orders have been
+    /// Capacity revert message is the user-visible signal that 32 orders have been
     /// submitted in the current epoch. The whole tx (including the escrow and the
     /// `OrderNote` insertion) reverts because all callbacks share atomicity with
     /// the private body that enqueued them.

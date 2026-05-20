@@ -8,7 +8,7 @@
 import { mulDiv, SCALE, FEE_NUM, FEE_DEN } from "./fixed-point.js";
 
 /** Maximum orders cleared in one epoch; the rest carry over. */
-export const MAX_ORDERS_PER_EPOCH = 128;
+export const MAX_ORDERS_PER_EPOCH = 32;
 /** Clearing-price search band: [spot / PRICE_BAND, spot * PRICE_BAND]. */
 export const PRICE_BAND = 100n;
 /** Bisection stops when |realizedP - P| <= TOLERANCE (1e-9 of a price unit). */

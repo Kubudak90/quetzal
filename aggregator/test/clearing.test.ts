@@ -32,13 +32,13 @@ describe("selectBatch", () => {
 
   it("caps the batch at MAX_ORDERS_PER_EPOCH, keeping the oldest", () => {
     const orders: ClearingOrder[] = [];
-    for (let i = 0; i < 130; i++) {
+    for (let i = 0; i < 34; i++) {
       orders.push(order({ orderNonce: BigInt(i), submittedAtBlock: i }));
     }
     const batch = selectBatch(orders);
     assert.equal(batch.length, MAX_ORDERS_PER_EPOCH);
-    // The 128 oldest (blocks 0..127) are kept; 128 and 129 are dropped.
-    assert.equal(batch[batch.length - 1]!.submittedAtBlock, 127);
+    // The 32 oldest (blocks 0..31) are kept; 32 and 33 are dropped.
+    assert.equal(batch[batch.length - 1]!.submittedAtBlock, 31);
   });
 
   it("does not mutate the input array", () => {

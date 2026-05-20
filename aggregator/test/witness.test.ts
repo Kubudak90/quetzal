@@ -37,7 +37,7 @@ describe("buildClearingWitness", () => {
     // Circuit-canonical payout: floor(floor(1000 * 1e18 / 2e18) * 9970/10000)
     //   = floor(500 * 9970/10000) = floor(498.5) = 498
     assert.match(proverToml, /amount_out = "498"/);
-    // 128 entries in orders, fills, cancelled_indices, fill_to_order_index:
+    // 32 entries in orders, fills, cancelled_indices, fill_to_order_index:
     const ordersBlockMatch = proverToml.match(/orders = \[\n(.*?)\n\]/s);
     assert.ok(ordersBlockMatch, "orders block present");
     const ordersEntries = (ordersBlockMatch![1].match(/{ side = /g) ?? []).length;

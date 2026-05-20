@@ -3,7 +3,7 @@
 // - contracts/orderbook/src/main.nr's FillEntry (order_nonce + amount_out).
 // - contracts/orderbook/src/main.nr's OrderNote (the per-order preimage).
 
-pub global MAX_ORDERS_PER_EPOCH: u32 = 128;
+pub global MAX_ORDERS_PER_EPOCH: u32 = 32;
 
 /// Aggregator's per-order payout (public input to the circuit).
 pub struct FillEntry {
@@ -26,7 +26,7 @@ pub struct ClearingSwap {
     pub fee_b_per_share_increment: u128,
 }
 
-/// One submitted order's preimage; the private witness has [OrderPreimage; 128].
+/// One submitted order's preimage; the private witness has [OrderPreimage; 32].
 pub struct OrderPreimage {
     pub side:               bool,
     pub amount_in:          u128,

@@ -11,7 +11,7 @@
  */
 import { type ClearingResult } from "./clearing.js";
 
-export const MAX_ORDERS_PER_EPOCH = 128;
+export const MAX_ORDERS_PER_EPOCH = 32;
 
 /** Mirror of contracts/orderbook/src/main.nr's EpochState (subset the circuit binds to). */
 export interface EpochState {
@@ -60,7 +60,7 @@ export function buildClearingWitness(args: {
   orders: OrderNotePreimage[];
   cancellationIndices: number[];
   clearing: ClearingResult;
-  /** Override the circuit's MAX_ORDERS_PER_EPOCH for smaller test circuits (default: 128). */
+  /** Override the circuit's MAX_ORDERS_PER_EPOCH for smaller test circuits (default: 32). */
   maxOrders?: number;
 }): ClearingWitness {
   const { epoch, pool, orders, cancellationIndices, clearing } = args;
@@ -232,7 +232,7 @@ export function buildClearingWitness(args: {
     `fee_b_per_share_increment = "${feeBPerShareIncrement}" ` +
     `}`);
 
-  // orders: array of 128 OrderPreimage.
+  // orders: array of 32 OrderPreimage.
   lines.push(`orders = [`);
   for (const o of ordersPadded) {
     lines.push(`  { ` +
