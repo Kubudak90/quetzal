@@ -7,11 +7,26 @@
 //   - dev stack is up: `scripts/dev.sh` (anvil + aztec start --local-network)
 //   - contracts are compiled: `pnpm compile`
 //   - bindings are generated under tests/integration/generated/ (see Task 9)
+//   - VK hash written: circuits/clearing/target/vk.bin/vk_hash
+//     (`pnpm compile` runs `bb write_vk` which produces vk + vk_hash alongside each other)
 //
 // Usage:
 //   pnpm tsx scripts/deploy-tokens.ts
 //
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
+import { Fr } from "@aztec/aztec.js/fields";
+
+/** Read the clearing-circuit VK hash from the compiled artifact.
+ * Only the hash is stored on-chain; the full VK is provided as calldata
+ * to `close_epoch_and_clear_verified` and verified against this stored hash.
+ */
+function readVkHash(): Fr {
+  const hashBuf = readFileSync("circuits/clearing/target/vk.bin/vk_hash");
+  if (hashBuf.length !== 32) {
+    throw new Error(`expected 32-byte vk_hash, got ${hashBuf.length}`);
+  }
+  return Fr.fromBuffer(hashBuf as Buffer);
+}
 
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -65,15 +80,16 @@ async function main() {
     wallet, tokenA.contract.address, tokenB.contract.address,
   ).send({ from: admin });
 
-  // 100-block epochs in deployed environments; admin stands in as the clearing
-  // authority (the off-chain aggregator's role).
+  // 100-block epochs in deployed environments. Store only the VK hash on-chain;
+  // the full VK is provided as calldata at clearing time and verified against this hash.
+  const vkHash = readVkHash();
   const deployedOB = await OrderbookContract.deploy(
     wallet,
     tokenA.contract.address,
     tokenB.contract.address,
     100,
     deployedPool.contract.address,
-    admin,
+    vkHash,
   ).send({ from: admin });
 
   // Wire the pool to the orderbook (one-shot).

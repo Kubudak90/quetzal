@@ -4,6 +4,7 @@ import { webcrypto } from "node:crypto";
 import type { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { Fr } from "@aztec/aztec.js/fields";
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
@@ -142,7 +143,7 @@ describe("clearing (live integration)", () => {
       .send({ from: admin });
     pool = dP.contract;
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, EPOCH_LEN, pool.address, admin,
+      wallet, tUSDC.address, tETH.address, EPOCH_LEN, pool.address, Fr.ZERO,
     ).send({ from: admin });
     orderbook = dOB.contract;
     await pool.methods.set_orderbook(orderbook.address).send({ from: admin });

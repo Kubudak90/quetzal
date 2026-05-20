@@ -98,7 +98,12 @@ pub contract Orderbook {
         token_b_addr: PublicImmutable<AztecAddress, Context>,
         epoch_length: PublicImmutable<u32, Context>,
         pool_addr: PublicImmutable<AztecAddress, Context>,
-        clearing_authority: PublicImmutable<AztecAddress, Context>,
+        /// Hash of the clearing-circuit VK (5d-2 circuit). Initialised at deploy and
+        /// immutable thereafter. The orderbook is bound to one specific clearing circuit
+        /// by VK identity. `std::verify_proof_with_type` requires this hash as a
+        /// separate argument. The full VK is provided as calldata to
+        /// `close_epoch_and_clear_verified` and is verified against this stored hash.
+        clearing_vk_hash: PublicImmutable<Field, Context>,
         fills: Map<Field, PublicMutable<u128, Context>, Context>,
     }
 
@@ -106,8 +111,8 @@ pub contract Orderbook {
     ///
     /// - Records the two tradable token addresses.
     /// - Records `pool_addr` (the LiquidityPool the net clearing flow swaps through)
-    ///   and `clearing_authority` (the only address allowed to call
-    ///   `close_epoch_and_clear`).
+    ///   and `clearing_vk_hash` (the VK hash that binds this orderbook to one specific
+    ///   clearing circuit; the full VK is provided as calldata at clearing time).
     /// - Stores `epoch_length`; opens epoch 0.
     #[external("public")]
     #[initializer]
@@ -116,13 +121,13 @@ pub contract Orderbook {
         token_b: AztecAddress,
         epoch_length: u32,
         pool_addr: AztecAddress,
-        clearing_authority: AztecAddress,
+        clearing_vk_hash: Field,
     ) {
         self.storage.token_a_addr.initialize(token_a);
         self.storage.token_b_addr.initialize(token_b);
         self.storage.epoch_length.initialize(epoch_length);
         self.storage.pool_addr.initialize(pool_addr);
-        self.storage.clearing_authority.initialize(clearing_authority);
+        self.storage.clearing_vk_hash.initialize(clearing_vk_hash);
 
         let block: u32 = self.context.block_number();
         self.storage.current_epoch.write(EpochState {
@@ -326,18 +331,14 @@ pub contract Orderbook {
 
     // ============================ CLEARING ============================
 
-    /// Apply one epoch's clearing on-chain. Authority-gated and trusted: the
-    /// `clearing_authority` (the off-chain aggregator) submits the per-order
-    /// `fills` and the aggregate net `swap`; this function relays them without
-    /// re-deriving (the Week-5d ZK proof will replace that trust). It performs
-    /// the net AMM swap against the Pool, records each fill, and advances the
-    /// epoch. `close_epoch` remains as the permissionless zero-fill fallback.
+    /// DEPRECATED (Week 5d-3). Always reverts. Kept until Task 4 removes it.
+    /// Use `close_epoch_and_clear_verified` (Task 4) instead.
     #[external("public")]
     fn close_epoch_and_clear(
         fills: BoundedVec<FillEntry, MAX_ORDERS_PER_EPOCH>,
         swap: LiquidityPool::ClearingSwap,
     ) {
-        assert(self.msg_sender() == self.storage.clearing_authority.read(), "not clearing authority");
+        assert(false, "close_epoch_and_clear deprecated; use close_epoch_and_clear_verified");
 
         let current = self.storage.current_epoch.read();
         let block: u32 = self.context.block_number();
@@ -558,9 +559,10 @@ pub contract Orderbook {
         self.storage.pool_addr.read()
     }
 
+    /// Exposes the embedded clearing-circuit VK hash.
     #[external("utility")]
-    unconstrained fn get_clearing_authority() -> AztecAddress {
-        self.storage.clearing_authority.read()
+    unconstrained fn get_clearing_vk_hash() -> Field {
+        self.storage.clearing_vk_hash.read()
     }
 
     /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is

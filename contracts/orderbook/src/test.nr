@@ -87,10 +87,10 @@ unconstrained fn deploy_orderbook(
     token_b: AztecAddress,
     epoch_length: u32,
     pool_addr: AztecAddress,
-    clearing_authority: AztecAddress,
+    clearing_vk_hash: Field,
 ) -> AztecAddress {
     let initializer_call =
-        Orderbook::interface().constructor(token_a, token_b, epoch_length, pool_addr, clearing_authority);
+        Orderbook::interface().constructor(token_a, token_b, epoch_length, pool_addr, clearing_vk_hash);
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
 
@@ -101,7 +101,7 @@ unconstrained fn constructor_sets_initial_epoch_state() {
 
     // Use the deployer's address as a placeholder for token address arguments - this test
     // only cares about the epoch state, not which token addresses are stored.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let epoch: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
 
@@ -130,7 +130,7 @@ unconstrained fn submit_order_rejects_amount_zero() {
 
     // Placeholder token addresses are fine: the assertion on amount_in fires before any
     // token-contract call is attempted.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let maker = env.create_light_account();
 
@@ -146,7 +146,7 @@ unconstrained fn submit_order_rejects_limit_price_zero() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
 
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let maker = env.create_light_account();
 
@@ -167,24 +167,23 @@ unconstrained fn constructor_records_token_addrs_and_epoch_length() {
     let token_b = env.create_light_account();
     assert(token_a != token_b, "token_a and token_b must be distinct");
 
-    // Distinct placeholders for pool_addr and clearing_authority.
+    // Distinct placeholder for pool_addr.
     let pool_placeholder = env.create_light_account();
-    let clearing_placeholder = env.create_light_account();
-    assert(pool_placeholder != clearing_placeholder, "pool and clearing placeholders must be distinct");
 
-    let orderbook = deploy_orderbook(&mut env, deployer, token_a, token_b, 42, pool_placeholder, clearing_placeholder);
+    let vk_hash_dummy: Field = 0;
+    let orderbook = deploy_orderbook(&mut env, deployer, token_a, token_b, 42, pool_placeholder, vk_hash_dummy);
 
     let stored_a: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_a_addr());
     let stored_b: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_b_addr());
     let stored_len: u32 = env.execute_utility(Orderbook::at(orderbook).get_epoch_length());
     let stored_pool: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_addr());
-    let stored_clearing: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_clearing_authority());
+    let stored_vk_hash: Field = env.execute_utility(Orderbook::at(orderbook).get_clearing_vk_hash());
 
     assert(stored_a == token_a, "stored token_a must round-trip");
     assert(stored_b == token_b, "stored token_b must round-trip");
     assert(stored_len == 42, "stored epoch_length must round-trip");
     assert(stored_pool == pool_placeholder, "stored pool_addr must round-trip");
-    assert(stored_clearing == clearing_placeholder, "stored clearing_authority must round-trip");
+    assert(stored_vk_hash == 0, "stored clearing_vk_hash must round-trip");
 }
 
 // ============================ CANCEL ORDER + GET ORDERS ============================
@@ -200,7 +199,7 @@ unconstrained fn cancel_order_rejects_unknown_nonce() {
 
     // Placeholder addresses are fine: the "order not found" assertion fires during note
     // retrieval, before any token-contract call is attempted.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let maker = env.create_light_account();
 
@@ -213,7 +212,7 @@ unconstrained fn get_orders_empty_for_fresh_account() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
 
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let owner = env.create_light_account();
     let orders = env.execute_utility(Orderbook::at(orderbook).get_orders(owner));
@@ -234,7 +233,7 @@ unconstrained fn close_epoch_advances_to_next_epoch() {
     let deployer = env.create_light_account();
 
     // Short epoch so we can cheaply advance past it.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 3, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 3, deployer, 0);
 
     let before: EpochState = env.execute_utility(Orderbook::at(orderbook).get_epoch());
 
@@ -264,52 +263,9 @@ unconstrained fn close_epoch_rejects_before_expiry() {
     let deployer = env.create_light_account();
 
     // Long epoch; we do NOT advance, so the epoch is still open and close must revert.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     env.call_public(deployer, Orderbook::at(orderbook).close_epoch());
-}
-
-// ============================ CLOSE EPOCH AND CLEAR ============================
-// The happy path needs a real Token + Pool wired together - that is integration
-// territory (Task 5). Pure-TXE here covers the two authority/deadline gates that
-// fire BEFORE any cross-contract call: an all-zero `ClearingSwap` and an empty
-// `fills` vec are sufficient because neither test reaches the AMM swap body.
-// `ClearingSwap` is the pool contract's `pub struct`, reachable across the dep
-// boundary via the `pool::LiquidityPool` module path.
-
-#[test(should_fail_with = "not clearing authority")]
-unconstrained fn close_epoch_and_clear_rejects_non_authority() {
-    let mut env = TestEnvironment::new();
-    let deployer = env.create_light_account();
-    let authority = env.create_light_account();
-    // pool_addr placeholder = deployer; clearing_authority = `authority`.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
-
-    let stranger = env.create_light_account();
-    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_ORDERS_PER_EPOCH> = BoundedVec::new();
-    let zero_swap = pool::LiquidityPool::ClearingSwap {
-        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
-        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
-        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
-    };
-    env.call_public(stranger, Orderbook::at(orderbook).close_epoch_and_clear(empty_fills, zero_swap));
-}
-
-#[test(should_fail_with = "epoch has not expired yet")]
-unconstrained fn close_epoch_and_clear_rejects_before_expiry() {
-    let mut env = TestEnvironment::new();
-    let deployer = env.create_light_account();
-    let authority = env.create_light_account();
-    // Long epoch; the authority calls immediately, before expiry.
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
-
-    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_ORDERS_PER_EPOCH> = BoundedVec::new();
-    let zero_swap = pool::LiquidityPool::ClearingSwap {
-        a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
-        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
-        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
-    };
-    env.call_public(authority, Orderbook::at(orderbook).close_epoch_and_clear(empty_fills, zero_swap));
 }
 
 // ============================ CLAIM FILL ============================
@@ -318,7 +274,7 @@ unconstrained fn close_epoch_and_clear_rejects_before_expiry() {
 unconstrained fn claim_fill_rejects_unknown_order() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let maker = env.create_light_account();
     // No order was ever submitted, so claiming any nonce reverts at note retrieval.
@@ -329,7 +285,7 @@ unconstrained fn claim_fill_rejects_unknown_order() {
 unconstrained fn get_fill_is_zero_for_unknown_order() {
     let mut env = TestEnvironment::new();
     let deployer = env.create_light_account();
-    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, deployer);
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
     let recorded: u128 = env.execute_utility(Orderbook::at(orderbook).get_fill(0x4242));
     assert(recorded == 0 as u128, "an unrecorded order must report a zero fill");

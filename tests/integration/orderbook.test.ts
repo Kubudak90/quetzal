@@ -182,14 +182,15 @@ describe("orderbook (live integration)", () => {
       .send({ from: admin });
     const pool = dPool.contract;
 
-    // Deploy the orderbook bound to (tUSDC, tETH).
+    // Deploy the orderbook bound to (tUSDC, tETH). Dummy vk_hash = 0 is safe for
+    // integration tests that don't call verify_proof_with_type.
     const deployedOB = await OrderbookContract.deploy(
       wallet,
       tUSDC.address,
       tETH.address,
       100,
       pool.address,
-      admin,
+      Fr.ZERO,
     ).send({ from: admin });
     orderbook = deployedOB.contract;
 
@@ -326,7 +327,7 @@ describe("orderbook cancel_order (live integration)", () => {
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 100, dPool2.contract.address, admin,
+      wallet, tUSDC.address, tETH.address, 100, dPool2.contract.address, Fr.ZERO,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -477,7 +478,7 @@ describe("orderbook epoch transitions (live integration)", () => {
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, EPOCH_LEN, dPool3.contract.address, admin,
+      wallet, tUSDC.address, tETH.address, EPOCH_LEN, dPool3.contract.address, Fr.ZERO,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -605,7 +606,7 @@ describe("orderbook order accumulator (live integration)", () => {
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 100, dPool4.contract.address, admin,
+      wallet, tUSDC.address, tETH.address, 100, dPool4.contract.address, Fr.ZERO,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -791,7 +792,7 @@ describe("orderbook order accumulator (live integration)", () => {
       .send({ from: admin });
 
     const freshDOB = await OrderbookContract.deploy(
-      wallet, freshTUSDC.address, freshTETH.address, 100, freshDPool.contract.address, admin,
+      wallet, freshTUSDC.address, freshTETH.address, 100, freshDPool.contract.address, Fr.ZERO,
     ).send({ from: admin });
     const freshOrderbook = freshDOB.contract;
 
@@ -847,7 +848,7 @@ describe("orderbook order accumulator (live integration)", () => {
       .send({ from: admin });
 
     const freshDOB6a = await OrderbookContract.deploy(
-      wallet, freshTUSDC6a.address, freshTETH6a.address, 10, freshDPool6a.contract.address, admin,
+      wallet, freshTUSDC6a.address, freshTETH6a.address, 10, freshDPool6a.contract.address, Fr.ZERO,
     ).send({ from: admin });
     const freshOrderbook6a = freshDOB6a.contract;
 
@@ -901,9 +902,9 @@ describe("orderbook order accumulator (live integration)", () => {
     const freshDPool6b = await LiquidityPoolContract.deploy(wallet, freshTUSDC6b.address, freshTETH6b.address)
       .send({ from: admin });
 
-    // Pass alice as the clearing_authority so she can call close_epoch_and_clear.
+    // IT6b: close_epoch_and_clear now unconditionally reverts (deprecated, Task 4 removes it).
     const freshDOB6b = await OrderbookContract.deploy(
-      wallet, freshTUSDC6b.address, freshTETH6b.address, 10, freshDPool6b.contract.address, alice,
+      wallet, freshTUSDC6b.address, freshTETH6b.address, 10, freshDPool6b.contract.address, Fr.ZERO,
     ).send({ from: admin });
     const freshOrderbook6b = freshDOB6b.contract;
 
@@ -985,7 +986,7 @@ describe("orderbook order accumulator (live integration)", () => {
         // epoch_length=100_000 so 32 sequential submits (each mining a few L2 blocks)
         // cannot expire the epoch mid-loop. With epoch_length=100 we'd hit
         // `epoch has expired; awaiting close_epoch` around submit ~30.
-        wallet, freshTUSDC5.address, freshTETH5.address, 100_000, freshDPool5.contract.address, admin,
+        wallet, freshTUSDC5.address, freshTETH5.address, 100_000, freshDPool5.contract.address, Fr.ZERO,
       ).send({ from: admin });
       const freshOrderbook5 = freshDOB5.contract;
 
