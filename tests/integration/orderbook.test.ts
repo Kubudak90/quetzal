@@ -828,6 +828,126 @@ describe("orderbook order accumulator (live integration)", () => {
     assert.equal(Number(epoch.cancel_count), 1, "exactly one cancel");
   });
 
+  it("IT6a: close_epoch resets all four accumulator fields from a nonzero state", { timeout: 1_800_000 }, async () => {
+    // Deploy a fresh fixture with epoch_length=10 so the epoch expires quickly.
+    // Mirror IT4/IT5's inline fresh-fixture pattern.
+    const freshDU6a = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    const freshTUSDC6a = freshDU6a.contract;
+
+    const freshDE6a = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    const freshTETH6a = freshDE6a.contract;
+
+    const freshDPool6a = await LiquidityPoolContract.deploy(wallet, freshTUSDC6a.address, freshTETH6a.address)
+      .send({ from: admin });
+
+    const freshDOB6a = await OrderbookContract.deploy(
+      wallet, freshTUSDC6a.address, freshTETH6a.address, 10, freshDPool6a.contract.address, admin,
+    ).send({ from: admin });
+    const freshOrderbook6a = freshDOB6a.contract;
+
+    // Mint enough tUSDC to alice on the fresh token to cover two 1-unit orders.
+    await freshTUSDC6a.methods.mint_to_private(alice, 5n * ONE_TUSDC).send({ from: admin });
+
+    // Submit two orders so order_count >= 2 and order_acc is nonzero.
+    for (let i = 0; i < 2; i++) {
+      const authwitNonce = randomField();
+      const orderNonce = randomField();
+      await freshOrderbook6a.methods
+        .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+        .send({ from: alice });
+    }
+
+    const dirtyRaw = await freshOrderbook6a.methods.get_epoch().simulate({ from: alice });
+    const dirty = (dirtyRaw as any).result ?? dirtyRaw;
+    assert.notEqual(dirty.order_acc, 0n, "precondition: order_acc is nonzero");
+    assert.ok(Number(dirty.order_count) >= 2, "precondition: order_count >= 2");
+
+    // Advance L2 blocks past closes_at_block using the same mineUntilBlock helper
+    // that the 3rd describe block uses.
+    await mineUntilBlock(node, freshTUSDC6a, admin, Number(dirty.closes_at_block));
+
+    // Close the epoch via close_epoch().
+    await freshOrderbook6a.methods.close_epoch().send({ from: admin });
+
+    const freshEpochRaw = await freshOrderbook6a.methods.get_epoch().simulate({ from: alice });
+    const freshEpoch = (freshEpochRaw as any).result ?? freshEpochRaw;
+    assert.equal(freshEpoch.order_acc, 0n, "new epoch order_acc resets to 0");
+    assert.equal(freshEpoch.cancel_acc, 0n, "new epoch cancel_acc resets to 0");
+    assert.equal(Number(freshEpoch.order_count), 0, "new epoch order_count resets to 0");
+    assert.equal(Number(freshEpoch.cancel_count), 0, "new epoch cancel_count resets to 0");
+  });
+
+  it("IT6b: close_epoch_and_clear resets all four accumulator fields from a nonzero state", { timeout: 1_800_000 }, async () => {
+    // Deploy a fresh fixture with epoch_length=10 and alice as the clearing_authority
+    // so she can call close_epoch_and_clear.
+    const freshDU6b = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    const freshTUSDC6b = freshDU6b.contract;
+
+    const freshDE6b = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    const freshTETH6b = freshDE6b.contract;
+
+    const freshDPool6b = await LiquidityPoolContract.deploy(wallet, freshTUSDC6b.address, freshTETH6b.address)
+      .send({ from: admin });
+
+    // Pass alice as the clearing_authority so she can call close_epoch_and_clear.
+    const freshDOB6b = await OrderbookContract.deploy(
+      wallet, freshTUSDC6b.address, freshTETH6b.address, 10, freshDPool6b.contract.address, alice,
+    ).send({ from: admin });
+    const freshOrderbook6b = freshDOB6b.contract;
+
+    // Register the orderbook on the fresh Pool. `apply_clearing` (which
+    // close_epoch_and_clear calls into) is gated on `msg_sender == orderbook_addr`;
+    // without this wire-up the close path reverts with "not the orderbook".
+    await freshDPool6b.contract.methods.set_orderbook(freshOrderbook6b.address).send({ from: admin });
+
+    // Mint enough tUSDC to alice on the fresh token to cover one 1-unit order.
+    await freshTUSDC6b.methods.mint_to_private(alice, 5n * ONE_TUSDC).send({ from: admin });
+
+    // Submit one order so order_acc is nonzero.
+    const authwitNonce = randomField();
+    const orderNonce = randomField();
+    await freshOrderbook6b.methods
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .send({ from: alice });
+
+    const dirtyRaw = await freshOrderbook6b.methods.get_epoch().simulate({ from: alice });
+    const dirty = (dirtyRaw as any).result ?? dirtyRaw;
+    assert.notEqual(dirty.order_acc, 0n, "precondition: order_acc nonzero");
+
+    // Advance L2 blocks past closes_at_block.
+    await mineUntilBlock(node, freshTUSDC6b, admin, Number(dirty.closes_at_block));
+
+    // Call close_epoch_and_clear with an empty fills array and a zero ClearingSwap.
+    const emptyFills: { order_nonce: bigint; amount_out: bigint }[] = [];
+    const zeroSwap = {
+      a_to_pool: 0n, b_to_pool: 0n, a_from_pool: 0n, b_from_pool: 0n,
+      reserve_a_add: 0n, reserve_a_sub: 0n, reserve_b_add: 0n, reserve_b_sub: 0n,
+      fee_a_per_share_increment: 0n, fee_b_per_share_increment: 0n,
+    };
+    await freshOrderbook6b.methods
+      .close_epoch_and_clear(emptyFills, zeroSwap)
+      .send({ from: alice });
+
+    const resetRaw = await freshOrderbook6b.methods.get_epoch().simulate({ from: alice });
+    const reset = (resetRaw as any).result ?? resetRaw;
+    assert.equal(reset.order_acc, 0n, "post-clear order_acc resets to 0");
+    assert.equal(reset.cancel_acc, 0n, "post-clear cancel_acc resets to 0");
+    assert.equal(Number(reset.order_count), 0, "post-clear order_count resets to 0");
+    assert.equal(Number(reset.cancel_count), 0, "post-clear cancel_count resets to 0");
+  });
+
   // IT5 is skipped on Aztec 4.2.1 because a single wallet cannot submit 128 unfinalized
   // private txs in a row — the PXE's `sender_tagging_store` window is 20 and finalisation
   // (L1 proof verification) lags far behind the rate at which we can submit, so the 21st
