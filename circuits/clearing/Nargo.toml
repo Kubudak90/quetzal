@@ -1,0 +1,5 @@
+[package]
+name = "clearing"
+type = "bin"
+authors = ["ZSwap"]
+compiler_version = ">=1.0.0"
