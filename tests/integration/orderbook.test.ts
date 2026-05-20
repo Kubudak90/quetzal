@@ -708,4 +708,63 @@ describe("orderbook order accumulator (live integration)", () => {
       "order_count must have incremented by 3",
     );
   });
+
+  it("IT3: cancel_order after one submit advances cancel_acc and cancel_count", { timeout: 600_000 }, async () => {
+    const authwitNonce = randomField();
+    const orderNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .send({ from: alice });
+
+    // Pull the just-submitted note to get its submitted_at_block.
+    const ordersResult = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+    const bv = (ordersResult as { result: { storage: { submitted_at_block: bigint | number; nonce: bigint | number }[]; len: bigint | number } }).result;
+    const len = Number(bv.len);
+    const note = bv.storage.slice(0, len).find((n) => BigInt(n.nonce) === orderNonce);
+    assert.ok(note, "the just-submitted order is present");
+
+    // Snapshot the epoch BEFORE the cancel to capture cancel_acc/cancel_count baselines.
+    const epochAfterSubmitResult = await orderbook.methods.get_epoch().simulate({ from: alice });
+    const epochAfterSubmit = (epochAfterSubmitResult as { result: { order_acc: bigint; cancel_acc: bigint; order_count: bigint | number; cancel_count: bigint | number } }).result;
+    const orderCountAfterSubmit = Number(epochAfterSubmit.order_count);
+    const cancelAccBefore = new Fr(epochAfterSubmit.cancel_acc);
+    const cancelCountBefore = Number(epochAfterSubmit.cancel_count);
+
+    // Cancel it. cancel_order is a self-call for the escrow return, so authwit nonce = 0n.
+    await orderbook.methods
+      .cancel_order(orderNonce, 0n)
+      .send({ from: alice });
+
+    // Recompute the same c_i that submit_order folded into order_acc; cancel must fold the
+    // same c_i into cancel_acc.
+    const cExpected = await orderCommitment({
+      owner: alice,
+      side: SIDE_A_TO_B,
+      amountIn: 1n * ONE_TUSDC,
+      limitPrice: PRICE_2,
+      orderNonce,
+      submittedAtBlock: Number(note.submitted_at_block),
+    });
+    const expectedCancelAcc = await foldChain(cancelAccBefore, cExpected);
+
+    const epochAfterCancelResult = await orderbook.methods.get_epoch().simulate({ from: alice });
+    const epochAfterCancel = (epochAfterCancelResult as { result: { order_acc: bigint; cancel_acc: bigint; order_count: bigint | number; cancel_count: bigint | number } }).result;
+
+    assert.equal(
+      epochAfterCancel.cancel_acc,
+      expectedCancelAcc.toBigInt(),
+      "cancel_acc must fold in the cancelled order's c_i",
+    );
+    assert.equal(
+      Number(epochAfterCancel.cancel_count),
+      cancelCountBefore + 1,
+      "cancel_count must increment by 1",
+    );
+    assert.equal(
+      Number(epochAfterCancel.order_count),
+      orderCountAfterSubmit,
+      "order_count must NOT regress on cancel (monotonic)",
+    );
+  });
 });
