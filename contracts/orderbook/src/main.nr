@@ -25,6 +25,7 @@ pub contract Orderbook {
 
     use token::Token;
     use pool::LiquidityPool;
+    use aztec::protocol::{hash::poseidon2_hash, traits::ToField};
 
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
     /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
@@ -207,11 +208,26 @@ pub contract Orderbook {
         };
         self.storage.orders.at(maker).insert(order).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
 
-        // Defer the OPEN-state check to public execution (PublicMutable is not readable from
-        // private context). This callback runs atomically with the rest of the tx: if the
-        // epoch has already advanced past OPEN at mine time, the whole tx (escrow + note
-        // emission) reverts.
+        // Per-order commitment bound to the full OrderNote field set (the Week 5d-2 clearing
+        // circuit will reproduce this from its private order list). `order_nonce` is a random
+        // Field, so c_i is hiding: side/amount/limit cannot be recovered from c_i.
+        let c_i: Field = poseidon2_hash(
+            [
+                maker.to_field(),
+                if side { 1 } else { 0 },
+                amount_in as Field,
+                limit_price as Field,
+                order_nonce,
+                submitted_at_block as Field,
+            ],
+        );
+
+        // Defer to public execution: epoch-open check first (clean revert message if the
+        // epoch has advanced), then the accumulator append (also revertible on capacity).
+        // Both callbacks run atomically with this private body; any failure reverts escrow
+        // and the OrderNote together.
         self.enqueue_self._assert_epoch_open();
+        self.enqueue_self._append_order(c_i);
     }
 
     /// Public callback used by `submit_order` / `cancel_order` to enforce that the
@@ -237,6 +253,27 @@ pub contract Orderbook {
             self.storage.fills.at(order_nonce).read() == 0 as u128,
             "order already filled; use claim_fill",
         );
+    }
+
+    /// Public callback used by `submit_order` to fold an order commitment into the
+    /// epoch's `order_acc` running-hash chain and to enforce the per-epoch cap.
+    /// `only_self` keeps this callable only via this contract's `enqueue_self`.
+    ///
+    /// Capacity revert message is the user-visible signal that 128 orders have been
+    /// submitted in the current epoch. The whole tx (including the escrow and the
+    /// `OrderNote` insertion) reverts because all callbacks share atomicity with
+    /// the private body that enqueued them.
+    #[external("public")]
+    #[only_self]
+    fn _append_order(c_i: Field) {
+        let mut epoch = self.storage.current_epoch.read();
+        assert(
+            epoch.order_count < MAX_ORDERS_PER_EPOCH,
+            "epoch order capacity reached",
+        );
+        epoch.order_acc = poseidon2_hash([epoch.order_acc, c_i]);
+        epoch.order_count = epoch.order_count + 1;
+        self.storage.current_epoch.write(epoch);
     }
 
     // ============================ EPOCH TRANSITIONS ============================
