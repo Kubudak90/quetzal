@@ -1,4 +1,4 @@
-use crate::pricing::{mul_div, SCALE, FEE_NUM, FEE_DEN};
+use crate::pricing::{mul_div, SCALE, FEE_NUM, FEE_DEN, eligible, payout};
 use crate::binding::{c_i, replay_chain};
 use crate::types::{OrderPreimage, MAX_ORDERS_PER_EPOCH};
 
@@ -107,4 +107,64 @@ fn u7_cancel_acc_replay_is_binding() {
     let tampered_acc = replay_chain(arr1, 1);
 
     assert(real_acc != tampered_acc, "different cancelled commitments produce different chains");
+}
+
+// U3: Buy eligible iff limit_price >= P*; sell eligible iff limit_price <= P*.
+#[test]
+fn u3_eligibility_gates() {
+    let p_star: u128 = 2_000_000_000_000_000_000;  // 2e18
+    let buy_at_limit_2 = OrderPreimage {
+        side: false, amount_in: 1 as u128, limit_price: 2_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    let buy_at_limit_3 = OrderPreimage {
+        side: false, amount_in: 1 as u128, limit_price: 3_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    let buy_at_limit_1 = OrderPreimage {
+        side: false, amount_in: 1 as u128, limit_price: 1_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    assert(eligible(buy_at_limit_2, p_star), "buy with limit == P* eligible");
+    assert(eligible(buy_at_limit_3, p_star), "buy with limit > P* eligible");
+    assert(!eligible(buy_at_limit_1, p_star), "buy with limit < P* ineligible");
+
+    let sell_at_limit_2 = OrderPreimage {
+        side: true, amount_in: 1 as u128, limit_price: 2_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    let sell_at_limit_1 = OrderPreimage {
+        side: true, amount_in: 1 as u128, limit_price: 1_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    let sell_at_limit_3 = OrderPreimage {
+        side: true, amount_in: 1 as u128, limit_price: 3_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    assert(eligible(sell_at_limit_2, p_star), "sell with limit == P* eligible");
+    assert(eligible(sell_at_limit_1, p_star), "sell with limit < P* eligible");
+    assert(!eligible(sell_at_limit_3, p_star), "sell with limit > P* ineligible");
+}
+
+// U4: Buy 1000 amount_in (raw units) @ P* = 2e18 -> ~498 amount_out (30 bps fee).
+// (1000 * 1e18 / 2e18) * (10000-30) / 10000 = 500 * 9970 / 10000 = 498.5 -> floor 498.
+#[test]
+fn u4_buy_payout_with_fee() {
+    let p_star: u128 = 2_000_000_000_000_000_000;  // 2e18
+    let buy = OrderPreimage {
+        side: false, amount_in: 1000 as u128, limit_price: p_star,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    assert(payout(buy, p_star) == 498 as u128, "buy 1000 @ 2e18 -> 498 after 30bps fee");
+}
+
+// U8: A buy with limit_price < P* is NOT eligible (mirrors the sec 6.2.7 negative gate).
+#[test]
+fn u8_payout_ineligible_zero_or_panic() {
+    let p_star: u128 = 2_000_000_000_000_000_000;
+    let buy_under_limit = OrderPreimage {
+        side: false, amount_in: 1000 as u128, limit_price: 1_000_000_000_000_000_000 as u128,
+        order_nonce: 0, submitted_at_block: 0, owner: 0,
+    };
+    assert(!eligible(buy_under_limit, p_star), "buy limit < P* must NOT be eligible");
 }

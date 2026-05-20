@@ -110,3 +110,33 @@ pub fn mul_div(x: u128, y: u128, z: u128) -> u128 {
     // Final quotient = q2a * 2^64 + q2b
     q2a * TWO_POW_64 + q2b
 }
+
+use crate::types::OrderPreimage;
+
+/// Per-order eligibility at the clearing price (spec sec 6.2.7).
+///   Buy  (side=false): limit_price >= clearing_price (willing to pay up to limit).
+///   Sell (side=true):  limit_price <= clearing_price (willing to accept >= limit).
+pub fn eligible(order: OrderPreimage, clearing_price: u128) -> bool {
+    if order.side {
+        // sell
+        order.limit_price <= clearing_price
+    } else {
+        // buy
+        order.limit_price >= clearing_price
+    }
+}
+
+/// Canonical payout formula (spec sec 6.2.8). Result is the amount_out
+/// the order receives in its output token, post-fee.
+///   Buy:  out_b = ((amount_in * SCALE) / P*) * (FEE_DEN - FEE_NUM) / FEE_DEN
+///   Sell: out_a = ((amount_in * P*) / SCALE) * (FEE_DEN - FEE_NUM) / FEE_DEN
+pub fn payout(order: OrderPreimage, clearing_price: u128) -> u128 {
+    let gross: u128 = if order.side {
+        // sell: amount_in (token B) * P* / SCALE -> token A
+        mul_div(order.amount_in, clearing_price, SCALE)
+    } else {
+        // buy: amount_in (token A) * SCALE / P* -> token B
+        mul_div(order.amount_in, SCALE, clearing_price)
+    };
+    mul_div(gross, FEE_DEN - FEE_NUM, FEE_DEN)
+}
