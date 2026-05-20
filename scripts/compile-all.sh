@@ -25,3 +25,20 @@ for dir in contracts/*/; do
 done
 
 echo "All contracts compiled."
+
+# Noir circuits (non-contract). Same docker image as contracts to keep the
+# nargo binary aligned with .aztec-version. The circuit's target/ is mounted
+# back via the workspace bind so the host sees the produced clearing.json.
+if [ -d circuits ]; then
+  for dir in circuits/*/; do
+    if [ -f "$dir/Nargo.toml" ]; then
+      echo "→ Compiling $dir"
+      pkg_rel="${dir%/}"
+      docker run --rm --entrypoint bash \
+        -v "$ROOT:/work" -w "/work/$pkg_rel" \
+        "aztecprotocol/aztec:$VERSION" \
+        -c 'export PATH=/usr/src/noir/noir-repo/target/release:$PATH && nargo compile --silence-warnings'
+    fi
+  done
+  echo "All circuits compiled."
+fi
