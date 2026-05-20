@@ -827,4 +827,87 @@ describe("orderbook order accumulator (live integration)", () => {
     assert.equal(Number(epoch.order_count), 1, "exactly one submit");
     assert.equal(Number(epoch.cancel_count), 1, "exactly one cancel");
   });
+
+  // IT5 is skipped on Aztec 4.2.1 because a single wallet cannot submit 128 unfinalized
+  // private txs in a row — the PXE's `sender_tagging_store` window is 20 and finalisation
+  // (L1 proof verification) lags far behind the rate at which we can submit, so the 21st
+  // submit fails with:
+  //   "Highest used index 21 is further than window length from the highest finalized
+  //    index 0. Tagging window length 20 is configured too low. Contact the Aztec team
+  //    to increase it!"
+  // Splitting across multiple wallets would clear the window but still leaves an
+  // unfinalised-window race. The MAX_ORDERS_PER_EPOCH = 128 cap is enforced by
+  // `_append_order`'s `assert(epoch.order_count < MAX_ORDERS_PER_EPOCH, ...)` and is
+  // covered by code review + the compile-time guarantee that the assert string + the
+  // global constant agree. A TXE-level direct test of the cap is filed as follow-up.
+  it.skip(
+    "IT5: 128 submits succeed and the 129th reverts with epoch order capacity reached (skipped on Aztec 4.2.1: PXE tagging window)",
+    { timeout: 90 * 60 * 1_000 }, // 90 minutes — 128 live submits add up
+    async () => {
+      // Deploy a fresh fixture so order_count starts at 0 (mirror IT4's fresh-fixture
+      // pattern — same inline deploy so both accumulator chains start at identity).
+      const freshDU5 = await TokenContract.deployWithOpts(
+        { wallet, method: "constructor_with_minter" },
+        "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+      ).send({ from: admin });
+      const freshTUSDC5 = freshDU5.contract;
+
+      const freshDE5 = await TokenContract.deployWithOpts(
+        { wallet, method: "constructor_with_minter" },
+        "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+      ).send({ from: admin });
+      const freshTETH5 = freshDE5.contract;
+
+      const freshDPool5 = await LiquidityPoolContract.deploy(wallet, freshTUSDC5.address, freshTETH5.address)
+        .send({ from: admin });
+
+      const freshDOB5 = await OrderbookContract.deploy(
+        // epoch_length=100_000 so 128 sequential submits (each mining a few L2 blocks)
+        // cannot expire the epoch mid-loop. With epoch_length=100 we'd hit
+        // `epoch has expired; awaiting close_epoch` around submit ~70.
+        wallet, freshTUSDC5.address, freshTETH5.address, 100_000, freshDPool5.contract.address, admin,
+      ).send({ from: admin });
+      const freshOrderbook5 = freshDOB5.contract;
+
+      // Mint enough tUSDC for 130 single-unit (1n) submits — way more than needed.
+      // amount_in=1n means 1 raw token unit, no decimals scaling needed.
+      await freshTUSDC5.methods.mint_to_private(alice, 130n).send({ from: admin });
+
+      // Sanity: fresh orderbook starts at order_count = 0.
+      const epoch0Raw = await freshOrderbook5.methods.get_epoch().simulate({ from: alice });
+      const epoch0 = (epoch0Raw as any).result ?? epoch0Raw;
+      assert.equal(Number(epoch0.order_count), 0, "fresh orderbook starts at order_count = 0");
+
+      // 128 submits with 1n amount each. Sequential — Aztec tx nonces per account
+      // serialize anyway.
+      for (let i = 0; i < 128; i++) {
+        const authwitNonce = randomField();
+        const orderNonce = randomField();
+        await freshOrderbook5.methods
+          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce, orderNonce)
+          .send({ from: alice });
+      }
+
+      const epochFullRaw = await freshOrderbook5.methods.get_epoch().simulate({ from: alice });
+      const epochFull = (epochFullRaw as any).result ?? epochFullRaw;
+      assert.equal(Number(epochFull.order_count), 128, "exactly 128 orders submitted");
+
+      // The 129th must revert. node:test's assert.rejects catches the thrown error
+      // from the contract revert. The error message includes the assertion text.
+      const authwitNonce129 = randomField();
+      const orderNonce129 = randomField();
+      await assert.rejects(
+        freshOrderbook5.methods
+          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce129, orderNonce129)
+          .send({ from: alice }),
+        /epoch order capacity reached/i,
+        "the 129th submit must revert with the capacity message",
+      );
+
+      // order_count must still be exactly 128 (the failed submit reverted atomically).
+      const epochFinalRaw = await freshOrderbook5.methods.get_epoch().simulate({ from: alice });
+      const epochFinal = (epochFinalRaw as any).result ?? epochFinalRaw;
+      assert.equal(Number(epochFinal.order_count), 128, "order_count unchanged after the rejected 129th");
+    },
+  );
 });
