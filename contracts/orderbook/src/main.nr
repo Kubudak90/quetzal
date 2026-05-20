@@ -64,12 +64,22 @@ pub contract Orderbook {
     /// - `state`: epoch state machine value (0 = OPEN; 1 = CLOSING, 2 = SETTLED reserved for the clearing circuit, Week 6+).
     /// - `opened_at_block`: L2 block number at which this epoch was opened.
     /// - `closes_at_block`: L2 block number at/after which this epoch may transition out of OPEN.
+    /// - `order_acc`: running-hash chain of submitted-order commitments (Poseidon2). Starts at 0; folded
+    ///   per submit by `_append_order` (Week 5d-1). Bound by the Week 5d-2 clearing circuit.
+    /// - `cancel_acc`: running-hash chain of cancelled-order commitments (Poseidon2). Starts at 0; folded
+    ///   per cancel by `_append_cancel` (Week 5d-1).
+    /// - `order_count`: count of `submit_order` successes this epoch (monotonic; capped at MAX_ORDERS_PER_EPOCH).
+    /// - `cancel_count`: count of `cancel_order` successes this epoch (monotonic; <= order_count).
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct EpochState {
         pub epoch_id: u32,
         pub state: u8,
         pub opened_at_block: u32,
         pub closes_at_block: u32,
+        pub order_acc: Field,
+        pub cancel_acc: Field,
+        pub order_count: u32,
+        pub cancel_count: u32,
     }
 
     /// One filled order in a clearing - the aggregator's per-order payout.
@@ -119,6 +129,10 @@ pub contract Orderbook {
             state: EPOCH_STATE_OPEN,
             opened_at_block: block,
             closes_at_block: block + epoch_length,
+            order_acc: 0,
+            cancel_acc: 0,
+            order_count: 0,
+            cancel_count: 0,
         });
     }
 
@@ -250,6 +264,10 @@ pub contract Orderbook {
             state: EPOCH_STATE_OPEN,
             opened_at_block: block,
             closes_at_block: block + epoch_length,
+            order_acc: 0,
+            cancel_acc: 0,
+            order_count: 0,
+            cancel_count: 0,
         });
     }
 
@@ -308,6 +326,10 @@ pub contract Orderbook {
             state: EPOCH_STATE_OPEN,
             opened_at_block: block,
             closes_at_block: block + epoch_length,
+            order_acc: 0,
+            cancel_acc: 0,
+            order_count: 0,
+            cancel_count: 0,
         });
     }
 

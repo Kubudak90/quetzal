@@ -111,6 +111,10 @@ unconstrained fn constructor_sets_initial_epoch_state() {
         epoch.closes_at_block == epoch.opened_at_block + 100,
         "epoch must close epoch_length blocks after it opened",
     );
+    assert(epoch.order_acc == 0, "initial order_acc must be 0");
+    assert(epoch.cancel_acc == 0, "initial cancel_acc must be 0");
+    assert(epoch.order_count == 0, "initial order_count must be 0");
+    assert(epoch.cancel_count == 0, "initial cancel_count must be 0");
 }
 
 // Input-validation negative tests for submit_order. We deliberately do NOT exercise the
@@ -248,6 +252,10 @@ unconstrained fn close_epoch_advances_to_next_epoch() {
         "new epoch must close epoch_length blocks after opening",
     );
     assert(after.opened_at_block >= before.closes_at_block, "new epoch opens at/after the old close");
+    assert(after.order_acc == 0, "new epoch order_acc must be 0");
+    assert(after.cancel_acc == 0, "new epoch cancel_acc must be 0");
+    assert(after.order_count == 0, "new epoch order_count must be 0");
+    assert(after.cancel_count == 0, "new epoch cancel_count must be 0");
 }
 
 #[test(should_fail_with = "epoch has not expired yet")]
