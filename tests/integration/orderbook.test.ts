@@ -4,6 +4,8 @@ import { webcrypto } from "node:crypto";
 import type { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { Fr } from "@aztec/aztec.js/fields";
+import { poseidon2Hash } from "@aztec/foundation/crypto/poseidon";
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
@@ -104,6 +106,36 @@ async function mineUntilBlock(
     if (++guard > 50) throw new Error("mineUntilBlock: exceeded 50 txs without reaching target");
     await token.methods.mint_to_public(minter, 1n).send({ from: minter });
   }
+}
+
+/**
+ * Mirror of `Orderbook::_append_order`'s c_i computation. Inputs MUST be in the
+ * exact field order the contract uses; otherwise the recomputed acc' will not match.
+ *
+ * Noir: poseidon2_hash([maker.to_field(), if side { 1 } else { 0 }, amount_in as Field,
+ *                       limit_price as Field, order_nonce, submitted_at_block as Field])
+ */
+async function orderCommitment(args: {
+  owner: AztecAddress;
+  side: boolean;
+  amountIn: bigint;
+  limitPrice: bigint;
+  orderNonce: bigint | Fr;
+  submittedAtBlock: number;
+}): Promise<Fr> {
+  return poseidon2Hash([
+    args.owner.toField(),
+    args.side ? 1n : 0n,
+    args.amountIn,
+    args.limitPrice,
+    typeof args.orderNonce === "bigint" ? args.orderNonce : args.orderNonce.toBigInt(),
+    BigInt(args.submittedAtBlock),
+  ]);
+}
+
+/** acc' = poseidon2([acc, c_i]); the running-hash fold used by _append_order. */
+async function foldChain(acc: Fr, c: Fr): Promise<Fr> {
+  return poseidon2Hash([acc, c]);
 }
 
 // ---------------------------------------------------------------------------
@@ -535,5 +567,92 @@ describe("orderbook epoch transitions (live integration)", () => {
     // The order's escrow is untouched by the epoch advance.
     const escrowAfter = await readPublicBalance(tUSDC, orderbook.address, admin);
     assert.equal(escrowAfter, escrowBefore, "close_epoch must not touch resting escrow");
+  });
+});
+
+describe("orderbook order accumulator (live integration)", () => {
+  let node: AztecNode;
+  let wallet: EmbeddedWallet;
+  let admin: AztecAddress;
+  let alice: AztecAddress;
+  let tUSDC: TokenContract;
+  let tETH: TokenContract;
+  let orderbook: OrderbookContract;
+
+  const MINT = 130n * ONE_TUSDC;
+  const MINT_ETH = 130n * ONE_TETH;
+
+  before(async () => {
+    node = await connectToSandbox();
+    const env = await getTestWallets(node, 2);
+    wallet = env.wallet;
+    admin = env.accounts[0]!;
+    alice = env.accounts[1]!;
+
+    const dU = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    tUSDC = dU.contract;
+
+    const dE = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    tETH = dE.contract;
+
+    const dPool4 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      .send({ from: admin });
+
+    const dOB = await OrderbookContract.deploy(
+      wallet, tUSDC.address, tETH.address, 100, dPool4.contract.address, admin,
+    ).send({ from: admin });
+    orderbook = dOB.contract;
+
+    // Mint enough tUSDC + tETH to alice's PRIVATE balance to cover later tests.
+    await tUSDC.methods.mint_to_private(alice, MINT).send({ from: admin });
+    await tETH.methods.mint_to_private(alice, MINT_ETH).send({ from: admin });
+  });
+
+  after(async () => {
+    const stop = (wallet as unknown as { stop?: () => Promise<void> }).stop;
+    if (typeof stop === "function") await stop.call(wallet);
+  });
+
+  it("IT1: a single submit_order folds one link into order_acc", { timeout: 600_000 }, async () => {
+    const authwitNonce = randomField();
+    const orderNonce = randomField();
+
+    await orderbook.methods
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .send({ from: alice });
+
+    // Read the OrderNote that was just inserted to get the contract's chosen submitted_at_block.
+    const ordersResult = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+    const bv = (ordersResult as { result: { storage: { submitted_at_block: bigint | number; nonce: bigint | number }[]; len: bigint | number } }).result;
+    const len = Number(bv.len);
+    assert.equal(len, 1, "alice has exactly one resting order");
+
+    const note = bv.storage[0]!;
+    assert.equal(BigInt(note.nonce), orderNonce, "the resting order's nonce matches");
+
+    // Recompute the expected c_1 and acc' = poseidon2([0, c_1]) in JS.
+    const c1 = await orderCommitment({
+      owner: alice,
+      side: SIDE_A_TO_B,
+      amountIn: 1n * ONE_TUSDC,
+      limitPrice: PRICE_2,
+      orderNonce,
+      submittedAtBlock: Number(note.submitted_at_block),
+    });
+    const expectedAcc = await foldChain(Fr.ZERO, c1);
+
+    const epochResult = await orderbook.methods.get_epoch().simulate({ from: alice });
+    const epoch = (epochResult as { result: { order_acc: bigint; cancel_acc: bigint; order_count: bigint | number; cancel_count: bigint | number } }).result;
+
+    assert.equal(epoch.order_acc, expectedAcc.toBigInt(), "order_acc matches poseidon2([0, c_1])");
+    assert.equal(Number(epoch.order_count), 1, "order_count is 1");
+    assert.equal(epoch.cancel_acc, 0n, "cancel_acc untouched");
+    assert.equal(Number(epoch.cancel_count), 0, "cancel_count untouched");
   });
 });
