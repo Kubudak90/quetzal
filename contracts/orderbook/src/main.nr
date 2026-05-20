@@ -31,8 +31,8 @@ pub contract Orderbook {
     /// clearing circuit (Week 6+) which will sweep many resting notes at once.
     pub global MAX_INPUT_NOTES: u32 = 8;
 
-    /// Maximum filled orders applied in one clearing (the epoch order cap).
-    pub global MAX_FILLS: u32 = 128;
+    /// Maximum orders submitted per epoch (also the cap on fills in one clearing).
+    pub global MAX_ORDERS_PER_EPOCH: u32 = 128;
 
     /// Epoch state machine value indicating the epoch is OPEN and accepting new orders.
     global EPOCH_STATE_OPEN: u8 = 0;
@@ -263,7 +263,7 @@ pub contract Orderbook {
     /// epoch. `close_epoch` remains as the permissionless zero-fill fallback.
     #[external("public")]
     fn close_epoch_and_clear(
-        fills: BoundedVec<FillEntry, MAX_FILLS>,
+        fills: BoundedVec<FillEntry, MAX_ORDERS_PER_EPOCH>,
         swap: LiquidityPool::ClearingSwap,
     ) {
         assert(self.msg_sender() == self.storage.clearing_authority.read(), "not clearing authority");
@@ -289,7 +289,7 @@ pub contract Orderbook {
 
         // Record each fill. Reject a zero payout and a duplicate (an order that
         // already has a recorded, unclaimed fill).
-        for i in 0..MAX_FILLS {
+        for i in 0..MAX_ORDERS_PER_EPOCH {
             if i < fills.len() {
                 let e = fills.get(i);
                 assert(e.amount_out > 0 as u128, "fill amount must be positive");

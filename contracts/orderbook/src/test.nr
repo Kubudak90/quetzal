@@ -278,7 +278,7 @@ unconstrained fn close_epoch_and_clear_rejects_non_authority() {
     let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
 
     let stranger = env.create_light_account();
-    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_FILLS> = BoundedVec::new();
+    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_ORDERS_PER_EPOCH> = BoundedVec::new();
     let zero_swap = pool::LiquidityPool::ClearingSwap {
         a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
         reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
@@ -295,7 +295,7 @@ unconstrained fn close_epoch_and_clear_rejects_before_expiry() {
     // Long epoch; the authority calls immediately, before expiry.
     let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, authority);
 
-    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_FILLS> = BoundedVec::new();
+    let empty_fills: BoundedVec<Orderbook::FillEntry, Orderbook::MAX_ORDERS_PER_EPOCH> = BoundedVec::new();
     let zero_swap = pool::LiquidityPool::ClearingSwap {
         a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
         reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
