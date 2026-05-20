@@ -140,3 +140,9 @@ pub fn payout(order: OrderPreimage, clearing_price: u128) -> u128 {
     };
     mul_div(gross, FEE_DEN - FEE_NUM, FEE_DEN)
 }
+
+/// max(0, x - y) without underflow. Used by main.nr to express
+/// "a_to_pool = max(0, gross_buy_in_a - seller_payouts_a)" cleanly.
+pub fn saturating_sub(x: u128, y: u128) -> u128 {
+    if x > y { x - y } else { 0 as u128 }
+}

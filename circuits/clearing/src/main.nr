@@ -96,9 +96,74 @@ fn main(
         }
     }
 
-    // Silence "unused" for inputs not consumed yet (Tasks 8-9 will use them).
+    // Aggregate net-swap derivation (sec 6.4) over filled orders.
+    let mut gross_buy_in_a: u128 = 0 as u128;
+    let mut gross_sell_in_b: u128 = 0 as u128;
+    let mut buyer_payouts_b: u128 = 0 as u128;
+    let mut seller_payouts_a: u128 = 0 as u128;
+    for i in 0..MAX_ORDERS_PER_EPOCH {
+        if (i as u32) < fills_len {
+            let j = fill_to_order_index[i];
+            // Scan-and-pick orders[j].
+            let mut order_j = orders[0];
+            for k in 0..MAX_ORDERS_PER_EPOCH {
+                if (k as u32) == j {
+                    order_j = orders[k];
+                }
+            }
+            if order_j.side {
+                // sell: amount_in is token B; amount_out is token A
+                gross_sell_in_b = gross_sell_in_b + order_j.amount_in;
+                seller_payouts_a = seller_payouts_a + fills[i].amount_out;
+            } else {
+                // buy: amount_in is token A; amount_out is token B
+                gross_buy_in_a = gross_buy_in_a + order_j.amount_in;
+                buyer_payouts_b = buyer_payouts_b + fills[i].amount_out;
+            }
+        }
+    }
+
+    let gross_buy_out_b = pricing::mul_div(gross_buy_in_a, pricing::SCALE, clearing_price);
+    let gross_sell_out_a = pricing::mul_div(gross_sell_in_b, clearing_price, pricing::SCALE);
+
+    // fee_pool_* = gross - net_to_traders (the LP-bound withholding).
+    let fee_pool_a = gross_sell_out_a - seller_payouts_a;
+    let fee_pool_b = gross_buy_out_b - buyer_payouts_b;
+
+    // ClearingSwap cross-check (sec 6.5).
+    assert(swap.a_to_pool == pricing::saturating_sub(gross_buy_in_a, seller_payouts_a),
+           "swap.a_to_pool mismatch");
+    assert(swap.a_from_pool == pricing::saturating_sub(seller_payouts_a, gross_buy_in_a),
+           "swap.a_from_pool mismatch");
+    assert(swap.b_to_pool == pricing::saturating_sub(gross_sell_in_b, buyer_payouts_b),
+           "swap.b_to_pool mismatch");
+    assert(swap.b_from_pool == pricing::saturating_sub(buyer_payouts_b, gross_sell_in_b),
+           "swap.b_from_pool mismatch");
+
+    // Reserve-delta identity (all-positive rearrangement; sec 6.5.23/24):
+    //   reserve_a_add + a_from_pool + fee_pool_a == reserve_a_sub + a_to_pool
+    assert(
+        swap.reserve_a_add + swap.a_from_pool + fee_pool_a
+            == swap.reserve_a_sub + swap.a_to_pool,
+        "reserve_a delta identity violated",
+    );
+    // For token B: b_to_pool is gross_sell_in_b - buyer_payouts_b; fee_pool_b is
+    // the LP withholding in B. The reserve-side identity rearranged:
+    //   reserve_b_add + b_from_pool + fee_pool_b == reserve_b_sub + b_to_pool
+    assert(
+        swap.reserve_b_add + swap.b_from_pool + fee_pool_b
+            == swap.reserve_b_sub + swap.b_to_pool,
+        "reserve_b delta identity violated",
+    );
+
+    // Fee-per-share derivation (floor).
+    assert(swap.fee_a_per_share_increment == pricing::mul_div(fee_pool_a, pricing::SCALE, lp_supply),
+           "fee_a_per_share_increment mismatch");
+    assert(swap.fee_b_per_share_increment == pricing::mul_div(fee_pool_b, pricing::SCALE, lp_supply),
+           "fee_b_per_share_increment mismatch");
+
+    // reserve_a / reserve_b are used by Task 9's AMM k-monotonicity. Keep them
+    // touched here so the compiler doesn't complain until then.
     let _ = reserve_a;
     let _ = reserve_b;
-    let _ = lp_supply;
-    let _ = swap;
 }
