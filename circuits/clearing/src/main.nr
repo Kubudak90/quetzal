@@ -162,8 +162,8 @@ fn main(
     assert(swap.fee_b_per_share_increment == pricing::mul_div(fee_pool_b, pricing::SCALE, lp_supply),
            "fee_b_per_share_increment mismatch");
 
-    // reserve_a / reserve_b are used by Task 9's AMM k-monotonicity. Keep them
-    // touched here so the compiler doesn't complain until then.
-    let _ = reserve_a;
-    let _ = reserve_b;
+    // AMM k-monotonicity (sec 6.6).
+    let new_reserve_a = reserve_a + swap.reserve_a_add - swap.reserve_a_sub;
+    let new_reserve_b = reserve_b + swap.reserve_b_add - swap.reserve_b_sub;
+    amm::assert_k_monotonic(reserve_a, reserve_b, new_reserve_a, new_reserve_b);
 }

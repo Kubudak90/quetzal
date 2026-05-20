@@ -169,6 +169,15 @@ fn u8_payout_ineligible_zero_or_panic() {
     assert(!eligible(buy_under_limit, p_star), "buy limit < P* must NOT be eligible");
 }
 
+use crate::amm::assert_k_monotonic;
+
+// U5: small swap with fee withheld - k strictly shrinks or stays equal.
+// pre 100x200 (k = 20_000); post 110x180 (k = 19_800). 19_800 <= 20_000 PASS.
+#[test]
+fn u5_amm_k_monotonic_on_small_swap() {
+    assert_k_monotonic(100 as u128, 200 as u128, 110 as u128, 180 as u128);
+}
+
 // U6: DoS resistance mask derivation - an eligible non-cancelled order omitted
 // from fills shows up as a violation in the mask scan. (We exercise the mask
 // logic in isolation here; main.nr's main assert is what catches the violation
