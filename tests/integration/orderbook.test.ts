@@ -767,4 +767,64 @@ describe("orderbook order accumulator (live integration)", () => {
       "order_count must NOT regress on cancel (monotonic)",
     );
   });
+
+  it("IT4: submit then cancel of the same order yields order_acc == cancel_acc", { timeout: 900_000 }, async () => {
+    // Deploy a fresh orderbook + fresh tokens for THIS test only, so both running-hash
+    // chains start at their identity (0). This is the only way to make
+    // order_acc == cancel_acc a meaningful equality (otherwise both chains have
+    // arbitrary prior histories and equality would only hold by coincidence).
+    //
+    // Mirror the same inline deployment pattern used by this describe block's before() hook.
+    const freshDU = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tUSDC".padEnd(31, "\0"), "tUSDC".padEnd(31, "\0"), 6, admin,
+    ).send({ from: admin });
+    const freshTUSDC = freshDU.contract;
+
+    const freshDE = await TokenContract.deployWithOpts(
+      { wallet, method: "constructor_with_minter" },
+      "tETH".padEnd(31, "\0"), "tETH".padEnd(31, "\0"), 18, admin,
+    ).send({ from: admin });
+    const freshTETH = freshDE.contract;
+
+    const freshDPool = await LiquidityPoolContract.deploy(wallet, freshTUSDC.address, freshTETH.address)
+      .send({ from: admin });
+
+    const freshDOB = await OrderbookContract.deploy(
+      wallet, freshTUSDC.address, freshTETH.address, 100, freshDPool.contract.address, admin,
+    ).send({ from: admin });
+    const freshOrderbook = freshDOB.contract;
+
+    // Mint a small amount of tUSDC to alice on the fresh token so submit_order has escrow.
+    await freshTUSDC.methods.mint_to_private(alice, 10n * ONE_TUSDC).send({ from: admin });
+
+    // Sanity: fresh chains start at 0.
+    const freshEpoch0Raw = await freshOrderbook.methods.get_epoch().simulate({ from: alice });
+    const freshEpoch0 = (freshEpoch0Raw as any).result ?? freshEpoch0Raw;
+    assert.equal(freshEpoch0.order_acc, 0n, "fresh orderbook starts at order_acc = 0");
+    assert.equal(freshEpoch0.cancel_acc, 0n, "fresh orderbook starts at cancel_acc = 0");
+
+    // Submit one order then cancel it on the fresh orderbook.
+    const authwitNonce = randomField();
+    const orderNonce = randomField();
+    await freshOrderbook.methods
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .send({ from: alice });
+    await freshOrderbook.methods
+      .cancel_order(orderNonce, 0n)
+      .send({ from: alice });
+
+    const epochRaw = await freshOrderbook.methods.get_epoch().simulate({ from: alice });
+    const epoch = (epochRaw as any).result ?? epochRaw;
+
+    assert.equal(
+      epoch.order_acc,
+      epoch.cancel_acc,
+      "after submit+cancel of the same order, order_acc == cancel_acc (proves both " +
+        "sides compute the identical c_i)",
+    );
+    assert.notEqual(epoch.order_acc, 0n, "the shared acc must be non-zero (both chains were folded once)");
+    assert.equal(Number(epoch.order_count), 1, "exactly one submit");
+    assert.equal(Number(epoch.cancel_count), 1, "exactly one cancel");
+  });
 });
