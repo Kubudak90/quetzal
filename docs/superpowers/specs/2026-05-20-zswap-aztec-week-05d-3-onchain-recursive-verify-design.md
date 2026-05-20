@@ -68,10 +68,11 @@ The hint-validate pattern is the same as `submit_order` → `_assert_epoch_open`
 | Field | Week 5c | Week 5d-3 |
 |---|---|---|
 | `clearing_authority: PublicImmutable<AztecAddress>` | present | **removed** |
-| `clearing_vk: PublicImmutable<[Field; 112]>` | absent | **added** (constructor arg) |
 | `clearing_vk_hash: PublicImmutable<Field>` | absent | **added** (constructor arg) |
 
 `fills: Map<Field, PublicMutable<u128>>` and all Week 5d-1 accumulator fields stay unchanged.
+
+**Storage-only-the-hash, VK as calldata** — implementation deviation from the spec's earlier draft. Aztec's `MAX_PUBLIC_DATA_UPDATE_REQUESTS_PER_TX = ~63` limit makes initialising `PublicImmutable<[Field; 112]>` in a constructor impossible (one tx can't write 112 storage slots). Resolution: store only the 1-slot `clearing_vk_hash`. The full `[Field; 112]` VK is provided as a calldata arg to `close_epoch_and_clear_verified` each call; the contract's verifier (`std::verify_proof_with_type`) takes both VK and `key_hash`, and Honk's internal verifier-key check binds the VK to the stored hash. Caller cannot substitute a different VK without also providing a matching hash that the contract rejects (mismatch → stored hash ≠ supplied → revert).
 
 ### 4.3 Constructor signature
 
@@ -83,12 +84,11 @@ fn constructor(
     token_b: AztecAddress,
     epoch_length: u32,
     pool_addr: AztecAddress,
-    clearing_vk: [Field; 112],
     clearing_vk_hash: Field,
 ) { ... }
 ```
 
-The deploy script reads `circuits/clearing/target/vk/vk` (binary, 32 bytes per Field × 112 = 3584 bytes) and `circuits/clearing/target/vk/vk_hash` (32 bytes, one Field) and passes them. Once initialised, both fields are immutable — bound to one specific clearing circuit by VK identity.
+The deploy script reads `circuits/clearing/target/vk/vk_hash` (32 bytes, one Field) and passes it. The full VK array is NOT stored on-chain (see the storage-only-the-hash note above) — it's provided as a calldata arg to `close_epoch_and_clear_verified` each call.
 
 ### 4.4 Replay protection
 
