@@ -276,6 +276,22 @@ pub contract Orderbook {
         self.storage.current_epoch.write(epoch);
     }
 
+    /// Public callback used by `cancel_order` to fold a cancelled-order commitment
+    /// into the epoch's `cancel_acc` running-hash chain. `only_self`.
+    ///
+    /// No cap check: `cancel_count` only advances when a real `OrderNote` was popped
+    /// in `cancel_order`, and `OrderNote` insertion is capped to MAX_ORDERS_PER_EPOCH
+    /// by `_append_order`, so `cancel_count <= order_count <= MAX_ORDERS_PER_EPOCH`
+    /// holds inherently.
+    #[external("public")]
+    #[only_self]
+    fn _append_cancel(c_i: Field) {
+        let mut epoch = self.storage.current_epoch.read();
+        epoch.cancel_acc = poseidon2_hash([epoch.cancel_acc, c_i]);
+        epoch.cancel_count = epoch.cancel_count + 1;
+        self.storage.current_epoch.write(epoch);
+    }
+
     // ============================ EPOCH TRANSITIONS ============================
 
     /// Advance the orderbook to a fresh epoch once the current epoch's time window
@@ -480,18 +496,29 @@ pub contract Orderbook {
             self.storage.token_a_addr.read()
         };
 
-        // Gate cancellation to the OPEN epoch state: the MVP design forbids cancelling
-        // mid-clearing so makers cannot race the clearing tx (an MEV-resistance property).
-        // PublicMutable is not readable from private context, so the check is deferred to
-        // this enqueued public callback, atomic with the rest of the tx.
-        //
-        // Both guards are enqueued BEFORE the escrow-return public call so they execute
-        // first in public context. A filled order's input escrow was already spent by the
-        // clearing, so the escrow return would otherwise revert with a balance underflow
-        // - enqueuing `_assert_not_filled` first makes the rejection deterministic and
-        // surfaces the intended "order already filled" error instead.
+        // Recompute the same per-order commitment submit_order folded into order_acc.
+        // The popped OrderNote carries every preimage field, so this matches the original
+        // c_i exactly. Equality with the submit-side c_i is what makes the submit-cancel
+        // invariant (IT4) hold.
+        let c_i: Field = poseidon2_hash(
+            [
+                maker.to_field(),
+                if order.side { 1 } else { 0 },
+                order.amount_in as Field,
+                order.limit_price as Field,
+                order.nonce,
+                order.submitted_at_block as Field,
+            ],
+        );
+
+        // Gate cancellation to OPEN + not-filled, then fold into cancel_acc, all BEFORE
+        // the escrow-return public call. The Week 5c ordering rationale stands: a
+        // rejected cancel must surface the clean guard message instead of a token
+        // underflow, and the cancel_acc fold must be visible only if the cancel actually
+        // proceeds to the escrow return.
         self.enqueue_self._assert_epoch_open();
         self.enqueue_self._assert_not_filled(order_nonce);
+        self.enqueue_self._append_cancel(c_i);
 
         // Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
         self.call(Token::at(token_addr).transfer_public_to_private(
