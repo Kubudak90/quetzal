@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 5c complete. Clearing runs on-chain (trusted): an authority `close_epoch_and_clear` applies an epoch's clearing — the net AMM swap, fill recording, epoch advance — and `claim_fill` lets a filled maker redeem their output. 26 aggregator unit tests + 25 integration tests + 28 TXE tests green. Week 5d replaces the authority trust with a ZK proof.
+**Status:** Week 5d-1 complete. `submit_order` and `cancel_order` now fold a Poseidon2 commitment per order into two per-epoch running-hash chains (`order_acc`, `cancel_acc`) on `EpochState`, giving the Week 5d-2 clearing circuit an on-chain handle to bind its private order list to. 28 TXE + 26 aggregator unit tests green; 6 new integration tests added — 5 live-green (IT1 single-link, IT2 three-submit replay, IT3 cancel-after-submit, IT4 submit/cancel commitment-equality invariant, IT6a/IT6b epoch reset via both close paths) and 1 skipped (IT5 128-order cap is blocked by Aztec 4.2.1 PXE tagging window; cap is enforced by `_append_order`'s assert and covered by code review).
 
 ## Quickstart
 
@@ -72,6 +72,8 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Week 5b Implementation Plan](docs/superpowers/plans/2026-05-19-zswap-aztec-week-05b-clearing-aggregator.md)
 - [Week 5c On-chain Clearing Design](docs/superpowers/specs/2026-05-19-zswap-aztec-week-05c-onchain-clearing-design.md)
 - [Week 5c Implementation Plan](docs/superpowers/plans/2026-05-19-zswap-aztec-week-05c-onchain-clearing.md)
+- [Week 5d-1 Epoch Order Accumulator Design](docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-1-order-accumulator-design.md)
+- [Week 5d-1 Implementation Plan](docs/superpowers/plans/2026-05-20-zswap-aztec-week-05d-1-order-accumulator.md)
 
 ## License
 
