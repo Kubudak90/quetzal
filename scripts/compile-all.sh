@@ -38,7 +38,21 @@ if [ -d circuits ]; then
         -v "$ROOT:/work" -w "/work/$pkg_rel" \
         "aztecprotocol/aztec:$VERSION" \
         -c 'export PATH=/usr/src/noir/noir-repo/target/release:$PATH && nargo compile --silence-warnings'
+
+      # bb write_vk produces the verification key 5d-3 will embed on-chain.
+      # bb binary path: /usr/src/barretenberg/ts/build/arm64-linux/bb
+      # (not /usr/src/barretenberg/cpp/build/bin/bb — that path is absent in 4.2.1)
+      pkg_name="$(basename "$pkg_rel")"
+      bc_path="$pkg_rel/target/$pkg_name.json"
+      vk_path="$pkg_rel/target/vk.bin"
+      if [ -f "$ROOT/$bc_path" ]; then
+        echo "→ Writing VK for $pkg_rel"
+        docker run --rm --entrypoint bash \
+          -v "$ROOT:/work" -w /work \
+          "aztecprotocol/aztec:$VERSION" \
+          -c "/usr/src/barretenberg/ts/build/arm64-linux/bb write_vk -b $bc_path -o $vk_path -t noir-recursive"
+      fi
     fi
   done
-  echo "All circuits compiled."
+  echo "All circuits compiled + VKs written."
 fi
