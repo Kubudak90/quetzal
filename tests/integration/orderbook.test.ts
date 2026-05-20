@@ -655,4 +655,57 @@ describe("orderbook order accumulator (live integration)", () => {
     assert.equal(epoch.cancel_acc, 0n, "cancel_acc untouched");
     assert.equal(Number(epoch.cancel_count), 0, "cancel_count untouched");
   });
+
+  it("IT2: order_acc equals the manually-replayed 3-link chain after three submits", { timeout: 600_000 }, async () => {
+    const submissions = [
+      { side: SIDE_A_TO_B, amountIn: 1n * ONE_TUSDC, limitPrice: PRICE_2 },
+      { side: SIDE_B_TO_A, amountIn: 1n * ONE_TETH,  limitPrice: PRICE_2 },
+      { side: SIDE_A_TO_B, amountIn: 2n * ONE_TUSDC, limitPrice: PRICE_2 },
+    ];
+
+    // Capture epoch state BEFORE submits (IT1 may have already advanced order_count to 1).
+    const epochBeforeResult = await orderbook.methods.get_epoch().simulate({ from: alice });
+    const epochBefore = (epochBeforeResult as { result: { order_acc: bigint; order_count: bigint | number } }).result;
+    let expectedAcc = new Fr(epochBefore.order_acc);
+    const countStart = Number(epochBefore.order_count);
+
+    for (const s of submissions) {
+      const authwitNonce = randomField();
+      const orderNonce = randomField();
+
+      await orderbook.methods
+        .submit_order(s.side, s.amountIn, s.limitPrice, authwitNonce, orderNonce)
+        .send({ from: alice });
+
+      // Read alice's notes and find the one we just inserted (its nonce matches).
+      const ordersResult = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+      const bv = (ordersResult as { result: { storage: { submitted_at_block: bigint | number; nonce: bigint | number }[]; len: bigint | number } }).result;
+      const len = Number(bv.len);
+      const justInserted = bv.storage.slice(0, len).find((n) => BigInt(n.nonce) === orderNonce);
+      assert.ok(justInserted, "the just-submitted order is present in the maker's PrivateSet");
+
+      const c = await orderCommitment({
+        owner: alice,
+        side: s.side,
+        amountIn: s.amountIn,
+        limitPrice: s.limitPrice,
+        orderNonce,
+        submittedAtBlock: Number(justInserted.submitted_at_block),
+      });
+      expectedAcc = await foldChain(expectedAcc, c);
+    }
+
+    const epochAfterResult = await orderbook.methods.get_epoch().simulate({ from: alice });
+    const epochAfter = (epochAfterResult as { result: { order_acc: bigint; order_count: bigint | number } }).result;
+    assert.equal(
+      epochAfter.order_acc,
+      expectedAcc.toBigInt(),
+      "order_acc must equal the manually-replayed 3-link chain",
+    );
+    assert.equal(
+      Number(epochAfter.order_count),
+      countStart + 3,
+      "order_count must have incremented by 3",
+    );
+  });
 });
