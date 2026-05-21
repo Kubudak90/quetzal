@@ -254,7 +254,7 @@ describe(
       buyAmount: bigint;
       sellAmount: bigint;
     }): Promise<{
-      publicInputsStruct: ReturnType<typeof buildPublicInputsStruct>;
+      publicInputsStruct: Awaited<ReturnType<typeof buildPublicInputsStruct>>;
       proofFields: Fr[];
       vkFields: Fr[];
       epochResult: {
@@ -391,7 +391,7 @@ describe(
         lp_supply: BigInt(poolState.lp_supply),
       };
 
-      const { proverToml } = buildClearingWitness({
+      const { proverToml } = await buildClearingWitness({
         epoch,
         pool: poolSnap,
         orders: ordersForWitness,
@@ -493,7 +493,7 @@ describe(
       assert.equal(proofFields.length, CONTRACT_PROOF_SIZE, "bridged proof length");
       assert.equal(vkFields.length,    CONTRACT_VK_SIZE,    "bridged vk length");
 
-      const publicInputsStruct = buildPublicInputsStruct(
+      const publicInputsStruct = await buildPublicInputsStruct(
         epochResult,
         poolSnap,
         clearingResult,
@@ -661,14 +661,14 @@ interface OrderNoteFields {
  * of circuits/clearing/src/main.nr fn main's pub parameter declaration order):
  *   { order_acc, cancel_acc, order_count, cancel_count,
  *     reserve_a, reserve_b, lp_supply,
- *     clearing_price, fills: [FillEntry; 32], fills_len, swap: ClearingSwap }
+ *     clearing_price, fills_root: Field, swap: ClearingSwap }
  *
- * The fills array is padded to CIRCUIT_MAX_ORDERS_PER_EPOCH with zero sentinels;
- * the contract's loop guards on `i < fills_len`. The swap fields are derived
- * from the aggregator's reserve deltas and fee-per-share increments — they are
- * a faithful echo of what the circuit's `swap` pub input must contain.
+ * Week 5d-4: fills_root replaces the old fills[]: [FillEntry; 32] + fills_len: u32.
+ * The root is computed by buildFillsTree (32-leaf Pedersen tree over the fills).
+ * The swap fields are derived from the aggregator's reserve deltas and
+ * fee-per-share increments — a faithful echo of the circuit's `swap` pub input.
  */
-function buildPublicInputsStruct(
+async function buildPublicInputsStruct(
   epoch: { order_acc: bigint; cancel_acc: bigint; order_count: bigint | number; cancel_count: bigint | number },
   pool: { reserve_a: bigint; reserve_b: bigint; lp_supply: bigint },
   clearing: {
@@ -681,26 +681,14 @@ function buildPublicInputsStruct(
   },
   _ordersForWitness: OrderNotePreimage[],
 ) {
-  const fillsPadded: { order_nonce: bigint; amount_out: bigint }[] = [];
-  for (let i = 0; i < CIRCUIT_MAX_ORDERS; i++) {
-    if (i < clearing.fills.length) {
-      fillsPadded.push({
-        order_nonce: clearing.fills[i]!.orderNonce,
-        amount_out:  clearing.fills[i]!.amountOut,
-      });
-    } else {
-      fillsPadded.push({ order_nonce: 0n, amount_out: 0n });
-    }
-  }
+  // Week 5d-4: fills_root replaces the old fills[] + fills_len pub inputs.
+  const { buildFillsTree } = await import("../../aggregator/src/merkle.js");
+  const tree = await buildFillsTree(
+    clearing.fills.map((f) => ({ order_nonce: new Fr(f.orderNonce), amount_out: f.amountOut })),
+  );
 
   const deltaA = clearing.newReserveA - pool.reserve_a;
   const deltaB = clearing.newReserveB - pool.reserve_b;
-
-  // For a balanced (netA == 0) clearing the AMM is untouched: every swap field
-  // is zero (incl. the reserve_a_add / reserve_b_sub deltas).  The aggregator
-  // does not export the gross ammIn/ammOut directly; for our balanced E1 they
-  // are zero by construction. Non-balanced scenarios should re-derive these
-  // via `clearingAt(pool, selectBatch(orders), clearingPrice).swap`.
   const swap = {
     a_to_pool: 0n,
     b_to_pool: 0n,
@@ -723,8 +711,7 @@ function buildPublicInputsStruct(
     reserve_b: pool.reserve_b,
     lp_supply: pool.lp_supply,
     clearing_price: clearing.clearingPrice,
-    fills: fillsPadded,
-    fills_len: clearing.fills.length,
+    fills_root: tree.root.toBigInt(),
     swap,
   };
 }
