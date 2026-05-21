@@ -26,6 +26,7 @@ import type { EmbeddedWallet } from "@aztec/wallets/embedded";
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
+import { readProofAsFields } from "./helpers/proof.js";
 import { TokenContract } from "./generated/Token.js";
 import { OrderbookContract } from "./generated/Orderbook.js";
 import { LiquidityPoolContract } from "./generated/LiquidityPool.js";
@@ -389,6 +390,13 @@ describe(
           ].join("\n");
           assert.fail(msg);
         }
+
+        // Parse the binary proof file into Fr[] using the shared helper.
+        // This validates the proof byte-length and verifies Fr.fromBuffer works
+        // for all 456 fields — the same call that close_epoch_and_clear_verified uses.
+        const proofFields = readProofAsFields(`${proofDir}/proof`);
+        assert.equal(proofFields.length, 500, "proof must deserialise to exactly 500 Fr fields");
+        console.log(`proof parsed: ${proofFields.length} Fr fields (first: ${proofFields[0]?.toString()})`);
 
         // ---------------------------------------------------------------
         // 9c. Verify the proof
