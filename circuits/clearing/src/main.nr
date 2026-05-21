@@ -21,13 +21,15 @@ fn main(
 
     // Aggregator's claimed clearing output (public)
     clearing_price: pub u128,
-    fills: pub [FillEntry; MAX_ORDERS_PER_EPOCH],
-    fills_len: pub u32,
+    fills_root: pub Field,
     swap: pub ClearingSwap,
 
-    // Witness (private)
+    // Witness (private) - fills/fills_len moved here from public in 5d-4;
+    // positional ordering of Prover.toml fields below changed accordingly.
     orders: [OrderPreimage; MAX_ORDERS_PER_EPOCH],
     cancelled_indices: [u32; MAX_ORDERS_PER_EPOCH],
+    fills: [FillEntry; MAX_ORDERS_PER_EPOCH],
+    fills_len: u32,
     fill_to_order_index: [u32; MAX_ORDERS_PER_EPOCH],
 ) {
     assert(order_count <= MAX_ORDERS_PER_EPOCH, "order_count exceeds cap");
@@ -167,4 +169,17 @@ fn main(
     let new_reserve_a = reserve_a + swap.reserve_a_add - swap.reserve_a_sub;
     let new_reserve_b = reserve_b + swap.reserve_b_add - swap.reserve_b_sub;
     amm::assert_k_monotonic(reserve_a, reserve_b, new_reserve_a, new_reserve_b);
+
+    // Build the 32-slot leaf array (padded slots use empty sentinel poseidon2([0,0]))
+    // and assert it hashes to the public-input fills_root.
+    let mut leaves: [Field; MAX_ORDERS_PER_EPOCH] = [0; MAX_ORDERS_PER_EPOCH];
+    for i in 0..MAX_ORDERS_PER_EPOCH {
+        if (i as u32) < fills_len {
+            leaves[i] = crate::merkle::fill_leaf(fills[i].order_nonce, fills[i].amount_out);
+        } else {
+            leaves[i] = crate::merkle::fill_leaf(0 as Field, 0 as u128);
+        }
+    }
+    let computed_root = crate::merkle::merkle_root_32(leaves);
+    assert(computed_root == fills_root, "fills_root mismatch with internal fills");
 }
