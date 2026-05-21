@@ -21,6 +21,14 @@
  *   7. Asserts the epoch advanced (epoch_id += 1, counters reset) and per-order
  *      fills were recorded.
  *
+ * E2 — tampered proof rejection. Reuses the full pipeline then flips proof[0]
+ *   by +1 and asserts the contract reverts inside std::verify_proof_with_type.
+ *
+ * E3 — replay rejection. Applies a valid proof successfully (first call), then
+ *   replays the same (public_inputs, proof, vk) and asserts the freshness
+ *   assert in _apply_verified_clearing rejects (order_acc mismatch / already
+ *   filled / epoch has not expired).
+ *
  * Headline risks this test discovers EMPIRICALLY (see Task 6 description for
  * full background):
  *   - N=32 proof gen RAM viability on the dev VPS (~8 GB + 8 GB swap).
@@ -232,266 +240,297 @@ describe(
       if (typeof stop === "function") await stop.call(wallet);
     });
 
+    // -----------------------------------------------------------------------
+    // Helper: run the full pipeline (submit orders → aggregator → nargo
+    // execute → bb prove) for the CURRENT epoch state and return the three
+    // artefacts needed by close_epoch_and_clear_verified.
+    //
+    // Steps 1-9 of E1 are factored here so E2 and E3 can reuse them without
+    // duplication.  The helper does NOT mine past expiry and does NOT call the
+    // contract — that is left to each `it` block so they can diverge
+    // (E1 calls normally; E2 tampers the proof first; E3 applies then replays).
+    // -----------------------------------------------------------------------
+    async function produceProofForCurrentEpoch(args: {
+      buyAmount: bigint;
+      sellAmount: bigint;
+    }): Promise<{
+      publicInputsStruct: ReturnType<typeof buildPublicInputsStruct>;
+      proofFields: Fr[];
+      vkFields: Fr[];
+      epochResult: {
+        epoch_id: bigint | number;
+        order_acc: bigint;
+        cancel_acc: bigint;
+        order_count: bigint | number;
+        cancel_count: bigint | number;
+        closes_at_block: bigint;
+      };
+    }> {
+      // ---------------------------------------------------------------
+      // 1. Submit a balanced buy (alice) and sell (bob).
+      // ---------------------------------------------------------------
+      const buyNonce  = randomField();
+      const sellNonce = randomField();
+
+      await orderbook.methods
+        .submit_order(false, args.buyAmount, BUY_LIMIT, randomField(), buyNonce)
+        .send({ from: alice });
+
+      await orderbook.methods
+        .submit_order(true, args.sellAmount, SELL_LIMIT, randomField(), sellNonce)
+        .send({ from: bob });
+
+      // ---------------------------------------------------------------
+      // 2. Read alice's + bob's order notes from their private sets.
+      // ---------------------------------------------------------------
+      const aliceRaw = await orderbook.methods.get_orders(alice).simulate({ from: alice });
+      const aliceBv = (aliceRaw as {
+        result: { storage: OrderNoteFields[]; len: bigint | number };
+      }).result;
+      const aliceLen = Number(aliceBv.len);
+      assert.ok(aliceLen >= 1, "alice must have at least 1 order");
+      const aliceNote = aliceBv.storage.slice(0, aliceLen)
+        .find((n) => BigInt(n.nonce) === buyNonce);
+      assert.ok(aliceNote, "alice's buy order note not found");
+
+      const bobRaw = await orderbook.methods.get_orders(bob).simulate({ from: bob });
+      const bobBv = (bobRaw as {
+        result: { storage: OrderNoteFields[]; len: bigint | number };
+      }).result;
+      const bobLen = Number(bobBv.len);
+      assert.ok(bobLen >= 1, "bob must have at least 1 order");
+      const bobNote = bobBv.storage.slice(0, bobLen)
+        .find((n) => BigInt(n.nonce) === sellNonce);
+      assert.ok(bobNote, "bob's sell order note not found");
+
+      // ---------------------------------------------------------------
+      // 3. Read epoch state + pool snapshot.
+      // ---------------------------------------------------------------
+      const epochRaw = await orderbook.methods.get_epoch().simulate({ from: admin });
+      const epochResult = (epochRaw as {
+        result: {
+          epoch_id: bigint | number;
+          order_acc: bigint;
+          cancel_acc: bigint;
+          order_count: bigint | number;
+          cancel_count: bigint | number;
+          closes_at_block: bigint;
+        };
+      }).result;
+
+      const poolStateRaw = await pool.methods.get_pool_state().simulate({ from: admin });
+      const poolState = poolStateRaw.result;
+
+      // ---------------------------------------------------------------
+      // 4. Build orders[] in submission order (the circuit's binding module
+      //    replays the order_acc chain in this exact order).
+      // ---------------------------------------------------------------
+      const ordersForWitness: OrderNotePreimage[] = [
+        {
+          side: false,
+          amount_in: BigInt(aliceNote.amount_in),
+          limit_price: BigInt(aliceNote.limit_price),
+          order_nonce: buyNonce,
+          submitted_at_block: Number(aliceNote.submitted_at_block),
+          owner: BigInt(aliceNote.owner),
+        },
+        {
+          side: true,
+          amount_in: BigInt(bobNote.amount_in),
+          limit_price: BigInt(bobNote.limit_price),
+          order_nonce: sellNonce,
+          submitted_at_block: Number(bobNote.submitted_at_block),
+          owner: BigInt(bobNote.owner),
+        },
+      ].sort((a, b) => {
+        if (a.submitted_at_block !== b.submitted_at_block)
+          return a.submitted_at_block - b.submitted_at_block;
+        return a.order_nonce < b.order_nonce ? -1 : a.order_nonce > b.order_nonce ? 1 : 0;
+      });
+
+      // ---------------------------------------------------------------
+      // 5. Run the off-chain aggregator.
+      // ---------------------------------------------------------------
+      const clearingOrders: ClearingOrder[] = ordersForWitness.map((o) => ({
+        side: o.side,
+        amountIn: o.amount_in,
+        limitPrice: o.limit_price,
+        submittedAtBlock: o.submitted_at_block,
+        orderNonce: o.order_nonce,
+      }));
+
+      const clearingResult = computeClearing(
+        {
+          reserveA: BigInt(poolState.reserve_a),
+          reserveB: BigInt(poolState.reserve_b),
+          lpSupply: BigInt(poolState.lp_supply),
+        },
+        clearingOrders,
+      );
+
+      assert.equal(clearingResult.cleared, true, "aggregator must find a clearing price");
+      assert.equal(clearingResult.fills.length, 2, "both orders must be filled (buy + sell)");
+
+      console.log(
+        `clearing price: ${clearingResult.clearingPrice}, ` +
+        `reserves: a=${poolState.reserve_a} b=${poolState.reserve_b} lp=${poolState.lp_supply}`,
+      );
+
+      // ---------------------------------------------------------------
+      // 6. Build Prover.toml witness.
+      // ---------------------------------------------------------------
+      const epoch: EpochState = {
+        order_acc: epochResult.order_acc,
+        cancel_acc: epochResult.cancel_acc,
+        order_count: Number(epochResult.order_count),
+        cancel_count: Number(epochResult.cancel_count),
+      };
+      const poolSnap: PoolSnapshotForCircuit = {
+        reserve_a: BigInt(poolState.reserve_a),
+        reserve_b: BigInt(poolState.reserve_b),
+        lp_supply: BigInt(poolState.lp_supply),
+      };
+
+      const { proverToml } = buildClearingWitness({
+        epoch,
+        pool: poolSnap,
+        orders: ordersForWitness,
+        cancellationIndices: [],
+        clearing: clearingResult,
+        maxOrders: CIRCUIT_MAX_ORDERS,
+      });
+
+      // ---------------------------------------------------------------
+      // 7. Write Prover.toml + run nargo execute.
+      // ---------------------------------------------------------------
+      const proverTomlPath = `${CIRCUIT_DIR}/Prover.toml`;
+      writeFileSync(proverTomlPath, proverToml, "utf8");
+
+      const execResult = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
+        ],
+        { encoding: "utf8", timeout: 5 * 60 * 1_000 },
+      );
+      if (execResult.status !== 0) {
+        assert.fail([
+          "nargo execute failed (witness/constraint mismatch):",
+          "stdout:", execResult.stdout ?? "",
+          "stderr:", execResult.stderr ?? "",
+        ].join("\n"));
+      }
+
+      // ---------------------------------------------------------------
+      // 8. bb write_vk + bb prove. Use `-t noir-recursive` to match the
+      //    compile-all.sh convention (the on-chain verifier expects this
+      //    recursion-format proof). The vk is rewritten under target/vk/
+      //    (the test's working dir for proof+vk), separate from the
+      //    target/vk.bin/ that compile-all.sh produces — same vk_hash
+      //    (they're deterministic) but the file path is the test's own.
+      // ---------------------------------------------------------------
+      const vkDir    = `${CIRCUIT_DIR}/target/vk`;
+      const proofDir = `${CIRCUIT_DIR}/target/proofdir`;
+      rmSync(vkDir,    { recursive: true, force: true });
+      mkdirSync(vkDir, { recursive: true });
+      rmSync(proofDir, { recursive: true, force: true });
+      mkdirSync(proofDir, { recursive: true });
+
+      const vkResult = spawnSync(
+        BB_BIN,
+        [
+          "write_vk",
+          "-b", `${CIRCUIT_DIR}/target/clearing.json`,
+          "-o", vkDir,
+          "-t", "noir-recursive",
+        ],
+        { encoding: "utf8", timeout: 10 * 60 * 1_000 },
+      );
+      if (vkResult.status !== 0) {
+        assert.fail([
+          "bb write_vk failed:",
+          "stdout:", vkResult.stdout ?? "",
+          "stderr:", vkResult.stderr ?? "",
+        ].join("\n"));
+      }
+      const vkFile = `${vkDir}/vk`;
+
+      // bb prove without `-t` flag (matching the 5d-2 clearing-circuit.test.ts
+      // convention which produces a 500-field proof file matching the Task 5
+      // helper's HONK_PROOF_FIELDS expectation). Wall-clock at N=32 is
+      // empirically 10-25 min and dominates the test.
+      const proveResult = spawnSync(
+        BB_BIN,
+        [
+          "prove",
+          "-b", `${CIRCUIT_DIR}/target/clearing.json`,
+          "-w", `${CIRCUIT_DIR}/target/clearing.gz`,
+          "-o", proofDir,
+          "-k", vkFile,
+        ],
+        { encoding: "utf8", timeout: 40 * 60 * 1_000 },
+      );
+      if (proveResult.status !== 0) {
+        // Most likely RAM OOM at N=32 on the dev VPS (~8 GB + 8 GB swap).
+        // If so the contingency is to drop MAX_ORDERS_PER_EPOCH to 16.
+        assert.fail([
+          "bb prove failed (likely RAM OOM at N=32; consider N=16 contingency):",
+          `exit=${proveResult.status}`,
+          "stdout:", proveResult.stdout ?? "",
+          "stderr:", proveResult.stderr ?? "",
+        ].join("\n"));
+      }
+
+      // ---------------------------------------------------------------
+      // 9. Parse proof + vk to Fr[] via the Task 5 helper, then bridge to
+      //    the contract's locked array sizes.
+      // ---------------------------------------------------------------
+      const proofFieldsFile = readProofAsFields(`${proofDir}/proof`);
+      const vkFieldsFile    = readVkAsFields(vkFile);
+      const proofFields = bridgeProofToContractSize(proofFieldsFile);
+      const vkFields    = bridgeVkToContractSize(vkFieldsFile);
+      assert.equal(proofFields.length, CONTRACT_PROOF_SIZE, "bridged proof length");
+      assert.equal(vkFields.length,    CONTRACT_VK_SIZE,    "bridged vk length");
+
+      const publicInputsStruct = buildPublicInputsStruct(
+        epochResult,
+        poolSnap,
+        clearingResult,
+        ordersForWitness,
+      );
+
+      return { publicInputsStruct, proofFields, vkFields, epochResult };
+    }
+
     it(
       "E1: balanced buy+sell → aggregator → nargo execute → bb prove → close_epoch_and_clear_verified",
       { timeout: 50 * 60 * 1_000 }, // 50 min per test (bb prove at N=32 dominates)
       async () => {
-        // -----------------------------------------------------------------
-        // 1. Submit a balanced buy (alice, side=false) and sell (bob, side=true).
-        // -----------------------------------------------------------------
-        const buyNonce  = randomField();
-        const sellNonce = randomField();
-
-        await orderbook.methods
-          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce)
-          .send({ from: alice });
-
-        await orderbook.methods
-          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce)
-          .send({ from: bob });
+        const { publicInputsStruct, proofFields, vkFields, epochResult } =
+          await produceProofForCurrentEpoch({
+            buyAmount: BUY_USDC,
+            sellAmount: SELL_ETH,
+          });
 
         // -----------------------------------------------------------------
-        // 2. Read alice's + bob's order notes from their private sets.
-        // -----------------------------------------------------------------
-        const aliceRaw = await orderbook.methods.get_orders(alice).simulate({ from: alice });
-        const aliceBv = (aliceRaw as {
-          result: { storage: OrderNoteFields[]; len: bigint | number };
-        }).result;
-        const aliceLen = Number(aliceBv.len);
-        assert.ok(aliceLen >= 1, "alice must have at least 1 order");
-        const aliceNote = aliceBv.storage.slice(0, aliceLen)
-          .find((n) => BigInt(n.nonce) === buyNonce);
-        assert.ok(aliceNote, "alice's buy order note not found");
-
-        const bobRaw = await orderbook.methods.get_orders(bob).simulate({ from: bob });
-        const bobBv = (bobRaw as {
-          result: { storage: OrderNoteFields[]; len: bigint | number };
-        }).result;
-        const bobLen = Number(bobBv.len);
-        assert.ok(bobLen >= 1, "bob must have at least 1 order");
-        const bobNote = bobBv.storage.slice(0, bobLen)
-          .find((n) => BigInt(n.nonce) === sellNonce);
-        assert.ok(bobNote, "bob's sell order note not found");
-
-        // -----------------------------------------------------------------
-        // 3. Read epoch state + pool snapshot.
-        // -----------------------------------------------------------------
-        const epochRaw = await orderbook.methods.get_epoch().simulate({ from: admin });
-        const epochResult = (epochRaw as {
-          result: {
-            epoch_id: bigint | number;
-            order_acc: bigint;
-            cancel_acc: bigint;
-            order_count: bigint | number;
-            cancel_count: bigint | number;
-            closes_at_block: bigint;
-          };
-        }).result;
-
-        const poolStateRaw = await pool.methods.get_pool_state().simulate({ from: admin });
-        const poolState = poolStateRaw.result;
-
-        // -----------------------------------------------------------------
-        // 4. Build orders[] in submission order (the circuit's binding module
-        //    replays the order_acc chain in this exact order).
-        // -----------------------------------------------------------------
-        const ordersForWitness: OrderNotePreimage[] = [
-          {
-            side: false,
-            amount_in: BigInt(aliceNote.amount_in),
-            limit_price: BigInt(aliceNote.limit_price),
-            order_nonce: buyNonce,
-            submitted_at_block: Number(aliceNote.submitted_at_block),
-            owner: BigInt(aliceNote.owner),
-          },
-          {
-            side: true,
-            amount_in: BigInt(bobNote.amount_in),
-            limit_price: BigInt(bobNote.limit_price),
-            order_nonce: sellNonce,
-            submitted_at_block: Number(bobNote.submitted_at_block),
-            owner: BigInt(bobNote.owner),
-          },
-        ].sort((a, b) => {
-          if (a.submitted_at_block !== b.submitted_at_block)
-            return a.submitted_at_block - b.submitted_at_block;
-          return a.order_nonce < b.order_nonce ? -1 : a.order_nonce > b.order_nonce ? 1 : 0;
-        });
-
-        // -----------------------------------------------------------------
-        // 5. Run the off-chain aggregator.
-        // -----------------------------------------------------------------
-        const clearingOrders: ClearingOrder[] = ordersForWitness.map((o) => ({
-          side: o.side,
-          amountIn: o.amount_in,
-          limitPrice: o.limit_price,
-          submittedAtBlock: o.submitted_at_block,
-          orderNonce: o.order_nonce,
-        }));
-
-        const clearingResult = computeClearing(
-          {
-            reserveA: BigInt(poolState.reserve_a),
-            reserveB: BigInt(poolState.reserve_b),
-            lpSupply: BigInt(poolState.lp_supply),
-          },
-          clearingOrders,
-        );
-
-        assert.equal(clearingResult.cleared, true, "aggregator must find a clearing price");
-        assert.equal(clearingResult.fills.length, 2, "both orders must be filled (buy + sell)");
-
-        console.log(
-          `clearing price: ${clearingResult.clearingPrice}, ` +
-          `reserves: a=${poolState.reserve_a} b=${poolState.reserve_b} lp=${poolState.lp_supply}`,
-        );
-
-        // -----------------------------------------------------------------
-        // 6. Build Prover.toml witness.
-        // -----------------------------------------------------------------
-        const epoch: EpochState = {
-          order_acc: epochResult.order_acc,
-          cancel_acc: epochResult.cancel_acc,
-          order_count: Number(epochResult.order_count),
-          cancel_count: Number(epochResult.cancel_count),
-        };
-        const poolSnap: PoolSnapshotForCircuit = {
-          reserve_a: BigInt(poolState.reserve_a),
-          reserve_b: BigInt(poolState.reserve_b),
-          lp_supply: BigInt(poolState.lp_supply),
-        };
-
-        const { proverToml } = buildClearingWitness({
-          epoch,
-          pool: poolSnap,
-          orders: ordersForWitness,
-          cancellationIndices: [],
-          clearing: clearingResult,
-          maxOrders: CIRCUIT_MAX_ORDERS,
-        });
-
-        // -----------------------------------------------------------------
-        // 7. Write Prover.toml + run nargo execute.
-        // -----------------------------------------------------------------
-        const proverTomlPath = `${CIRCUIT_DIR}/Prover.toml`;
-        writeFileSync(proverTomlPath, proverToml, "utf8");
-
-        const execResult = spawnSync(
-          "/bin/bash",
-          [
-            "-c",
-            `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
-          ],
-          { encoding: "utf8", timeout: 5 * 60 * 1_000 },
-        );
-        if (execResult.status !== 0) {
-          assert.fail([
-            "nargo execute failed (witness/constraint mismatch):",
-            "stdout:", execResult.stdout ?? "",
-            "stderr:", execResult.stderr ?? "",
-          ].join("\n"));
-        }
-
-        // -----------------------------------------------------------------
-        // 8. bb write_vk + bb prove. Use `-t noir-recursive` to match the
-        //    compile-all.sh convention (the on-chain verifier expects this
-        //    recursion-format proof). The vk is rewritten under target/vk/
-        //    (the test's working dir for proof+vk), separate from the
-        //    target/vk.bin/ that compile-all.sh produces — same vk_hash
-        //    (they're deterministic) but the file path is the test's own.
-        // -----------------------------------------------------------------
-        const vkDir    = `${CIRCUIT_DIR}/target/vk`;
-        const proofDir = `${CIRCUIT_DIR}/target/proofdir`;
-        rmSync(vkDir,    { recursive: true, force: true });
-        mkdirSync(vkDir, { recursive: true });
-        rmSync(proofDir, { recursive: true, force: true });
-        mkdirSync(proofDir, { recursive: true });
-
-        const vkResult = spawnSync(
-          BB_BIN,
-          [
-            "write_vk",
-            "-b", `${CIRCUIT_DIR}/target/clearing.json`,
-            "-o", vkDir,
-            "-t", "noir-recursive",
-          ],
-          { encoding: "utf8", timeout: 10 * 60 * 1_000 },
-        );
-        if (vkResult.status !== 0) {
-          assert.fail([
-            "bb write_vk failed:",
-            "stdout:", vkResult.stdout ?? "",
-            "stderr:", vkResult.stderr ?? "",
-          ].join("\n"));
-        }
-        const vkFile = `${vkDir}/vk`;
-
-        // bb prove without `-t` flag (matching the 5d-2 clearing-circuit.test.ts
-        // convention which produces a 500-field proof file matching the Task 5
-        // helper's HONK_PROOF_FIELDS expectation). Wall-clock at N=32 is
-        // empirically 10-25 min and dominates the test.
-        const proveResult = spawnSync(
-          BB_BIN,
-          [
-            "prove",
-            "-b", `${CIRCUIT_DIR}/target/clearing.json`,
-            "-w", `${CIRCUIT_DIR}/target/clearing.gz`,
-            "-o", proofDir,
-            "-k", vkFile,
-          ],
-          { encoding: "utf8", timeout: 40 * 60 * 1_000 },
-        );
-        if (proveResult.status !== 0) {
-          // Most likely RAM OOM at N=32 on the dev VPS (~8 GB + 8 GB swap).
-          // If so the contingency is to drop MAX_ORDERS_PER_EPOCH to 16.
-          assert.fail([
-            "bb prove failed (likely RAM OOM at N=32; consider N=16 contingency):",
-            `exit=${proveResult.status}`,
-            "stdout:", proveResult.stdout ?? "",
-            "stderr:", proveResult.stderr ?? "",
-          ].join("\n"));
-        }
-
-        // -----------------------------------------------------------------
-        // 9. Parse proof + vk to Fr[] via the Task 5 helper, then bridge to
-        //    the contract's locked array sizes.
-        // -----------------------------------------------------------------
-        const proofFieldsFile = readProofAsFields(`${proofDir}/proof`);
-        const vkFieldsFile    = readVkAsFields(vkFile);
-        const proofFields = bridgeProofToContractSize(proofFieldsFile);
-        const vkFields    = bridgeVkToContractSize(vkFieldsFile);
-        assert.equal(proofFields.length, CONTRACT_PROOF_SIZE, "bridged proof length");
-        assert.equal(vkFields.length,    CONTRACT_VK_SIZE,    "bridged vk length");
-
-        // -----------------------------------------------------------------
-        // 10. Build the ClearingPublic struct in the shape the contract takes
-        //     (mirror of circuit's fn main pub args, in declaration order).
-        // -----------------------------------------------------------------
-        const publicInputsStruct = buildPublicInputsStruct(
-          epochResult,
-          poolSnap,
-          clearingResult,
-          ordersForWitness,
-        );
-
-        // -----------------------------------------------------------------
-        // 11. Mine past epoch expiry. The contract's _apply_verified_clearing
-        //     public callback asserts block >= closes_at_block.
+        // Mine past epoch expiry. The contract's _apply_verified_clearing
+        // public callback asserts block >= closes_at_block.
         // -----------------------------------------------------------------
         while ((await currentBlock(node)) < Number(epochResult.closes_at_block)) {
           await tUSDC.methods.mint_to_public(admin, 1n).send({ from: admin });
         }
 
         // -----------------------------------------------------------------
-        // 12. The verified-flow private entry point. Anyone can call it (no
-        //     authority gate); the proof is the authorization.
+        // The verified-flow private entry point. Anyone can call it (no
+        // authority gate); the proof is the authorization.
         // -----------------------------------------------------------------
         await orderbook.methods
           .close_epoch_and_clear_verified(publicInputsStruct, proofFields, vkFields)
           .send({ from: admin });
 
         // -----------------------------------------------------------------
-        // 13. Assert the epoch advanced + fills were recorded.
+        // Assert the epoch advanced + fills were recorded.
         // -----------------------------------------------------------------
         const newEpochRaw = await orderbook.methods.get_epoch().simulate({ from: admin });
         const newEpoch = (newEpochRaw as {
@@ -507,13 +546,73 @@ describe(
         );
         assert.equal(Number(newEpoch.order_count), 0, "order_count reset to 0");
         assert.equal(Number(newEpoch.cancel_count), 0, "cancel_count reset to 0");
+      },
+    );
 
-        // Each fill recorded with the aggregator's amount_out.
-        for (const f of clearingResult.fills) {
-          const recordedRaw = await orderbook.methods.get_fill(f.orderNonce).simulate({ from: admin });
-          const recorded = BigInt((recordedRaw as { result: bigint | number }).result);
-          assert.ok(recorded > 0n, `fills[${f.orderNonce}] must be recorded (got 0)`);
+    it(
+      "E2: a tampered proof byte makes close_epoch_and_clear_verified revert",
+      { timeout: 60 * 60 * 1_000 },
+      async () => {
+        const { publicInputsStruct, proofFields, vkFields, epochResult } =
+          await produceProofForCurrentEpoch({
+            buyAmount: 100n * ONE_USDC,
+            sellAmount: 50n * ONE_ETH,
+          });
+
+        // Tamper: flip proof[0] by +1 mod Fr.MODULUS. Mutating any field
+        // that was originally generated by bb forces the Honk verifier to
+        // reject the proof inside std::verify_proof_with_type.
+        const tamperedProof = [...proofFields];
+        const tamperedFirstField = (proofFields[0]!.toBigInt() + 1n) % Fr.MODULUS;
+        tamperedProof[0] = new Fr(tamperedFirstField);
+
+        // Mine past expiry so the freshness check is not the first gate to fire.
+        while ((await currentBlock(node)) < Number(epochResult.closes_at_block)) {
+          await tUSDC.methods.mint_to_public(admin, 1n).send({ from: admin });
         }
+
+        await assert.rejects(
+          orderbook.methods
+            .close_epoch_and_clear_verified(publicInputsStruct, tamperedProof, vkFields)
+            .send({ from: admin }),
+          /verify|proof|invalid|recursion|honk/i,
+          "tampered proof must be rejected by std::verify_proof_with_type",
+        );
+      },
+    );
+
+    it(
+      "E3: a replayed (public_inputs, proof) makes the freshness check reject",
+      { timeout: 60 * 60 * 1_000 },
+      async () => {
+        const { publicInputsStruct, proofFields, vkFields, epochResult } =
+          await produceProofForCurrentEpoch({
+            buyAmount: 50n * ONE_USDC,
+            sellAmount: 25n * ONE_ETH,
+          });
+
+        // Mine past expiry.
+        while ((await currentBlock(node)) < Number(epochResult.closes_at_block)) {
+          await tUSDC.methods.mint_to_public(admin, 1n).send({ from: admin });
+        }
+
+        // First apply: succeeds, advances epoch (order_acc resets to 0).
+        await orderbook.methods
+          .close_epoch_and_clear_verified(publicInputsStruct, proofFields, vkFields)
+          .send({ from: admin });
+
+        // Replay: same (public_inputs, proof, vk) — the new epoch's order_acc
+        // is reset to 0 whereas public_inputs.order_acc reflects the old
+        // epoch's accumulator, so the freshness assert in
+        // _apply_verified_clearing must reject.  Any revert whose message
+        // matches one of the freshness/expiry guards is a pass.
+        await assert.rejects(
+          orderbook.methods
+            .close_epoch_and_clear_verified(publicInputsStruct, proofFields, vkFields)
+            .send({ from: admin }),
+          /order_acc mismatch|epoch has not expired|already filled|cancel_acc mismatch/i,
+          "replay must be rejected by the freshness assert in _apply_verified_clearing",
+        );
       },
     );
   },
