@@ -454,11 +454,79 @@ pub contract Orderbook {
 
     // ============================ CLAIM FILL ============================
 
-    /// claim_fill rewrite lands in Task 8. Body intentionally stubbed.
+    /// Claim the output of a filled order via Merkle inclusion proof.
+    ///
+    /// The maker recomputes the leaf `poseidon2([order_nonce, claimed_amount_out])`
+    /// locally and walks the 5-level path through `siblings[0..5]` keyed by the bits
+    /// of `leaf_index`. The resulting root is asserted equal to `fills_root[epoch_id]`
+    /// by the enqueued `_assert_fill_root` callback. Double-claim protection: popping
+    /// the OrderNote nullifies it (one-shot). Cancel-after-fill protection: see
+    /// spec sec 6.5 (token-contract underflow).
     #[external("private")]
-    fn claim_fill(_order_nonce: Field, _claimed_amount_out: u128) {
-        // claim_fill rewrite lands in Task 8. Body intentionally stubbed.
-        assert(false, "claim_fill is being rewritten in Task 8");
+    fn claim_fill(
+        order_nonce: Field,
+        claimed_amount_out: u128,
+        epoch_id: u32,
+        siblings: [Field; 5],
+        leaf_index: u32,
+    ) {
+        let maker = self.msg_sender();
+
+        // 1. Retrieve + nullify the maker's filled OrderNote (cancel_order pattern;
+        //    the nullifier is the double-claim guard).
+        let options = NoteGetterOptions::new().select(
+            OrderNote::properties().nonce,
+            Comparator.EQ,
+            order_nonce,
+        ).set_limit(1);
+        let notes = self.storage.orders.at(maker).pop_notes(options);
+        assert(notes.len() == 1, "order not found");
+        let order = notes.get(0);
+        assert(order.owner == maker, "not order owner");
+
+        // 2. Recompute the leaf locally (matches circuits/clearing/src/merkle.nr's fill_leaf).
+        let leaf = poseidon2_hash([order_nonce, claimed_amount_out as Field]);
+
+        // 3. Walk the depth-5 Merkle path. leaf_index's LSB picks current side at each level.
+        let mut current = leaf;
+        let mut idx = leaf_index;
+        for level in 0..5 {
+            let bit = idx & 1;
+            current = if bit == 0 {
+                poseidon2_hash([current, siblings[level]])
+            } else {
+                poseidon2_hash([siblings[level], current])
+            };
+            idx = idx >> 1;
+        }
+        // After 5 shifts, idx must be zero -- guards against leaf_index >= 32.
+        assert(idx == 0, "leaf_index out of bounds");
+
+        // 4. Pay out: a buy (side=false) is owed token B; a sell (side=true) is owed token A.
+        let token: AztecAddress = if order.side {
+            self.storage.token_a_addr.read()
+        } else {
+            self.storage.token_b_addr.read()
+        };
+        self.call(Token::at(token).transfer_public_to_private(
+            self.address,
+            maker,
+            claimed_amount_out,
+            0,
+        ));
+
+        // 5. Atomically verify the computed root against the stored per-epoch root.
+        self.enqueue_self._assert_fill_root(epoch_id, current);
+    }
+
+    /// Public callback for claim_fill -- assert the locally-recomputed root matches
+    /// the per-epoch root recorded in storage by _apply_verified_clearing. only_self.
+    #[external("public")]
+    #[only_self]
+    fn _assert_fill_root(epoch_id: u32, computed_root: Field) {
+        let stored = self.storage.fills_root.at(epoch_id).read();
+        assert(stored != 0, "no clearing recorded for epoch");
+        assert(computed_root == stored, "fill merkle root mismatch");
     }
 
     // ============================ ORDER CANCELLATION ============================
@@ -580,6 +648,14 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_clearing_vk_hash() -> Field {
         self.storage.clearing_vk_hash.read()
+    }
+
+    /// The per-epoch Merkle settlement root (0 == no clearing recorded for that epoch).
+    /// A maker reads this to confirm an epoch has been cleared before constructing
+    /// an inclusion proof for claim_fill.
+    #[external("utility")]
+    unconstrained fn get_fills_root(epoch_id: u32) -> Field {
+        self.storage.fills_root.at(epoch_id).read()
     }
 
     /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is
