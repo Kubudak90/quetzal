@@ -1,6 +1,7 @@
 use crate::pricing::{mul_div, SCALE, FEE_NUM, FEE_DEN, eligible, payout};
 use crate::binding::{c_i, replay_chain};
 use crate::types::{OrderPreimage, MAX_ORDERS_PER_EPOCH};
+use crate::merkle::{fill_leaf, merkle_root_32};
 
 #[test]
 fn mul_div_basic_floor_rounding() {
@@ -203,4 +204,86 @@ fn u6_dos_resistance_mask_derivation() {
         }
     }
     assert(violation, "omitted eligible order must be detected as a violation");
+}
+
+// ============================================================================
+// Week 5d-4: Merkle settlement root tests (sec 10.1 T1-T3).
+// ============================================================================
+
+#[test]
+fn merkle_empty_leaf_is_poseidon2_of_zero_zero() {
+    // The padding leaf - poseidon2_hash([0, 0]) - is what every empty slot collapses to.
+    let empty = fill_leaf(0 as Field, 0 as u128);
+    let expected = poseidon::poseidon2::Poseidon2::hash([0 as Field, 0 as Field], 2);
+    assert(empty == expected, "fill_leaf(0,0) must equal poseidon2([0,0])");
+}
+
+#[test]
+fn merkle_fill_leaf_binds_order_nonce_and_amount() {
+    // Two leaves that differ only in order_nonce produce distinct hashes.
+    let l1 = fill_leaf(1 as Field, 100 as u128);
+    let l2 = fill_leaf(2 as Field, 100 as u128);
+    assert(l1 != l2, "leaf must be sensitive to order_nonce");
+    // Two leaves that differ only in amount_out produce distinct hashes.
+    let l3 = fill_leaf(1 as Field, 100 as u128);
+    let l4 = fill_leaf(1 as Field, 101 as u128);
+    assert(l3 != l4, "leaf must be sensitive to amount_out");
+}
+
+#[test]
+fn merkle_root_all_zero_leaves_pins_expected_constant() {
+    // The all-empty-slot root is what the contract treats as the "no clearing
+    // recorded" sentinel boundary. Pin it against an independently-derived
+    // value: 5 levels of poseidon2([x, x]) starting at fill_leaf(0, 0).
+    let empty = fill_leaf(0 as Field, 0 as u128);
+    let leaves: [Field; MAX_ORDERS_PER_EPOCH] = [empty; MAX_ORDERS_PER_EPOCH];
+
+    let lvl1 = poseidon::poseidon2::Poseidon2::hash([empty, empty], 2);
+    let lvl2 = poseidon::poseidon2::Poseidon2::hash([lvl1, lvl1], 2);
+    let lvl3 = poseidon::poseidon2::Poseidon2::hash([lvl2, lvl2], 2);
+    let lvl4 = poseidon::poseidon2::Poseidon2::hash([lvl3, lvl3], 2);
+    let expected_root = poseidon::poseidon2::Poseidon2::hash([lvl4, lvl4], 2);
+
+    let computed = merkle_root_32(leaves);
+    assert(computed == expected_root, "all-empty merkle root must match independently-derived constant");
+}
+
+#[test]
+fn merkle_root_single_nonzero_leaf_traces() {
+    // Construct a 32-leaf tree where only index 0 differs from the empty sentinel.
+    // Manually hash the path: level0[0] vs level0[1] (both empty), level1[0] hashes them,
+    // up the spine on the "left always" path (leaf_index = 0).
+    let empty = fill_leaf(0 as Field, 0 as u128);
+    let mine = fill_leaf(7 as Field, 42 as u128);
+    let mut leaves: [Field; MAX_ORDERS_PER_EPOCH] = [empty; MAX_ORDERS_PER_EPOCH];
+    leaves[0] = mine;
+
+    // Walk the path manually for leaf_index = 0 (all "left").
+    let mut node = mine;
+    // Level 0 sibling: leaves[1] (still the empty leaf).
+    node = poseidon::poseidon2::Poseidon2::hash([node, empty], 2);
+    // Levels 1-4 siblings: the all-empty subtree root at the corresponding depth.
+    let mut sibling = poseidon::poseidon2::Poseidon2::hash([empty, empty], 2);
+    for _level in 0..4 {
+        node = poseidon::poseidon2::Poseidon2::hash([node, sibling], 2);
+        sibling = poseidon::poseidon2::Poseidon2::hash([sibling, sibling], 2);
+    }
+
+    let computed = merkle_root_32(leaves);
+    assert(node == computed, "manual path trace must match merkle_root_32 output");
+}
+
+#[test]
+fn merkle_root_changes_with_leaf_swap() {
+    // Swapping a single non-zero leaf into a different slot changes the root
+    // (rules out a trivial "sum of leaves" or other index-insensitive implementation).
+    let empty = fill_leaf(0 as Field, 0 as u128);
+    let leaf_a = fill_leaf(9 as Field, 1000 as u128);
+    let mut leaves_lo: [Field; MAX_ORDERS_PER_EPOCH] = [empty; MAX_ORDERS_PER_EPOCH];
+    leaves_lo[0] = leaf_a;
+    let mut leaves_hi: [Field; MAX_ORDERS_PER_EPOCH] = [empty; MAX_ORDERS_PER_EPOCH];
+    leaves_hi[31] = leaf_a;
+    let root_lo = merkle_root_32(leaves_lo);
+    let root_hi = merkle_root_32(leaves_hi);
+    assert(root_lo != root_hi, "leaf position must affect root");
 }
