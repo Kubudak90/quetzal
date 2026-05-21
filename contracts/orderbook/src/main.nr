@@ -90,10 +90,11 @@ pub contract Orderbook {
         pub amount_out: u128,
     }
 
-    /// Mirror of the Week 5d-2 clearing circuit's `ClearingPublic`. Field
-    /// order MUST match `circuits/clearing/src/main.nr`'s fn main pub parameter
-    /// declaration order, otherwise `flatten_clearing_public` produces a vector
-    /// the prover did not flatten to and the verify rejects.
+    /// Mirror of the Week 5d-4 clearing circuit's ClearingPublic. Field order
+    /// MUST match circuits/clearing/src/main.nr's fn main pub parameter declaration
+    /// (order_acc, cancel_acc, order_count, cancel_count, reserve_a, reserve_b,
+    /// lp_supply, clearing_price, fills_root, swap). Reorder requires matching
+    /// reorder in flatten_clearing_public.
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct ClearingPublic {
         pub order_acc:      Field,
@@ -104,8 +105,7 @@ pub contract Orderbook {
         pub reserve_b:      u128,
         pub lp_supply:      u128,
         pub clearing_price: u128,
-        pub fills:          [FillEntry; MAX_ORDERS_PER_EPOCH],
-        pub fills_len:      u32,
+        pub fills_root:     Field,
         pub swap:           LiquidityPool::ClearingSwap,
     }
 
@@ -117,13 +117,13 @@ pub contract Orderbook {
         token_b_addr: PublicImmutable<AztecAddress, Context>,
         epoch_length: PublicImmutable<u32, Context>,
         pool_addr: PublicImmutable<AztecAddress, Context>,
-        /// Hash of the clearing-circuit VK (5d-2 circuit). Initialised at deploy and
-        /// immutable thereafter. The orderbook is bound to one specific clearing circuit
-        /// by VK identity. `std::verify_proof_with_type` requires this hash as a
-        /// separate argument. The full VK is provided as calldata to
-        /// `close_epoch_and_clear_verified` and is verified against this stored hash.
+        /// Hash of the clearing-circuit VK. Initialised at deploy and immutable.
+        /// The full VK is provided as calldata to close_epoch_and_clear_verified.
         clearing_vk_hash: PublicImmutable<Field, Context>,
-        fills: Map<Field, PublicMutable<u128, Context>, Context>,
+        /// Week 5d-4: per-epoch Merkle settlement root over the 32-leaf fills array.
+        /// `_apply_verified_clearing` writes one slot per clearing; claim_fill reads
+        /// it back to verify a maker-supplied inclusion proof.
+        fills_root: Map<u32, PublicMutable<Field, Context>, Context>,
     }
 
     /// Deploy-time initializer.
@@ -266,19 +266,6 @@ pub contract Orderbook {
         assert(block < epoch.closes_at_block, "epoch has expired; awaiting close_epoch");
     }
 
-    /// Public callback used by `cancel_order` to reject cancelling an order that
-    /// has already been filled by a clearing. A filled order must be redeemed via
-    /// `claim_fill`, not cancelled - cancelling it would reclaim input escrow that
-    /// the clearing already spent. `only_self`.
-    #[external("public")]
-    #[only_self]
-    fn _assert_not_filled(order_nonce: Field) {
-        assert(
-            self.storage.fills.at(order_nonce).read() == 0 as u128,
-            "order already filled; use claim_fill",
-        );
-    }
-
     /// Public callback used by `submit_order` to fold an order commitment into the
     /// epoch's `order_acc` running-hash chain and to enforce the per-epoch cap.
     /// `only_self` keeps this callable only via this contract's `enqueue_self`.
@@ -348,18 +335,13 @@ pub contract Orderbook {
         });
     }
 
-    /// Flatten a ClearingPublic to the [Field; 83] vector the recursive verifier
-    /// expects. Slot order matches `circuits/clearing/src/main.nr`'s fn main pub
-    /// parameter declaration order: scalars, then `fills`, then `fills_len`, then
-    /// the 10 swap fields. ANY reorder on the circuit side requires the matching
-    /// reorder here.
-    // Module-internal helper; #[contract_library_method] keeps the Aztec macro
-    // from treating this as a contract entry point (no #[external] / no pub on
-    // return). Aztec-nr exposes this attribute for exactly this case: pure
-    // helpers that live inside the contract module.
+    /// Flatten a ClearingPublic to the [Field; 19] vector the recursive verifier
+    /// expects. Slot order matches circuits/clearing/src/main.nr's fn main pub
+    /// parameter declaration order: 8 scalars, then fills_root, then the 10 swap
+    /// fields. ANY reorder on the circuit side requires the matching reorder here.
     #[contract_library_method]
-    fn flatten_clearing_public(p: ClearingPublic) -> [Field; 83] {
-        let mut out: [Field; 83] = [0 as Field; 83];
+    fn flatten_clearing_public(p: ClearingPublic) -> [Field; 19] {
+        let mut out: [Field; 19] = [0 as Field; 19];
         out[0] = p.order_acc;
         out[1] = p.cancel_acc;
         out[2] = p.order_count as Field;
@@ -368,21 +350,17 @@ pub contract Orderbook {
         out[5] = p.reserve_b as Field;
         out[6] = p.lp_supply as Field;
         out[7] = p.clearing_price as Field;
-        for i in 0..MAX_ORDERS_PER_EPOCH {
-            out[8 + 2 * i] = p.fills[i].order_nonce;
-            out[9 + 2 * i] = p.fills[i].amount_out as Field;
-        }
-        out[72] = p.fills_len as Field;
-        out[73] = p.swap.a_to_pool as Field;
-        out[74] = p.swap.b_to_pool as Field;
-        out[75] = p.swap.a_from_pool as Field;
-        out[76] = p.swap.b_from_pool as Field;
-        out[77] = p.swap.reserve_a_add as Field;
-        out[78] = p.swap.reserve_a_sub as Field;
-        out[79] = p.swap.reserve_b_add as Field;
-        out[80] = p.swap.reserve_b_sub as Field;
-        out[81] = p.swap.fee_a_per_share_increment as Field;
-        out[82] = p.swap.fee_b_per_share_increment as Field;
+        out[8] = p.fills_root;
+        out[9]  = p.swap.a_to_pool as Field;
+        out[10] = p.swap.b_to_pool as Field;
+        out[11] = p.swap.a_from_pool as Field;
+        out[12] = p.swap.b_from_pool as Field;
+        out[13] = p.swap.reserve_a_add as Field;
+        out[14] = p.swap.reserve_a_sub as Field;
+        out[15] = p.swap.reserve_b_add as Field;
+        out[16] = p.swap.reserve_b_sub as Field;
+        out[17] = p.swap.fee_a_per_share_increment as Field;
+        out[18] = p.swap.fee_b_per_share_increment as Field;
         out
     }
 
@@ -402,11 +380,11 @@ pub contract Orderbook {
     /// produces a hash that fails this internal check (revert).
     ///
     /// Flow:
-    /// 1. Flatten public_inputs to the [Field; 83] vector matching the prover's view.
+    /// 1. Flatten public_inputs to the [Field; 19] vector matching the prover's view.
     /// 2. `std::verify_proof_with_type(vk, proof, flat, vk_hash, 1)` -- recursive verify.
     /// 3. Enqueue `_apply_verified_clearing` which under public-state guards verifies
     ///    freshness (binding inputs match the current epoch's accumulators), runs the
-    ///    net AMM swap + records fills + advances the epoch.
+    ///    net AMM swap + stores fills_root + advances the epoch.
     ///
     /// Replay protection is automatic: an old proof's order_acc cannot match the
     /// post-clearing epoch's reset acc (=0).
@@ -425,9 +403,9 @@ pub contract Orderbook {
         self.enqueue_self._apply_verified_clearing(public_inputs);
     }
 
-    /// Public callback: under public-state guards, run the net AMM swap, record
-    /// per-order fills, and advance the epoch. only_self ensures only the matching
-    /// close_epoch_and_clear_verified private call (via enqueue_self) can invoke it.
+    /// Public callback: run the net AMM swap, store the per-epoch fills root,
+    /// and advance the epoch. only_self ensures only the matching
+    /// close_epoch_and_clear_verified private call can invoke it.
     #[external("public")]
     #[only_self]
     fn _apply_verified_clearing(public_inputs: ClearingPublic) {
@@ -441,7 +419,7 @@ pub contract Orderbook {
         assert(public_inputs.order_count == current.order_count, "order_count mismatch");
         assert(public_inputs.cancel_count == current.cancel_count, "cancel_count mismatch");
 
-        // Net AMM swap (identical to the W5c flow).
+        // Net AMM swap (identical to the W5c/5d-3 flow).
         let pool = self.storage.pool_addr.read();
         let swap = public_inputs.swap;
         if swap.a_to_pool > 0 as u128 {
@@ -456,18 +434,9 @@ pub contract Orderbook {
         }
         self.call(LiquidityPool::at(pool).apply_clearing(swap));
 
-        // Record each fill (same loop as W5c's close_epoch_and_clear).
-        for i in 0..MAX_ORDERS_PER_EPOCH {
-            if (i as u32) < public_inputs.fills_len {
-                let e = public_inputs.fills[i];
-                assert(e.amount_out > 0 as u128, "fill amount must be positive");
-                assert(
-                    self.storage.fills.at(e.order_nonce).read() == 0 as u128,
-                    "order already filled",
-                );
-                self.storage.fills.at(e.order_nonce).write(e.amount_out);
-            }
-        }
+        // Week 5d-4: single storage write -- the per-epoch Merkle settlement root.
+        // claim_fill reads this back at claim time via _assert_fill_root.
+        self.storage.fills_root.at(current.epoch_id).write(public_inputs.fills_root);
 
         // Advance the epoch (accumulator fields reset to 0).
         let epoch_length = self.storage.epoch_length.read();
@@ -485,60 +454,11 @@ pub contract Orderbook {
 
     // ============================ CLAIM FILL ============================
 
-    /// Claim the output of a filled order. The maker nullifies their `OrderNote`
-    /// and receives `claimed_amount_out` of the output token (token B for a buy,
-    /// token A for a sell). `claimed_amount_out` is read off-chain from `get_fill`
-    /// and validated on-chain: the enqueued `_assert_fill` callback asserts it
-    /// equals the recorded fill, so a wrong amount reverts the whole tx.
-    ///
-    /// (The payout `transfer_public_to_private` is a private Token function and
-    /// must run here, in private context; the authoritative fill amount lives in
-    /// the `fills` PublicMutable which a private context cannot read - hence the
-    /// caller supplies it and the public callback validates it.)
+    /// claim_fill rewrite lands in Task 8. Body intentionally stubbed.
     #[external("private")]
-    fn claim_fill(order_nonce: Field, claimed_amount_out: u128) {
-        let maker = self.msg_sender();
-
-        // Retrieve + nullify the maker's filled OrderNote (the cancel_order pattern;
-        // the nullifier is the double-claim guard).
-        let options = NoteGetterOptions::new().select(
-            OrderNote::properties().nonce,
-            Comparator.EQ,
-            order_nonce,
-        ).set_limit(1);
-        let notes = self.storage.orders.at(maker).pop_notes(options);
-        assert(notes.len() == 1, "order not found");
-        let order = notes.get(0);
-        assert(order.owner == maker, "not order owner");
-
-        // A buy (side=false) is owed token B; a sell (side=true) is owed token A.
-        let token: AztecAddress = if order.side {
-            self.storage.token_a_addr.read()
-        } else {
-            self.storage.token_b_addr.read()
-        };
-
-        // Pay out the claimed amount; `from` is this contract (a self-call), so the
-        // authwit nonce is the literal 0.
-        self.call(Token::at(token).transfer_public_to_private(
-            self.address,
-            maker,
-            claimed_amount_out,
-            0,
-        ));
-
-        // Validate the claimed amount against the recorded fill, atomically.
-        self.enqueue_self._assert_fill(order_nonce, claimed_amount_out);
-    }
-
-    /// Public callback for `claim_fill`: assert the claimed payout matches the
-    /// recorded fill and that the order was actually filled. `only_self`.
-    #[external("public")]
-    #[only_self]
-    fn _assert_fill(order_nonce: Field, claimed_amount_out: u128) {
-        let recorded = self.storage.fills.at(order_nonce).read();
-        assert(recorded == claimed_amount_out, "claimed amount does not match the recorded fill");
-        assert(recorded > 0 as u128, "order not filled");
+    fn claim_fill(_order_nonce: Field, _claimed_amount_out: u128) {
+        // claim_fill rewrite lands in Task 8. Body intentionally stubbed.
+        assert(false, "claim_fill is being rewritten in Task 8");
     }
 
     // ============================ ORDER CANCELLATION ============================
@@ -608,13 +528,14 @@ pub contract Orderbook {
             ],
         );
 
-        // Gate cancellation to OPEN + not-filled, then fold into cancel_acc, all BEFORE
-        // the escrow-return public call. The Week 5c ordering rationale stands: a
-        // rejected cancel must surface the clean guard message instead of a token
-        // underflow, and the cancel_acc fold must be visible only if the cancel actually
-        // proceeds to the escrow return.
+        // Gate cancellation to OPEN, then fold into cancel_acc, all BEFORE the
+        // escrow-return public call. The 5c _assert_not_filled guard is dropped in
+        // 5d-4: cancel-after-fill is now blocked at the token-contract level --
+        // _apply_verified_clearing moves filled amount_in to the pool, leaving the
+        // orderbook's public balance short, so the transfer_public_to_private call
+        // underflows and the whole tx (including the OrderNote nullification + the
+        // cancel_acc fold) atomically reverts. See specs/2026-05-21-...-design.md sec 6.5.
         self.enqueue_self._assert_epoch_open();
-        self.enqueue_self._assert_not_filled(order_nonce);
         self.enqueue_self._append_cancel(c_i);
 
         // Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
@@ -675,13 +596,6 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_orders(owner: AztecAddress) -> BoundedVec<OrderNote, MAX_NOTES_PER_PAGE> {
         self.storage.orders.at(owner).view_notes(NoteViewerOptions::new())
-    }
-
-    /// The recorded clearing payout for `order_nonce` (0 == not filled). A maker
-    /// reads this to pass as `claimed_amount_out` to `claim_fill`.
-    #[external("utility")]
-    unconstrained fn get_fill(order_nonce: Field) -> u128 {
-        self.storage.fills.at(order_nonce).read()
     }
 
     pub mod test;
