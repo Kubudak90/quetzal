@@ -273,6 +273,21 @@ fn _assert_fill_root(epoch_id: u32, computed_root: Field) {
 
 **Double-claim protection** stays via OrderNote nullification (unchanged from 5c). Replay attempts after a successful claim fail at note pop (already nullified).
 
+**Cancel-after-fill protection** (subtle — the 5c `fills` Map was load-bearing here):
+
+The 5c contract gated `cancel_order` with a `_assert_not_filled(order_nonce)` callback that read `self.storage.fills.at(nonce).read() != 0`. Dropping the `fills` Map removes that gate, so 5d-4 MUST drop `_assert_not_filled` and rely on the next layer down for protection.
+
+The token contract's `transfer_public_to_private` is that layer. After a successful clearing, `_apply_verified_clearing` invokes `pool.apply_clearing(swap)` which moves the filled orders' aggregate `amount_in` from the orderbook's public balance into the LiquidityPool's public balance. A subsequent cancel_order that tries to refund a filled order's `amount_in` finds the orderbook's public balance is short by that exact amount (the pool now holds it) and the token transfer underflows + reverts. Aztec transaction atomicity then rolls back the OrderNote nullification and `_append_cancel` fold, leaving the maker's state intact — they must use `claim_fill` instead.
+
+This protection holds because:
+1. ALL of a filled order's `amount_in` is moved to the pool by `apply_clearing` (no leftover sits in the orderbook).
+2. Orderbook's public balance equals exactly `sum(unfilled_orders.amount_in)` per token at any time.
+3. A cancel attempt for a filled order asks for `amount_in` of the input token that is no longer there.
+
+The token-level error message ("insufficient public balance") is less friendly than the 5c "order already filled; use claim_fill" message. This is an acceptable UX regression for the storage win; the CLI can surface a clearer hint by checking `get_fills_root(epoch_id_of_order)` before submitting cancel.
+
+Important: this only works for cancels AFTER a clearing that filled the order. For unfilled orders the pool received nothing for that order, the orderbook still holds the escrow, and cancel succeeds normally.
+
 **Failed-claim atomicity:** if `_assert_fill_root` reverts, the entire tx reverts including the `transfer_public_to_private` and the nullifier insertion. The note returns to its un-nullified state. Standard Aztec tx atomicity.
 
 ## 7. Aggregator changes
@@ -376,6 +391,7 @@ The old hardcoded `clearing_vk_hash` in `zswap.config.json` is invalidated; depl
 - **T7: Wrong epoch_id.** Same as T4 but pass `epoch_id + 1`. Assert revert with "no clearing recorded for epoch" (or "fill merkle root mismatch" if that epoch happens to have a different root).
 - **T8: Replay.** T4 succeeds; immediately re-submit same `claim_fill`. Assert revert at note pop (nullifier collision).
 - **T9: Leaf-index out of bounds.** `leaf_index = 32` (one bit too high). Assert revert at `assert(idx == 0)`.
+- **T9b: Cancel-after-fill underflow.** Submit + clear so order is filled (apply_clearing moves amount_in to pool). Attempt `cancel_order` on the filled nonce. Assert revert (token-level "insufficient public balance"); orderbook public balance unchanged; OrderNote remains un-nullified.
 
 ### 10.3 Aggregator parity — `aggregator/tests/`
 
