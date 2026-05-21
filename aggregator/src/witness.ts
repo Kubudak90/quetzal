@@ -41,6 +41,12 @@ export interface PoolSnapshotForCircuit {
 export interface ClearingWitness {
   /** TOML-encoded text to write to circuits/clearing/Prover.toml. */
   proverToml: string;
+  /** The Merkle root the circuit will assert against (also the public input). */
+  fillsRoot: string;
+  /** The 32 leaf hashes (post-padding) — for snapshot.ts consumption. */
+  leaves: string[];
+  /** Echo of the cap actually used (mirrors arg / fallback). */
+  maxOrdersPerEpoch: number;
 }
 
 /**
@@ -54,7 +60,7 @@ export interface ClearingWitness {
  *                      index of the cancelled order. Length must equal args.epoch.cancel_count.
  * @param args.clearing The aggregator's ClearingResult (P*, fills, swap).
  */
-export function buildClearingWitness(args: {
+export async function buildClearingWitness(args: {
   epoch: EpochState;
   pool: PoolSnapshotForCircuit;
   orders: OrderNotePreimage[];
@@ -62,7 +68,7 @@ export function buildClearingWitness(args: {
   clearing: ClearingResult;
   /** Override the circuit's MAX_ORDERS_PER_EPOCH for smaller test circuits (default: 32). */
   maxOrders?: number;
-}): ClearingWitness {
+}): Promise<ClearingWitness> {
   const { epoch, pool, orders, cancellationIndices, clearing } = args;
   const maxPerEpoch = args.maxOrders ?? MAX_ORDERS_PER_EPOCH;
   if (orders.length !== epoch.order_count) {
@@ -196,8 +202,16 @@ export function buildClearingWitness(args: {
   const reserveBAdd = netFlowB > 0n ? netFlowB : 0n;
   const reserveBSub = netFlowB < 0n ? -netFlowB : 0n;
 
+  // -- NEW: Merkle root over canonical fills (padded to maxPerEpoch). --
+  const { buildFillsTree } = await import("./merkle.js");
+  const { Fr } = await import("@aztec/aztec.js/fields");
+  const tree = await buildFillsTree(
+    canonicalFills.map((cf) => ({ order_nonce: new Fr(cf.orderNonce), amount_out: cf.amountOut })),
+  );
+
   // Build the TOML.
   const lines: string[] = [];
+  // Public inputs (matching circuits/clearing/src/main.nr fn main pub args).
   lines.push(`order_acc = "0x${epoch.order_acc.toString(16)}"`);
   lines.push(`cancel_acc = "0x${epoch.cancel_acc.toString(16)}"`);
   lines.push(`order_count = ${epoch.order_count}`);
@@ -206,9 +220,22 @@ export function buildClearingWitness(args: {
   lines.push(`reserve_b = "${pool.reserve_b}"`);
   lines.push(`lp_supply = "${pool.lp_supply}"`);
   lines.push(`clearing_price = "${clearing.clearingPrice}"`);
-  lines.push(`fills_len = ${canonicalFills.length}`);
+  lines.push(`fills_root = "${tree.root.toString()}"`);
+  lines.push(`swap = { ` +
+    `a_to_pool = "${aToPool}", b_to_pool = "${bToPool}", a_from_pool = "${aFromPool}", b_from_pool = "${bFromPool}", ` +
+    `reserve_a_add = "${reserveAAdd}", reserve_a_sub = "${reserveASub}", ` +
+    `reserve_b_add = "${reserveBAdd}", reserve_b_sub = "${reserveBSub}", ` +
+    `fee_a_per_share_increment = "${feeAPerShareIncrement}", fee_b_per_share_increment = "${feeBPerShareIncrement}" }`);
 
-  // fills: array of maxPerEpoch FillEntry structs (circuit-canonical payouts). Pad past fills_len.
+  // Private witness arrays (orders, cancelled_indices, fills, fills_len, fill_to_order_index).
+  lines.push(`orders = [`);
+  for (const o of ordersPadded) {
+    lines.push(`  { side = ${o.side}, amount_in = "${o.amount_in}", limit_price = "${o.limit_price}", ` +
+      `order_nonce = "0x${o.order_nonce.toString(16)}", submitted_at_block = ${o.submitted_at_block}, ` +
+      `owner = "0x${o.owner.toString(16)}" },`);
+  }
+  lines.push(`]`);
+  lines.push(`cancelled_indices = [${cancelledPadded.join(", ")}]`);
   lines.push(`fills = [`);
   for (let i = 0; i < maxPerEpoch; i++) {
     const f = i < canonicalFills.length ? canonicalFills[i] : null;
@@ -217,38 +244,13 @@ export function buildClearingWitness(args: {
     lines.push(`  { order_nonce = ${nonce}, amount_out = ${out} },`);
   }
   lines.push(`]`);
-
-  // swap struct (TOML inline-table).
-  lines.push(`swap = { ` +
-    `a_to_pool = "${aToPool}", ` +
-    `b_to_pool = "${bToPool}", ` +
-    `a_from_pool = "${aFromPool}", ` +
-    `b_from_pool = "${bFromPool}", ` +
-    `reserve_a_add = "${reserveAAdd}", ` +
-    `reserve_a_sub = "${reserveASub}", ` +
-    `reserve_b_add = "${reserveBAdd}", ` +
-    `reserve_b_sub = "${reserveBSub}", ` +
-    `fee_a_per_share_increment = "${feeAPerShareIncrement}", ` +
-    `fee_b_per_share_increment = "${feeBPerShareIncrement}" ` +
-    `}`);
-
-  // orders: array of 32 OrderPreimage.
-  lines.push(`orders = [`);
-  for (const o of ordersPadded) {
-    lines.push(`  { ` +
-      `side = ${o.side}, ` +
-      `amount_in = "${o.amount_in}", ` +
-      `limit_price = "${o.limit_price}", ` +
-      `order_nonce = "0x${o.order_nonce.toString(16)}", ` +
-      `submitted_at_block = ${o.submitted_at_block}, ` +
-      `owner = "0x${o.owner.toString(16)}" ` +
-      `},`);
-  }
-  lines.push(`]`);
-
-  // cancelled_indices + fill_to_order_index: flat arrays of u32.
-  lines.push(`cancelled_indices = [${cancelledPadded.join(", ")}]`);
+  lines.push(`fills_len = ${canonicalFills.length}`);
   lines.push(`fill_to_order_index = [${fillToOrderIndex.join(", ")}]`);
 
-  return { proverToml: lines.join("\n") + "\n" };
+  return {
+    proverToml: lines.join("\n") + "\n",
+    fillsRoot: tree.root.toString(),
+    leaves: tree.leaves.map((l) => l.toString()),
+    maxOrdersPerEpoch: maxPerEpoch,
+  };
 }
