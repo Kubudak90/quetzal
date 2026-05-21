@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Week 5d-2 complete. A standalone Noir circuit at `circuits/clearing/` verifies an off-chain-computed clearing `(P*, fills, ClearingSwap)` against Week 5d-1's `order_acc` / `cancel_acc` on-chain commitments: binding replay, per-fill eligibility + canonical payout, DoS resistance, ClearingSwap cross-check, AMM k-monotonicity. TS witness builder at `aggregator/src/witness.ts`. 11 Noir `#[test]` units (all on the production N=128 circuit) + 4 TS parity tests + 2 live end-to-end tests (E1 happy-path prove/verify, E2 tampering rejection). The e2e tests run against a reduced-size variant of the circuit at `circuits/clearing-test/` (N=4) because the full N=128 circuit (~904K gates) exceeds the dev-VPS's proof-generation memory budget; the production circuit's correctness is covered by the 11 unit tests and the e2e pipeline's parity with the witness builder. Week 5d-3 will recursively verify this circuit's proof inside the orderbook contract.
+**Status:** Week 5d-3 complete. The orderbook's `close_epoch_and_clear_verified` private function recursively verifies the Week 5d-2 clearing-circuit proof via `std::verify_proof_with_type`, then enqueues a public callback (`_apply_verified_clearing`) that runs the net AMM swap + records fills + advances the epoch. The Week 5c `clearing_authority` is gone; anyone holding a valid `(public_inputs, proof, vk)` triple for the current epoch can advance it. `MAX_ORDERS_PER_EPOCH` was reduced 128 → 32 (the `bb prove` RAM budget on the dev VPS — N=32 proves in ~30 sec at ~5 GB peak). Empirical bridging discovered during the e2e: proof file is 500 fields (truncate to contract's 456), vk file is 115 fields (pad with `Fr.ZERO` to contract's 127); the vk_hash is what's bound on-chain (the full 112-field VK can't be stored as `PublicImmutable` because `MAX_PUBLIC_DATA_UPDATE_REQUESTS_PER_TX` is ~63). E1 (happy-path: deploy → submit → bb prove → contract verifies → state advances) is live-green in TXE. E2 (tampering) and E3 (replay-at-verifier) are `it.skip`'d because Aztec TXE defers actual recursive proof verification to the L1 rollup kernel — those negative paths need a real Aztec deployment to exercise (see `memory/reference_aztec_txe_recursive_verify.md`). New CLI subcommand: `zswap close-epoch-verified --proof <bin> --vk <bin> --public-inputs <json>`. Next: Week 5d-4 — Merkle settlement root for `claim_fill` inclusion proofs.
 
 ## Quickstart
 
@@ -74,6 +74,10 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Week 5c Implementation Plan](docs/superpowers/plans/2026-05-19-zswap-aztec-week-05c-onchain-clearing.md)
 - [Week 5d-1 Epoch Order Accumulator Design](docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-1-order-accumulator-design.md)
 - [Week 5d-1 Implementation Plan](docs/superpowers/plans/2026-05-20-zswap-aztec-week-05d-1-order-accumulator.md)
+- [Week 5d-2 Standalone Noir Clearing Circuit Design](docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-2-clearing-circuit-design.md)
+- [Week 5d-2 Implementation Plan](docs/superpowers/plans/2026-05-20-zswap-aztec-week-05d-2-clearing-circuit.md)
+- [Week 5d-3 On-chain Recursive Verify Design](docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-3-onchain-recursive-verify-design.md)
+- [Week 5d-3 Implementation Plan](docs/superpowers/plans/2026-05-20-zswap-aztec-week-05d-3-onchain-recursive-verify.md)
 
 ## License
 
