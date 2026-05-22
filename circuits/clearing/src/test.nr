@@ -287,3 +287,77 @@ fn merkle_root_changes_with_leaf_swap() {
     let root_hi = merkle_root_32(leaves_hi);
     assert(root_lo != root_hi, "leaf position must affect root");
 }
+
+// ============================================================================
+// Sub-2: V3 bucket math tests (sec 9 B1-B5 from the design spec).
+// ============================================================================
+use crate::buckets::{
+    compute_deposit_in_range, compute_deposit_below_range, compute_deposit_above_range,
+    max_a_in_to_upper, max_b_in_to_lower,
+};
+use crate::types::{BucketBounds, BucketState};
+
+// Standard test bucket: sqrt_lower=1e18 (P=1.0), sqrt_upper=~1.2247e18 (P=1.5).
+global TEST_SQRT_LOWER: u128 = 1_000_000_000_000_000_000;
+global TEST_SQRT_UPPER: u128 = 1_224_744_871_391_589_049;  // sqrt(1.5e18)
+// Pool sqrt_p halfway through the bucket: sqrt(1.25e18).
+global TEST_SQRT_P: u128     = 1_118_033_988_749_894_848;
+
+#[test]
+fn b1_compute_deposit_in_range_basic() {
+    // Standard call with non-trivial amounts; assert structural invariants.
+    let x_a: u128 = 1_000_000_000;
+    let x_b: u128 = 1_000_000_000;
+    let result = compute_deposit_in_range(x_a, x_b, TEST_SQRT_P, TEST_SQRT_LOWER, TEST_SQRT_UPPER);
+    assert(result.l_used > 0 as u128, "in-range deposit mints positive L");
+    assert(result.used_a <= x_a, "used_a never exceeds x_a");
+    assert(result.used_b <= x_b, "used_b never exceeds x_b");
+}
+
+#[test]
+fn b2_compute_deposit_in_range_a_surplus_refunds() {
+    // x_a way too much for x_b. L_b binding, so used_a < x_a (refund expected).
+    let x_a: u128 = 10_000_000_000;
+    let x_b: u128 = 1_000_000_000;
+    let result = compute_deposit_in_range(x_a, x_b, TEST_SQRT_P, TEST_SQRT_LOWER, TEST_SQRT_UPPER);
+    assert(result.l_used > 0 as u128, "mint nonzero L");
+    assert(result.used_a < x_a, "x_a surplus implies used_a < x_a");
+    assert(result.used_b <= x_b, "used_b never exceeds x_b");
+}
+
+#[test]
+fn b3_compute_deposit_below_range_only_token_a() {
+    let x_a: u128 = 1_000_000_000;
+    let result = compute_deposit_below_range(x_a, TEST_SQRT_LOWER, TEST_SQRT_UPPER);
+    assert(result.l_used > 0 as u128, "below-range deposit mints L from x_a");
+    assert(result.used_a == x_a, "below-range consumes all x_a");
+    assert(result.used_b == 0 as u128, "below-range used_b is 0");
+}
+
+#[test]
+fn b4_compute_deposit_above_range_only_token_b() {
+    let x_b: u128 = 1_000_000_000;
+    let result = compute_deposit_above_range(x_b, TEST_SQRT_LOWER, TEST_SQRT_UPPER);
+    assert(result.l_used > 0 as u128, "above-range deposit mints L from x_b");
+    assert(result.used_a == 0 as u128, "above-range used_a is 0");
+    assert(result.used_b == x_b, "above-range consumes all x_b");
+}
+
+#[test]
+fn b5_max_in_to_boundary_consistent_with_liquidity() {
+    let empty = BucketState {
+        reserve_a: 0 as u128, reserve_b: 0 as u128, liquidity: 0 as u128,
+        cum_fee_a_per_share: 0 as u128, cum_fee_b_per_share: 0 as u128,
+    };
+    let bounds = BucketBounds { sqrt_lower: TEST_SQRT_LOWER, sqrt_upper: TEST_SQRT_UPPER };
+    assert(max_a_in_to_upper(empty, bounds, TEST_SQRT_P) == 0 as u128, "empty bucket has zero max_a_in");
+    assert(max_b_in_to_lower(empty, bounds, TEST_SQRT_P) == 0 as u128, "empty bucket has zero max_b_in");
+
+    let nonempty = BucketState {
+        reserve_a: 1_000_000 as u128, reserve_b: 1_000_000 as u128,
+        liquidity: 1_000_000_000 as u128,
+        cum_fee_a_per_share: 0 as u128, cum_fee_b_per_share: 0 as u128,
+    };
+    assert(max_a_in_to_upper(nonempty, bounds, TEST_SQRT_P) > 0 as u128, "non-empty bucket has positive max_a_in");
+    assert(max_b_in_to_lower(nonempty, bounds, TEST_SQRT_P) > 0 as u128, "non-empty bucket has positive max_b_in");
+}
