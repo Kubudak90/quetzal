@@ -101,26 +101,31 @@ pub contract Orderbook {
         pub amount_out: u128,
     }
 
-    /// Mirror of the Week 5d-4 clearing circuit's ClearingPublic. Field order
-    /// MUST match circuits/clearing/src/main.nr's fn main pub parameter declaration
-    /// (order_acc, cancel_acc, order_count, cancel_count, reserve_a, reserve_b,
-    /// lp_supply, clearing_price, fills_root, swap). Reorder requires matching
-    /// reorder in flatten_clearing_public.
-    /// Sub-2 ClearingPublic. lp_supply removed (per-bucket liquidity replaces
-    /// single global counter). swap is LiquidityPool::ClearingSwap which is
-    /// itself the new BucketDelta-aware shape (4 aggregate flows + 4 bucket
-    /// deltas + current_sqrt_price_after + active_bucket_count).
+    /// Sub-4: cap on pools touched per clearing.
+    pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;
+    /// Sub-4: padding sentinel for unused pool slots in ClearingPublic.
+    pub global INVALID_POOL_ID: u32 = 0xFFFFFFFF;
+
+    /// Sub-4: per-pool clearing payload. 36 fields total = (pool_id + clearing_price)
+    /// prefix + LiquidityPool::ClearingSwap (34 fields: 4 aggregate flows +
+    /// current_sqrt_price_after + active_bucket_count + 4 BucketDelta × 7 = 28).
+    #[derive(Deserialize, Eq, Packable, Serialize)]
+    pub struct PoolClearing {
+        pub pool_id: u32,
+        pub clearing_price: u128,
+        pub swap: LiquidityPool::ClearingSwap,
+    }
+
+    /// Sub-4: top-level clearing public input. ~6 scalars + 3 PoolClearing × 36 = 114 fields.
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct ClearingPublic {
-        pub order_acc:      Field,
-        pub cancel_acc:     Field,
-        pub order_count:    u32,
-        pub cancel_count:   u32,
-        pub reserve_a:      u128,
-        pub reserve_b:      u128,
-        pub clearing_price: u128,
-        pub fills_root:     Field,
-        pub swap:           LiquidityPool::ClearingSwap,
+        pub order_acc:         Field,
+        pub cancel_acc:        Field,
+        pub order_count:       u32,
+        pub cancel_count:      u32,
+        pub fills_root:        Field,
+        pub active_pool_count: u32,
+        pub active_pools:      [PoolClearing; MAX_ACTIVE_POOLS_PER_EPOCH],
     }
 
     #[storage]
@@ -466,48 +471,52 @@ pub contract Orderbook {
         });
     }
 
-    /// Sub-2: flatten ClearingPublic to [Field; 42]. Slot order MUST match
-    /// circuits/clearing/src/main.nr's fn main pub parameter declaration
-    /// (when Task 14 rewrites that circuit to the Sub-2 shape). Layout:
-    ///   [0-3]   order_acc, cancel_acc, order_count, cancel_count
-    ///   [4-6]   reserve_a, reserve_b, clearing_price
-    ///   [7]     fills_root
-    ///   [8-11]  a_to_pool, b_to_pool, a_from_pool, b_from_pool
-    ///   [12]    current_sqrt_price_after
-    ///   [13]    active_bucket_count
-    ///   [14-41] active_bucket_deltas[0..4] x 7 fields each = 28 fields
+    /// Sub-4: flatten ClearingPublic to [Field; 114] for the recursive verifier.
+    /// Layout MUST match circuits/clearing/src/main.nr's fn main pub arg order
+    /// (when Task D2 rewrites that circuit to the Sub-4 shape).
     ///
-    /// Task 14 (circuit shape rewrite) + Task 15 (bb prove with new
-    /// circuit) are deferred to Sub-2.5; until then this flatten is
-    /// shape-correct but the recursive verify against an unchanged
-    /// 19-field circuit will mismatch. Sub-2 ships pool-side
-    /// concentrated-liquidity logic standalone.
+    /// Slot layout:
+    ///   [0-3]   order_acc, cancel_acc, order_count, cancel_count
+    ///   [4]     fills_root
+    ///   [5]     active_pool_count
+    ///   [6..]   active_pools[0..3], each PoolClearing = 36 fields:
+    ///             [0]    pool_id
+    ///             [1]    clearing_price
+    ///             [2-5]  a_to_pool / b_to_pool / a_from_pool / b_from_pool
+    ///             [6]    current_sqrt_price_after
+    ///             [7]    active_bucket_count
+    ///             [8-35] active_bucket_deltas[4] × 7 fields each
     #[contract_library_method]
-    fn flatten_clearing_public(p: ClearingPublic) -> [Field; 42] {
-        let mut out: [Field; 42] = [0 as Field; 42];
+    fn flatten_clearing_public(p: ClearingPublic) -> [Field; 114] {
+        let mut out: [Field; 114] = [0 as Field; 114];
         out[0] = p.order_acc;
         out[1] = p.cancel_acc;
         out[2] = p.order_count as Field;
         out[3] = p.cancel_count as Field;
-        out[4] = p.reserve_a as Field;
-        out[5] = p.reserve_b as Field;
-        out[6] = p.clearing_price as Field;
-        out[7] = p.fills_root;
-        out[8]  = p.swap.a_to_pool as Field;
-        out[9]  = p.swap.b_to_pool as Field;
-        out[10] = p.swap.a_from_pool as Field;
-        out[11] = p.swap.b_from_pool as Field;
-        out[12] = p.swap.current_sqrt_price_after as Field;
-        out[13] = p.swap.active_bucket_count as Field;
-        for i in 0..4 {
-            let d = p.swap.active_bucket_deltas[i];
-            out[14 + i * 7 + 0] = d.bucket_id as Field;
-            out[14 + i * 7 + 1] = d.reserve_a_add as Field;
-            out[14 + i * 7 + 2] = d.reserve_a_sub as Field;
-            out[14 + i * 7 + 3] = d.reserve_b_add as Field;
-            out[14 + i * 7 + 4] = d.reserve_b_sub as Field;
-            out[14 + i * 7 + 5] = d.cum_fee_a_per_share_increment as Field;
-            out[14 + i * 7 + 6] = d.cum_fee_b_per_share_increment as Field;
+        out[4] = p.fills_root;
+        out[5] = p.active_pool_count as Field;
+        for k in 0..MAX_ACTIVE_POOLS_PER_EPOCH {
+            let pc = p.active_pools[k];
+            let base = 6 + k * 36;
+            out[base + 0] = pc.pool_id as Field;
+            out[base + 1] = pc.clearing_price as Field;
+            out[base + 2] = pc.swap.a_to_pool as Field;
+            out[base + 3] = pc.swap.b_to_pool as Field;
+            out[base + 4] = pc.swap.a_from_pool as Field;
+            out[base + 5] = pc.swap.b_from_pool as Field;
+            out[base + 6] = pc.swap.current_sqrt_price_after as Field;
+            out[base + 7] = pc.swap.active_bucket_count as Field;
+            for i in 0..4 {
+                let d = pc.swap.active_bucket_deltas[i];
+                let bd_base = base + 8 + i * 7;
+                out[bd_base + 0] = d.bucket_id as Field;
+                out[bd_base + 1] = d.reserve_a_add as Field;
+                out[bd_base + 2] = d.reserve_a_sub as Field;
+                out[bd_base + 3] = d.reserve_b_add as Field;
+                out[bd_base + 4] = d.reserve_b_sub as Field;
+                out[bd_base + 5] = d.cum_fee_a_per_share_increment as Field;
+                out[bd_base + 6] = d.cum_fee_b_per_share_increment as Field;
+            }
         }
         out
     }
@@ -580,48 +589,45 @@ pub contract Orderbook {
         let block: u32 = self.context.block_number();
         assert(block >= current.closes_at_block, "epoch has not expired yet");
 
-        // Freshness: bind to the CURRENT epoch's accumulators. Replay rejects here.
+        // Freshness: bind to current epoch's accumulators.
         assert(public_inputs.order_acc == current.order_acc, "order_acc mismatch");
         assert(public_inputs.cancel_acc == current.cancel_acc, "cancel_acc mismatch");
         assert(public_inputs.order_count == current.order_count, "order_count mismatch");
         assert(public_inputs.cancel_count == current.cancel_count, "cancel_count mismatch");
 
-        // Net AMM swap (identical to the W5c/5d-3 flow).
-        // TEMPORARY (Task B4 replaces this with per-pool loop):
-        let pool = self.storage.pools.at(0 as u32).read();
-        let swap = public_inputs.swap;
-        if swap.a_to_pool > 0 as u128 {
-            self.call(Token::at(self.storage.pool_token_a.at(0 as u32).read()).transfer_public_to_public(
-                self.address, pool, swap.a_to_pool, 0,
-            ));
+        // Sub-4: apply each active pool's clearing.
+        assert(public_inputs.active_pool_count <= MAX_ACTIVE_POOLS_PER_EPOCH,
+               "active_pool_count > cap");
+        for k in 0..MAX_ACTIVE_POOLS_PER_EPOCH {
+            let pc = public_inputs.active_pools[k];
+            if pc.pool_id != INVALID_POOL_ID {
+                assert((k as u32) < public_inputs.active_pool_count,
+                       "non-sentinel pool past active_pool_count");
+                let pool_addr = self.storage.pools.at(pc.pool_id).read();
+                self.call(LiquidityPool::at(pool_addr).apply_clearing(pc.swap));
+            } else {
+                assert((k as u32) >= public_inputs.active_pool_count,
+                       "sentinel pool inside active range");
+            }
         }
-        if swap.b_to_pool > 0 as u128 {
-            self.call(Token::at(self.storage.pool_token_b.at(0 as u32).read()).transfer_public_to_public(
-                self.address, pool, swap.b_to_pool, 0,
-            ));
-        }
-        self.call(LiquidityPool::at(pool).apply_clearing(swap));
 
-        // Week 5d-4: single storage write -- the per-epoch Merkle settlement root.
-        // claim_fill reads this back at claim time via _assert_fill_root.
+        // Store fills_root for the just-cleared epoch.
         self.storage.fills_root.at(current.epoch_id).write(public_inputs.fills_root);
 
-        // Sub-3: pay the winning aggregator from the Treasury. Treasury silently
-        // partial-pays min(fee, tracked_balance) so a dry treasury does NOT
-        // block clearing -- the aggregator just forgoes the fee that round.
+        // Sub-3: pay winning aggregator (silent no-op if treasury under-funded).
         let treasury = self.storage.treasury.read();
         let fee = self.storage.aggregator_fee.read();
         self.call(Treasury::at(treasury).pay_aggregator(winner, fee));
 
-        // Advance the epoch (accumulator fields reset to 0).
-        let epoch_length = self.storage.epoch_length.read();
+        // Advance epoch.
+        let next_epoch_id = current.epoch_id + 1;
         self.storage.current_epoch.write(EpochState {
-            epoch_id: current.epoch_id + 1,
+            epoch_id: next_epoch_id,
             state: EPOCH_STATE_OPEN,
             opened_at_block: block,
-            closes_at_block: block + epoch_length,
-            order_acc:   0,
-            cancel_acc:  0,
+            closes_at_block: block + self.storage.epoch_length.read(),
+            order_acc: 0,
+            cancel_acc: 0,
             order_count: 0,
             cancel_count: 0,
         });
