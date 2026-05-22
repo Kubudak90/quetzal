@@ -2,14 +2,103 @@ order_acc = "0x0"
 cancel_acc = "0x0"
 order_count = 0
 cancel_count = 0
-reserve_a = "1000000"
-reserve_b = "2000000"
-lp_supply = "1000000"
-clearing_price = "1500000000000000000"
-fills_root = "0x1c28fe1059ae0237b72334700697bdf465e03df03986fe05200cadeda66bd76"
-swap = { a_to_pool = "0", b_to_pool = "0", a_from_pool = "0", b_from_pool = "0", reserve_a_add = "0", reserve_a_sub = "0", reserve_b_add = "0", reserve_b_sub = "0", fee_a_per_share_increment = "0", fee_b_per_share_increment = "0" }
-orders = [{ side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }, { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" }]
+reserve_a = "1000000000000000000000"
+reserve_b = "1000000000000000000000"
+clearing_price = "0"
+fills_root = "0x01c28fe1059ae0237b72334700697bdf465e03df03986fe05200cadeda66bd76"
+a_to_pool = "0"
+b_to_pool = "0"
+a_from_pool = "0"
+b_from_pool = "0"
+current_sqrt_price_after = "1000000000000000000"
+active_bucket_count = 0
+active_bucket_deltas = [
+  { bucket_id = 65535, reserve_a_add = "0", reserve_a_sub = "0", reserve_b_add = "0", reserve_b_sub = "0", cum_fee_a_per_share_increment = "0", cum_fee_b_per_share_increment = "0" },
+  { bucket_id = 65535, reserve_a_add = "0", reserve_a_sub = "0", reserve_b_add = "0", reserve_b_sub = "0", cum_fee_a_per_share_increment = "0", cum_fee_b_per_share_increment = "0" },
+  { bucket_id = 65535, reserve_a_add = "0", reserve_a_sub = "0", reserve_b_add = "0", reserve_b_sub = "0", cum_fee_a_per_share_increment = "0", cum_fee_b_per_share_increment = "0" },
+  { bucket_id = 65535, reserve_a_add = "0", reserve_a_sub = "0", reserve_b_add = "0", reserve_b_sub = "0", cum_fee_a_per_share_increment = "0", cum_fee_b_per_share_increment = "0" },
+]
+orders = [
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+  { side = false, amount_in = "0", limit_price = "0", order_nonce = "0x0", submitted_at_block = 0, owner = "0x0" },
+]
 cancelled_indices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-fills = [{ order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }, { order_nonce = "0x0", amount_out = "0" }]
+fills = [
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+  { order_nonce = "0x0", amount_out = "0" },
+]
 fills_len = 0
 fill_to_order_index = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+bucket_states_before = [
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+]
+bucket_states_after = [
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+  { reserve_a = "0", reserve_b = "0", liquidity = "0", cum_fee_a_per_share = "0", cum_fee_b_per_share = "0" },
+]
+pool_sqrt_p_before = "1000000000000000000"
