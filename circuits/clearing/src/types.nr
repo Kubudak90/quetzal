@@ -68,3 +68,39 @@ pub struct BucketDelta {
 pub global NUM_BUCKETS: u32 = 16;
 /// Sub-2: maximum buckets touched by a single clearing.
 pub global MAX_ACTIVE_BUCKETS_PER_EPOCH: u32 = 4;
+
+// ============================================================================
+// Sub-4: Multi-pair routing types.
+// ============================================================================
+
+/// Sub-4: cap on pools touched per clearing.
+pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;
+/// Sub-4: padding sentinel for unused pool slots (matches contracts/orderbook).
+pub global INVALID_POOL_ID: u32 = 0xFFFFFFFF;
+
+/// Sub-4: per-pool clearing payload. Matches contracts/orderbook PoolClearing.
+pub struct PoolClearing {
+    pub pool_id: u32,
+    pub clearing_price: u128,
+    pub swap: ClearingSwap,    // 34-field Sub-2.5 carryover
+}
+
+/// Sub-4: per-hop fill leaf used in the 64-leaf Merkle tree.
+pub struct FillLeaf {
+    pub order_nonce: Field,
+    pub hop_index: u8,
+    pub amount_out: u128,
+    pub pool_id: u32,
+}
+
+/// Sub-4: order preimage with explicit path.
+pub struct OrderPreimagePath {
+    pub side: bool,
+    pub amount_in: u128,
+    pub limit_price: u128,
+    pub order_nonce: Field,
+    pub submitted_at_block: u32,
+    pub owner: Field,
+    pub path_len: u8,
+    pub path: [Field; 3],
+}
