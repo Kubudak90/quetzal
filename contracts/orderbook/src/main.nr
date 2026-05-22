@@ -283,9 +283,12 @@ pub contract Orderbook {
         };
         self.storage.orders.at(maker).insert(order).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
 
-        // Per-order commitment bound to the full OrderNote field set (the Week 5d-2 clearing
-        // circuit will reproduce this from its private order list). `order_nonce` is a random
-        // Field, so c_i is hiding: side/amount/limit cannot be recovered from c_i.
+        // Per-order commitment hashing 6 core fields (maker, side, amount_in, limit_price,
+        // order_nonce, submitted_at_block). `order_nonce` is a random Field, so c_i is hiding:
+        // side/amount/limit cannot be recovered from c_i.
+        // NOTE: path_len and path are stored in the OrderNote but are NOT yet included in c_i.
+        // Task D2 (binding::replay_chain_with_path) will extend this hash to bind the full
+        // routing path and prevent order substitution across different hop sequences.
         let c_i: Field = poseidon2_hash(
             [
                 maker.to_field(),

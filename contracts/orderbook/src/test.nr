@@ -550,6 +550,10 @@ unconstrained fn submit_order_rejects_invalid_path_len() {
     let maker = env.create_light_account();
 
     // path_len=1 must revert before any token call.
+    // Use two DISTINCT addresses for path[0] and path[1] so ONLY the path_len
+    // assertion fires; the path[0]==path[1] guard must not be simultaneously violated.
+    let addr_a = env.create_light_account();
+    let addr_b = env.create_light_account();
     env.call_private(
         maker,
         Orderbook::at(orderbook).submit_order(
@@ -559,7 +563,7 @@ unconstrained fn submit_order_rejects_invalid_path_len() {
             0,
             0,
             1 as u8,
-            [deployer.to_field(), deployer.to_field(), 0 as Field],
+            [addr_a.to_field(), addr_b.to_field(), 0 as Field],
         ),
     );
 }
@@ -573,7 +577,6 @@ unconstrained fn submit_order_rejects_duplicate_path_hop() {
 
     let maker = env.create_light_account();
     let addr_a = env.create_light_account();
-    let addr_b = env.create_light_account();
 
     // path_len=2 with path[0] == path[1] must revert.
     env.call_private(
