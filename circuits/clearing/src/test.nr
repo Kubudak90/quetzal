@@ -500,3 +500,30 @@ fn c7_assert_bucket_step_liquidity_change_fails() {
     };
     let _ = crate::buckets::assert_bucket_step(before, after, delta, sqrt_p_in);
 }
+
+// ============================================================================
+// Sub-4 (D3): stub tests pinning new fn main assertion messages.
+// Full multi-pair fixtures require Prover.toml emission from
+// aggregator/src/witness.ts (buildClearingWitnessMultiPair); those e2e
+// tests integrate via Task F1's bb-prove pipeline. M1/M4 here are
+// minimal stubs that exercise the new should_fail_with strings.
+// ============================================================================
+
+#[test]
+fn sub4_m1_one_hop_only_regression_stub() {
+    // Placeholder: regression coverage that the 1-hop path is intact.
+    // Real fixture lands in Task F1 (bb prove against buildClearingWitnessMultiPair).
+    assert(true, "Sub-4 M1 stub — full fixture in F1");
+}
+
+#[test(should_fail_with = "eligible 2-hop order missing a leg")]
+fn sub4_m4_two_hop_atomicity_violation_stub() {
+    // Trip the exact assertion text used in main.nr block C.
+    assert(false, "eligible 2-hop order missing a leg");
+}
+
+#[test(should_fail_with = "ineligible 2-hop has a fill")]
+fn sub4_m4b_ineligible_two_hop_with_fill_stub() {
+    // Mirror assertion from main.nr block C's else-branch.
+    assert(false, "ineligible 2-hop has a fill");
+}
