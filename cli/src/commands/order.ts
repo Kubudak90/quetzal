@@ -1,9 +1,12 @@
 import type { Command } from "commander";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { Fr } from "@aztec/aztec.js/fields";
 import { OrderbookContract } from "../../../tests/integration/generated/Orderbook.js";
+import { AggregatorRegistryContract } from "../../../tests/integration/generated/AggregatorRegistry.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { randomField } from "../field.js";
+import { broadcastReveal, type RevealPayload } from "../reveal.js";
 
 export function registerOrder(program: Command): void {
   program
@@ -30,13 +33,50 @@ export function registerOrder(program: Command): void {
           ctx.wallet,
         );
         const orderNonce = randomField();
-        await orderbook.methods
+        const tx = await orderbook.methods
           .submit_order(sideFlag, amount, limit, randomField(), orderNonce)
           .send({ from: ctx.account });
+        const receipt: unknown = await (tx as { wait?: () => Promise<unknown> }).wait?.();
 
         console.log(`order submitted (${side}, amount ${amount}, limit ${limit})`);
         console.log(`order nonce: 0x${orderNonce.toString(16)}`);
         console.log(`cancel later with: zswap cancel --nonce 0x${orderNonce.toString(16)}`);
+
+        // Sub-3: broadcast reveal to all bonded aggregators. Best-effort; if the
+        // aggregator registry isn't deployed yet (Sub-1 MVP config), skip silently.
+        if (!config.aggregatorRegistry) {
+          return;
+        }
+        try {
+          const epochSim = await orderbook.methods.get_epoch().simulate({ from: ctx.account });
+          const epoch = (epochSim as { result: { epoch_id: bigint } }).result;
+          const epochId = Number(epoch.epoch_id);
+          // submitted_at_block: best-guess from the receipt (if available) or 0.
+          // The aggregator daemon's validateReveals will reject if this doesn't
+          // fold to the on-chain order_acc, so a wrong guess just costs the
+          // submitter a re-broadcast.
+          const blockNum =
+            (receipt as { blockNumber?: bigint | number })?.blockNumber ?? 0;
+          const payload: RevealPayload = {
+            epoch_id: epochId,
+            order_nonce: new Fr(orderNonce).toString(),
+            side: sideFlag,
+            amount_in: amount.toString(),
+            limit_price: limit.toString(),
+            submitted_at_block: Number(blockNum),
+            owner: ctx.account.toString(),
+          };
+          const registry = await AggregatorRegistryContract.at(
+            AztecAddress.fromString(config.aggregatorRegistry),
+            ctx.wallet,
+          );
+          const result = await broadcastReveal(payload, registry, ctx.account);
+          console.log(
+            `reveal broadcast: ${result.pushed} aggregators reached, ${result.skipped} unreachable`,
+          );
+        } catch (e) {
+          console.warn(`reveal broadcast failed: ${(e as Error).message}`);
+        }
       } finally {
         await ctx.stop();
       }

@@ -8,6 +8,10 @@ export interface ZswapConfig {
   orderbook: string;
   pool: string;
   admin: string;
+  // Sub-3 additions (optional during incremental migration; the aggregator
+  // commands assert their presence at runtime).
+  aggregatorRegistry?: string;
+  treasury?: string;
 }
 
 const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
