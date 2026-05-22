@@ -63,13 +63,6 @@ export interface OrderNotePreimage {
   owner: bigint;           // AztecAddress.toField().toBigInt()
 }
 
-/** Pre-clearing pool snapshot. */
-export interface PoolSnapshotForCircuit {
-  reserve_a: bigint;
-  reserve_b: bigint;
-  lp_supply: bigint;
-}
-
 export interface ClearingWitness {
   /** TOML-encoded text to write to circuits/clearing/Prover.toml. */
   proverToml: string;
@@ -84,24 +77,38 @@ export interface ClearingWitness {
 /**
  * Build the Prover.toml witness for the clearing circuit.
  *
- * @param args.epoch    On-chain EpochState (binding inputs).
- * @param args.pool     Pre-clearing pool snapshot.
- * @param args.orders   Submission-order array of OrderNote preimages. Length must equal
- *                      args.epoch.order_count. The builder pads to MAX_ORDERS_PER_EPOCH.
+ * Sub-2.5 signature: 42 public fields (4 binding + 3 pool aggregate +
+ * 1 fills_root + 4 flows + 2 sqrt_p chain endpoints + 28 bucket deltas)
+ * and new private inputs (bucket_states_before/after, pool_sqrt_p_before).
+ *
+ * @param args.epoch                On-chain EpochState (binding inputs).
+ * @param args.pool                 Pre-clearing pool snapshot (Sub-2.5 shape).
+ * @param args.orders               Submission-order array of OrderNote preimages. Length must
+ *                                  equal args.epoch.order_count. The builder pads to MAX_ORDERS_PER_EPOCH.
  * @param args.cancellationIndices  In cancellation order, each entry is the submission
- *                      index of the cancelled order. Length must equal args.epoch.cancel_count.
- * @param args.clearing The aggregator's ClearingResult (P*, fills, swap).
+ *                                  index of the cancelled order. Length must equal args.epoch.cancel_count.
+ * @param args.clearing             The aggregator's ClearingResult (P*, fills, swap).
+ * @param args.bucketStatesBefore   Per-bucket state before clearing (length == bucketDeltas.length).
+ * @param args.bucketStatesAfter    Per-bucket state after clearing (length == bucketDeltas.length).
+ * @param args.bucketDeltas         Per-bucket deltas (length <= MAX_ACTIVE_BUCKETS_PER_EPOCH).
+ * @param args.currentSqrtPriceAfter New sqrt price after clearing.
  */
 export async function buildClearingWitness(args: {
   epoch: EpochState;
-  pool: PoolSnapshotForCircuit;
+  pool: PoolSnapshotForCircuitSub2;
   orders: OrderNotePreimage[];
   cancellationIndices: number[];
   clearing: ClearingResult;
-  /** Override the circuit's MAX_ORDERS_PER_EPOCH for smaller test circuits (default: 32). */
+  bucketStatesBefore: BucketStateForCircuit[];
+  bucketStatesAfter: BucketStateForCircuit[];
+  bucketDeltas: BucketDeltaForCircuit[];
+  currentSqrtPriceAfter: bigint;
   maxOrders?: number;
 }): Promise<ClearingWitness> {
-  const { epoch, pool, orders, cancellationIndices, clearing } = args;
+  const {
+    epoch, pool, orders, cancellationIndices, clearing,
+    bucketStatesBefore, bucketStatesAfter, bucketDeltas, currentSqrtPriceAfter,
+  } = args;
   const maxPerEpoch = args.maxOrders ?? MAX_ORDERS_PER_EPOCH;
   if (orders.length !== epoch.order_count) {
     throw new Error(`orders.length (${orders.length}) != epoch.order_count (${epoch.order_count})`);
@@ -109,8 +116,17 @@ export async function buildClearingWitness(args: {
   if (cancellationIndices.length !== epoch.cancel_count) {
     throw new Error(`cancellationIndices.length (${cancellationIndices.length}) != epoch.cancel_count (${epoch.cancel_count})`);
   }
+  if (bucketDeltas.length > MAX_ACTIVE_BUCKETS_PER_EPOCH) {
+    throw new Error(`bucketDeltas.length (${bucketDeltas.length}) > cap ${MAX_ACTIVE_BUCKETS_PER_EPOCH}`);
+  }
+  if (bucketStatesBefore.length !== bucketDeltas.length) {
+    throw new Error(`bucketStatesBefore.length (${bucketStatesBefore.length}) != bucketDeltas.length (${bucketDeltas.length})`);
+  }
+  if (bucketStatesAfter.length !== bucketDeltas.length) {
+    throw new Error(`bucketStatesAfter.length (${bucketStatesAfter.length}) != bucketDeltas.length (${bucketDeltas.length})`);
+  }
 
-  // Pad orders to maxPerEpoch with zero sentinels.
+  // Pad orders + cancellationIndices like Sub-1.
   const ordersPadded: OrderNotePreimage[] = orders.slice();
   while (ordersPadded.length < maxPerEpoch) {
     ordersPadded.push({
@@ -118,53 +134,27 @@ export async function buildClearingWitness(args: {
       order_nonce: 0n, submitted_at_block: 0, owner: 0n,
     });
   }
-
   const cancelledPadded: number[] = cancellationIndices.slice();
-  while (cancelledPadded.length < maxPerEpoch) {
-    cancelledPadded.push(0);
-  }
+  while (cancelledPadded.length < maxPerEpoch) cancelledPadded.push(0);
 
-  // =========================================================================
-  // Build CIRCUIT-CANONICAL fills.
-  //
-  // The TS aggregator's ClearingResult.fills use a pro-rata distribution model
-  // that does NOT match the circuit's per-order payout formula.  The circuit
-  // asserts each fill's amount_out == payout(order, clearing_price) where:
-  //
-  //   buy payout  = floor( floor(amount_in * SCALE / P*) * (FEE_DEN - FEE_NUM) / FEE_DEN )
-  //   sell payout = floor( floor(amount_in * P* / SCALE) * (FEE_DEN - FEE_NUM) / FEE_DEN )
-  //
-  // We re-derive canonical fills from the ELIGIBLE orders (those in clearing.fills)
-  // using the circuit's exact formula, keyed on order_nonce.
-  // =========================================================================
-  const SCALE = 1_000_000_000_000_000_000n;
-  const FEE_NUM_CIRCUIT = 30n;
-  const FEE_DEN_CIRCUIT = 10_000n;
-
-  /** Replicate circuits/clearing/src/pricing.nr::payout(). */
-  function circuitPayout(order: OrderNotePreimage, clearingPrice: bigint): bigint {
+  // Reuse Sub-1 canonical-fills derivation.
+  const SCALE_FE = 1_000_000_000_000_000_000n;
+  const FEE_NUM_CIRCUIT = 30n, FEE_DEN_CIRCUIT = 10_000n;
+  function circuitPayout(order: OrderNotePreimage, p: bigint): bigint {
     const gross = order.side
-      ? (order.amount_in * clearingPrice) / SCALE            // sell: in_B * P* / SCALE → A
-      : (order.amount_in * SCALE) / clearingPrice;           // buy:  in_A * SCALE / P* → B
+      ? (order.amount_in * p) / SCALE_FE
+      : (order.amount_in * SCALE_FE) / p;
     return (gross * (FEE_DEN_CIRCUIT - FEE_NUM_CIRCUIT)) / FEE_DEN_CIRCUIT;
   }
-
-  // Collect the set of filled order nonces (from the aggregator's result) and
-  // map them to orders[].  The aggregator decides WHICH orders are filled;
-  // the circuit decides HOW MUCH each filled order receives.
-  //
-  // Validate: every nonce in clearing.fills must appear in orders[].
   const orderNonceSet = new Set(orders.map((o) => o.order_nonce));
   for (const fill of clearing.fills) {
     if (!orderNonceSet.has(fill.orderNonce)) {
       throw new Error(`fill order_nonce ${fill.orderNonce} not in orders[]`);
     }
   }
-
   const filledNonces = new Set(clearing.fills.map((f) => f.orderNonce));
   const canonicalFills: { orderNonce: bigint; amountOut: bigint }[] = [];
   const fillToOrderIndex: number[] = [];
-
   for (let i = 0; i < orders.length; i++) {
     const o = orders[i]!;
     if (filledNonces.has(o.order_nonce)) {
@@ -175,91 +165,79 @@ export async function buildClearingWitness(args: {
       fillToOrderIndex.push(i);
     }
   }
-  while (fillToOrderIndex.length < maxPerEpoch) {
-    fillToOrderIndex.push(0);
-  }
+  while (fillToOrderIndex.length < maxPerEpoch) fillToOrderIndex.push(0);
 
-  // =========================================================================
-  // Derive ClearingSwap fields using the CANONICAL fills (not clearing.fills).
-  // =========================================================================
-
-  // Step 1: accumulate gross flows and canonical payouts from canonical fills.
-  let grossBuyInA = 0n;
-  let grossSellInB = 0n;
-  let buyerPayoutsB = 0n;
-  let sellerPayoutsA = 0n;
+  // Derive aggregate flows from canonical fills.
+  let grossBuyInA = 0n, grossSellInB = 0n, buyerPayoutsB = 0n, sellerPayoutsA = 0n;
   for (const cf of canonicalFills) {
     const order = orders.find((o) => o.order_nonce === cf.orderNonce);
-    if (!order) continue;                            // can't happen — just satisfies TS
-    if (order.side) {
-      grossSellInB  += order.amount_in;
-      sellerPayoutsA += cf.amountOut;
-    } else {
-      grossBuyInA   += order.amount_in;
-      buyerPayoutsB  += cf.amountOut;
-    }
+    if (!order) continue;
+    if (order.side) { grossSellInB += order.amount_in; sellerPayoutsA += cf.amountOut; }
+    else            { grossBuyInA  += order.amount_in; buyerPayoutsB  += cf.amountOut; }
   }
-
-  // Step 2: pool-side gross flows (sec 6.5 circuit formulas).
   const sat = (x: bigint, y: bigint) => (x > y ? x - y : 0n);
   const aToPool   = sat(grossBuyInA,  sellerPayoutsA);
   const aFromPool = sat(sellerPayoutsA, grossBuyInA);
   const bToPool   = sat(grossSellInB, buyerPayoutsB);
   const bFromPool = sat(buyerPayoutsB, grossSellInB);
 
-  // Step 3: LP fee withheld from output (sec 6.5 circuit formulas).
-  //   gross_buy_out_b  = floor(gross_buy_in_a  * SCALE / clearing_price)
-  //   gross_sell_out_a = floor(gross_sell_in_b * clearing_price / SCALE)
-  //   fee_pool_b = gross_buy_out_b  - buyer_payouts_b
-  //   fee_pool_a = gross_sell_out_a - seller_payouts_a
-  const grossBuyOutB  = clearing.clearingPrice > 0n
-    ? (grossBuyInA  * SCALE) / clearing.clearingPrice : 0n;
-  const grossSellOutA = clearing.clearingPrice > 0n
-    ? (grossSellInB * clearing.clearingPrice) / SCALE : 0n;
-  const feePoolA = grossSellOutA >= sellerPayoutsA ? grossSellOutA - sellerPayoutsA : 0n;
-  const feePoolB = grossBuyOutB  >= buyerPayoutsB  ? grossBuyOutB  - buyerPayoutsB  : 0n;
+  // Pad bucket arrays to MAX_ACTIVE_BUCKETS_PER_EPOCH with INVALID sentinels.
+  const padBucketDelta = (d: BucketDeltaForCircuit | null): BucketDeltaForCircuit =>
+    d ?? {
+      bucket_id: INVALID_BUCKET_ID,
+      reserve_a_add: 0n, reserve_a_sub: 0n,
+      reserve_b_add: 0n, reserve_b_sub: 0n,
+      cum_fee_a_per_share_increment: 0n,
+      cum_fee_b_per_share_increment: 0n,
+    };
+  const padBucketState = (s: BucketStateForCircuit | null): BucketStateForCircuit =>
+    s ?? { bucket_id: INVALID_BUCKET_ID, reserve_a: 0n, reserve_b: 0n, liquidity: 0n, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n };
 
-  const feeAPerShareIncrement = pool.lp_supply > 0n
-    ? (feePoolA * SCALE) / pool.lp_supply : 0n;
-  const feeBPerShareIncrement = pool.lp_supply > 0n
-    ? (feePoolB * SCALE) / pool.lp_supply : 0n;
+  const deltasPadded: BucketDeltaForCircuit[] = [];
+  const beforePadded: BucketStateForCircuit[] = [];
+  const afterPadded: BucketStateForCircuit[] = [];
+  for (let i = 0; i < MAX_ACTIVE_BUCKETS_PER_EPOCH; i++) {
+    deltasPadded.push(padBucketDelta(bucketDeltas[i] ?? null));
+    beforePadded.push(padBucketState(bucketStatesBefore[i] ?? null));
+    afterPadded.push(padBucketState(bucketStatesAfter[i] ?? null));
+  }
 
-  // Step 4: reserve deltas from the accounting identity (sec 6.5.23/24):
-  //   reserve_a_add - reserve_a_sub = a_to_pool - a_from_pool - fee_pool_a
-  //   reserve_b_add - reserve_b_sub = b_to_pool - b_from_pool - fee_pool_b
-  const netFlowA = aToPool - aFromPool - feePoolA;
-  const netFlowB = bToPool - bFromPool - feePoolB;
-  const reserveAAdd = netFlowA > 0n ? netFlowA : 0n;
-  const reserveASub = netFlowA < 0n ? -netFlowA : 0n;
-  const reserveBAdd = netFlowB > 0n ? netFlowB : 0n;
-  const reserveBSub = netFlowB < 0n ? -netFlowB : 0n;
-
-  // -- NEW: Merkle root over canonical fills (padded to maxPerEpoch). --
+  // Merkle root (unchanged from Sub-1).
   const { buildFillsTree } = await import("./merkle.js");
   const { Fr } = await import("@aztec/aztec.js/fields");
   const tree = await buildFillsTree(
     canonicalFills.map((cf) => ({ order_nonce: new Fr(cf.orderNonce), amount_out: cf.amountOut })),
   );
 
-  // Build the TOML.
+  // Emit TOML in 42-field public layout order.
   const lines: string[] = [];
-  // Public inputs (matching circuits/clearing/src/main.nr fn main pub args).
   lines.push(`order_acc = "0x${epoch.order_acc.toString(16)}"`);
   lines.push(`cancel_acc = "0x${epoch.cancel_acc.toString(16)}"`);
   lines.push(`order_count = ${epoch.order_count}`);
   lines.push(`cancel_count = ${epoch.cancel_count}`);
   lines.push(`reserve_a = "${pool.reserve_a}"`);
   lines.push(`reserve_b = "${pool.reserve_b}"`);
-  lines.push(`lp_supply = "${pool.lp_supply}"`);
   lines.push(`clearing_price = "${clearing.clearingPrice}"`);
   lines.push(`fills_root = "${tree.root.toString()}"`);
-  lines.push(`swap = { ` +
-    `a_to_pool = "${aToPool}", b_to_pool = "${bToPool}", a_from_pool = "${aFromPool}", b_from_pool = "${bFromPool}", ` +
-    `reserve_a_add = "${reserveAAdd}", reserve_a_sub = "${reserveASub}", ` +
-    `reserve_b_add = "${reserveBAdd}", reserve_b_sub = "${reserveBSub}", ` +
-    `fee_a_per_share_increment = "${feeAPerShareIncrement}", fee_b_per_share_increment = "${feeBPerShareIncrement}" }`);
+  lines.push(`a_to_pool = "${aToPool}"`);
+  lines.push(`b_to_pool = "${bToPool}"`);
+  lines.push(`a_from_pool = "${aFromPool}"`);
+  lines.push(`b_from_pool = "${bFromPool}"`);
+  lines.push(`current_sqrt_price_after = "${currentSqrtPriceAfter}"`);
+  lines.push(`active_bucket_count = ${bucketDeltas.length}`);
+  lines.push(`active_bucket_deltas = [`);
+  for (const d of deltasPadded) {
+    lines.push(
+      `  { bucket_id = ${d.bucket_id}, ` +
+      `reserve_a_add = "${d.reserve_a_add}", reserve_a_sub = "${d.reserve_a_sub}", ` +
+      `reserve_b_add = "${d.reserve_b_add}", reserve_b_sub = "${d.reserve_b_sub}", ` +
+      `cum_fee_a_per_share_increment = "${d.cum_fee_a_per_share_increment}", ` +
+      `cum_fee_b_per_share_increment = "${d.cum_fee_b_per_share_increment}" },`,
+    );
+  }
+  lines.push(`]`);
 
-  // Private witness arrays (orders, cancelled_indices, fills, fills_len, fill_to_order_index).
+  // Private witnesses.
   lines.push(`orders = [`);
   for (const o of ordersPadded) {
     lines.push(`  { side = ${o.side}, amount_in = "${o.amount_in}", limit_price = "${o.limit_price}", ` +
@@ -278,6 +256,22 @@ export async function buildClearingWitness(args: {
   lines.push(`]`);
   lines.push(`fills_len = ${canonicalFills.length}`);
   lines.push(`fill_to_order_index = [${fillToOrderIndex.join(", ")}]`);
+
+  lines.push(`bucket_states_before = [`);
+  for (const s of beforePadded) {
+    lines.push(`  { reserve_a = "${s.reserve_a}", reserve_b = "${s.reserve_b}", ` +
+      `liquidity = "${s.liquidity}", cum_fee_a_per_share = "${s.cum_fee_a_per_share}", ` +
+      `cum_fee_b_per_share = "${s.cum_fee_b_per_share}" },`);
+  }
+  lines.push(`]`);
+  lines.push(`bucket_states_after = [`);
+  for (const s of afterPadded) {
+    lines.push(`  { reserve_a = "${s.reserve_a}", reserve_b = "${s.reserve_b}", ` +
+      `liquidity = "${s.liquidity}", cum_fee_a_per_share = "${s.cum_fee_a_per_share}", ` +
+      `cum_fee_b_per_share = "${s.cum_fee_b_per_share}" },`);
+  }
+  lines.push(`]`);
+  lines.push(`pool_sqrt_p_before = "${pool.current_sqrt_price_before}"`);
 
   return {
     proverToml: lines.join("\n") + "\n",

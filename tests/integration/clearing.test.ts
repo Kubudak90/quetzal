@@ -70,7 +70,7 @@ import {
   buildClearingWitness,
   type OrderNotePreimage,
   type EpochState,
-  type PoolSnapshotForCircuit,
+  type PoolSnapshotForCircuitSub2,
 } from "../../aggregator/src/witness.js";
 
 // ---------------------------------------------------------------------------
@@ -385,10 +385,10 @@ describe(
         order_count: Number(epochResult.order_count),
         cancel_count: Number(epochResult.cancel_count),
       };
-      const poolSnap: PoolSnapshotForCircuit = {
+      const poolSnap: PoolSnapshotForCircuitSub2 = {
         reserve_a: BigInt(poolState.reserve_a),
         reserve_b: BigInt(poolState.reserve_b),
-        lp_supply: BigInt(poolState.lp_supply),
+        current_sqrt_price_before: 0n,
       };
 
       const { proverToml } = await buildClearingWitness({
@@ -397,6 +397,10 @@ describe(
         orders: ordersForWitness,
         cancellationIndices: [],
         clearing: clearingResult,
+        bucketStatesBefore: [],
+        bucketStatesAfter: [],
+        bucketDeltas: [],
+        currentSqrtPriceAfter: 0n,
         maxOrders: CIRCUIT_MAX_ORDERS,
       });
 

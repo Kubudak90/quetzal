@@ -111,10 +111,14 @@ export async function runOneClearingCycle(ctx: DaemonContext): Promise<void> {
       order_count: epoch.order_count,
       cancel_count: epoch.cancel_count,
     },
-    pool: { reserve_a: pool.reserve_a, reserve_b: pool.reserve_b, lp_supply: pool.lp_supply },
+    pool: { reserve_a: pool.reserve_a, reserve_b: pool.reserve_b, current_sqrt_price_before: 0n },
     orders: orderPreimages,
     cancellationIndices: [],  // Sub-3 daemon does not collect cancel reveals yet
     clearing,
+    bucketStatesBefore: [],
+    bucketStatesAfter: [],
+    bucketDeltas: [],
+    currentSqrtPriceAfter: 0n,
   });
 
   await ctx.runNargoExecute(witness.proverToml);
