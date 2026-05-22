@@ -397,3 +397,106 @@ fn b5_max_in_to_boundary_consistent_with_liquidity() {
     assert(max_a_in_to_upper(nonempty, bounds, TEST_SQRT_P) > 0 as u128, "non-empty bucket has positive max_a_in");
     assert(max_b_in_to_lower(nonempty, bounds, TEST_SQRT_P) > 0 as u128, "non-empty bucket has positive max_b_in");
 }
+
+// ============================================================================
+// Sub-2.5: assert_bucket_step tests (C5-C7).
+// ============================================================================
+
+#[test]
+fn c5_assert_bucket_step_up_passes() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p_in: u128 = crate::pricing::SCALE;
+    let delta_b: u128 = crate::pricing::SCALE / 100;
+
+    let before = crate::types::BucketState {
+        reserve_a: 1000 as u128 * crate::pricing::SCALE,
+        reserve_b: 1000 as u128 * crate::pricing::SCALE,
+        liquidity: l,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let sqrt_p_out = crate::buckets::next_sqrt_p_up(l, sqrt_p_in, delta_b);
+    let out_a = crate::buckets::swap_step_out_a(l, sqrt_p_in, sqrt_p_out);
+    let after = crate::types::BucketState {
+        reserve_a: before.reserve_a - out_a,
+        reserve_b: before.reserve_b + delta_b,
+        liquidity: l,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let delta = crate::types::BucketDelta {
+        bucket_id: 4,
+        reserve_a_add: 0 as u128,
+        reserve_a_sub: out_a,
+        reserve_b_add: delta_b,
+        reserve_b_sub: 0 as u128,
+        cum_fee_a_per_share_increment: 0 as u128,
+        cum_fee_b_per_share_increment: 0 as u128,
+    };
+    let chained = crate::buckets::assert_bucket_step(before, after, delta, sqrt_p_in);
+    assert(chained == sqrt_p_out, "chained sqrt_p_out mismatch");
+}
+
+#[test(should_fail_with = "bucket reserve_a delta mismatch")]
+fn c6_assert_bucket_step_tampered_reserve_a_fails() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p_in: u128 = crate::pricing::SCALE;
+    let delta_b: u128 = crate::pricing::SCALE / 100;
+    let before = crate::types::BucketState {
+        reserve_a: 1000 as u128 * crate::pricing::SCALE,
+        reserve_b: 1000 as u128 * crate::pricing::SCALE,
+        liquidity: l,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let sqrt_p_out = crate::buckets::next_sqrt_p_up(l, sqrt_p_in, delta_b);
+    let out_a = crate::buckets::swap_step_out_a(l, sqrt_p_in, sqrt_p_out);
+    let after = crate::types::BucketState {
+        reserve_a: before.reserve_a - out_a - (1 as u128),  // TAMPERED
+        reserve_b: before.reserve_b + delta_b,
+        liquidity: l,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let delta = crate::types::BucketDelta {
+        bucket_id: 4,
+        reserve_a_add: 0 as u128,
+        reserve_a_sub: out_a,
+        reserve_b_add: delta_b,
+        reserve_b_sub: 0 as u128,
+        cum_fee_a_per_share_increment: 0 as u128,
+        cum_fee_b_per_share_increment: 0 as u128,
+    };
+    let _ = crate::buckets::assert_bucket_step(before, after, delta, sqrt_p_in);
+}
+
+#[test(should_fail_with = "bucket liquidity changed during swap")]
+fn c7_assert_bucket_step_liquidity_change_fails() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p_in: u128 = crate::pricing::SCALE;
+    let delta_b: u128 = crate::pricing::SCALE / 100;
+    let before = crate::types::BucketState {
+        reserve_a: 1000 as u128 * crate::pricing::SCALE,
+        reserve_b: 1000 as u128 * crate::pricing::SCALE,
+        liquidity: l,
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let sqrt_p_out = crate::buckets::next_sqrt_p_up(l, sqrt_p_in, delta_b);
+    let out_a = crate::buckets::swap_step_out_a(l, sqrt_p_in, sqrt_p_out);
+    let after = crate::types::BucketState {
+        reserve_a: before.reserve_a - out_a,
+        reserve_b: before.reserve_b + delta_b,
+        liquidity: l + (1 as u128),  // TAMPERED: liquidity changed
+        cum_fee_a_per_share: 0 as u128,
+        cum_fee_b_per_share: 0 as u128,
+    };
+    let delta = crate::types::BucketDelta {
+        bucket_id: 4,
+        reserve_a_add: 0 as u128, reserve_a_sub: out_a,
+        reserve_b_add: delta_b,   reserve_b_sub: 0 as u128,
+        cum_fee_a_per_share_increment: 0 as u128,
+        cum_fee_b_per_share_increment: 0 as u128,
+    };
+    let _ = crate::buckets::assert_bucket_step(before, after, delta, sqrt_p_in);
+}
