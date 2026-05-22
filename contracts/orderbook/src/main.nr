@@ -477,6 +477,13 @@ pub contract Orderbook {
         // claim_fill reads this back at claim time via _assert_fill_root.
         self.storage.fills_root.at(current.epoch_id).write(public_inputs.fills_root);
 
+        // Sub-3: pay the winning aggregator from the Treasury. Treasury silently
+        // partial-pays min(fee, tracked_balance) so a dry treasury does NOT
+        // block clearing -- the aggregator just forgoes the fee that round.
+        let treasury = self.storage.treasury.read();
+        let fee = self.storage.aggregator_fee.read();
+        self.call(Treasury::at(treasury).pay_aggregator(winner, fee));
+
         // Advance the epoch (accumulator fields reset to 0).
         let epoch_length = self.storage.epoch_length.read();
         self.storage.current_epoch.write(EpochState {
