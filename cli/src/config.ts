@@ -1,42 +1,44 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+export interface ZswapPool {
+  pool_id: number;
+  token_a: string;     // canonical (lex-ordered) lower hex address
+  token_b: string;     // canonical (lex-ordered) higher hex address
+  address: string;     // Pool contract address
+}
+
 export interface ZswapConfig {
   nodeUrl: string;
   tUSDC: string;
   tETH: string;
+  tBTC?: string;       // Sub-4: optional alias for third token
+  pools: ZswapPool[];  // Sub-4: multi-pool registry
   orderbook: string;
-  pool: string;
   admin: string;
-  // Sub-3 additions (optional during incremental migration; the aggregator
-  // commands assert their presence at runtime).
   aggregatorRegistry?: string;
   treasury?: string;
-  // Sub-2 bucket schema params (set by deploy-tokens.ts).
   bucketPMinSqrt?: string;
   bucketGrowthNum?: string;
-  // Sub-4 multi-hop routing: optional third token for 2-hop paths.
-  tBTC?: string;
 }
 
-const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
+const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin", "pools"];
 
-/** Load and validate zswap.config.json (written by scripts/deploy-tokens.ts). */
 export function loadConfig(path = "zswap.config.json"): ZswapConfig {
   const abs = resolve(process.cwd(), path);
   let parsed: Partial<ZswapConfig>;
   try {
     parsed = JSON.parse(readFileSync(abs, "utf8")) as Partial<ZswapConfig>;
   } catch (e) {
-    throw new Error(
-      `could not read config at ${abs} — run \`pnpm tsx scripts/deploy-tokens.ts\` first ` +
-        `(or pass --config): ${e instanceof Error ? e.message : String(e)}`,
-    );
+    throw new Error(`could not read config at ${abs}: ${e instanceof Error ? e.message : String(e)}`);
   }
   for (const key of REQUIRED) {
-    if (typeof parsed[key] !== "string") {
-      throw new Error(`config at ${abs} is missing required string field "${key}"`);
+    if (parsed[key] === undefined || parsed[key] === null) {
+      throw new Error(`config at ${abs} missing required field "${key}"`);
     }
+  }
+  if (!Array.isArray(parsed.pools) || parsed.pools.length === 0) {
+    throw new Error(`config at ${abs}: pools must be a non-empty array`);
   }
   return parsed as ZswapConfig;
 }
