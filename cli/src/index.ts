@@ -9,6 +9,7 @@ import { registerDeposit } from "./commands/deposit.js";
 import { registerWithdraw } from "./commands/withdraw.js";
 import { registerPositions } from "./commands/positions.js";
 import { registerAggregator } from "./commands/aggregator.js";
+import { registerPoolsCommand } from "./commands/pools.js";
 
 const program = new Command();
 program
@@ -26,6 +27,7 @@ registerDeposit(program);
 registerWithdraw(program);
 registerPositions(program);
 registerAggregator(program);
+registerPoolsCommand(program);
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e instanceof Error ? e.message : String(e));
