@@ -550,6 +550,20 @@ export function computeClearingV2(
       bucketStatesAfter: [],
     };
   }
+  // When no buckets are configured (stub / not-yet-wired mode), skip the
+  // per-bucket trace and return the base clearing result with empty arrays.
+  // This path is taken by the daemon before getBucketStates() is wired
+  // (Phase F2). The witness will have zero active_bucket_count, which is
+  // valid for a circuit run with no bucket liquidity.
+  if (pool.bucketBounds.length === 0) {
+    return {
+      ...base,
+      bucketDeltas: [],
+      currentSqrtPriceAfter: pool.currentSqrtPrice,
+      bucketStatesBefore: [],
+      bucketStatesAfter: [],
+    };
+  }
   // Net flows from base.newReserve* vs pool's pre-clearing reserves.
   const netA = base.newReserveA - pool.reserveA;
   const netB = base.newReserveB - pool.reserveB;

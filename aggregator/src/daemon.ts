@@ -10,10 +10,16 @@
 import { Fr } from "@aztec/aztec.js/fields";
 import type { RevealQueue } from "./queue.js";
 import { validateReveals } from "./validate.js";
-import { computeClearing, type ClearingOrder } from "./clearing.js";
-import { buildClearingWitness, type OrderNotePreimage } from "./witness.js";
+import {
+  computeClearingV2,
+  type ClearingOrder,
+  type PoolWithBuckets,
+  type BucketDeltaResult,
+} from "./clearing.js";
+import { buildClearingWitness, type OrderNotePreimage, type BucketStateForCircuit, type BucketDeltaForCircuit } from "./witness.js";
 import { buildFillsTree } from "./merkle.js";
 import { writeSnapshot } from "./snapshot.js";
+import type { BucketState } from "./buckets.js";
 
 export interface DaemonContext {
   queue: RevealQueue;
@@ -24,8 +30,19 @@ export interface DaemonContext {
     order_acc: Fr; order_count: number;
     cancel_acc: Fr; cancel_count: number;
   }>;
-  /** Read the pool's reserves + lp_supply. */
-  getPool: () => Promise<{ reserve_a: bigint; reserve_b: bigint; lp_supply: bigint }>;
+  /**
+   * Read the pool's reserves + lp_supply.
+   * Sub-2.5: also returns current_sqrt_price for bucket-aware clearing.
+   * Bucket-state reading (bucketBounds, bucketStates) is wired by the testnet
+   * operator — see TODO below.
+   */
+  getPool: () => Promise<{
+    reserve_a: bigint;
+    reserve_b: bigint;
+    lp_supply: bigint;
+    /** Sub-2.5: current pool sqrt price (Q64.64 fixed-point). 0n if not wired. */
+    current_sqrt_price?: bigint;
+  }>;
   /** Read current L2 block height. */
   getBlockNumber: () => Promise<number>;
   /** Shell out: nargo execute on the witness, return path to clearing.gz. */
@@ -95,14 +112,55 @@ export async function runOneClearingCycle(ctx: DaemonContext): Promise<void> {
   }));
 
   const pool = await ctx.getPool();
-  const clearing = computeClearing(
-    { reserveA: pool.reserve_a, reserveB: pool.reserve_b, lpSupply: pool.lp_supply },
-    clearingOrders,
-  );
+
+  // Sub-2.5: construct a PoolWithBuckets for computeClearingV2.
+  // TODO (Phase F2 operator): wire getBucketStates() to read bucket bounds and
+  // states from the on-chain pool contract. Until that wiring exists, bucket
+  // fields are stubbed with empty arrays and sqrt_price = 0, which means
+  // traceBucketSwap returns no per-bucket deltas (single-bucket / no-op path).
+  const poolWithBuckets: PoolWithBuckets = {
+    reserveA: pool.reserve_a,
+    reserveB: pool.reserve_b,
+    lpSupply: pool.lp_supply,
+    currentSqrtPrice: pool.current_sqrt_price ?? 0n,
+    bucketBounds: [],
+    bucketStates: [],
+  };
+
+  const clearing = computeClearingV2(poolWithBuckets, clearingOrders);
   if (!clearing.cleared && clearingOrders.length > 0) {
     // No convergence - let close_epoch's no-clear path advance the epoch.
     return;
   }
+
+  // Map ClearingResultV2 bucket arrays to the witness builder types.
+  const toCircuitBucketState = (s: BucketState, id: number): BucketStateForCircuit => ({
+    bucket_id: id,
+    reserve_a: s.reserve_a,
+    reserve_b: s.reserve_b,
+    liquidity: s.liquidity,
+    cum_fee_a_per_share: s.cum_fee_a_per_share,
+    cum_fee_b_per_share: s.cum_fee_b_per_share,
+  });
+  const toCircuitBucketDelta = (d: BucketDeltaResult): BucketDeltaForCircuit => ({
+    bucket_id: d.bucket_id,
+    reserve_a_add: d.reserve_a_add,
+    reserve_a_sub: d.reserve_a_sub,
+    reserve_b_add: d.reserve_b_add,
+    reserve_b_sub: d.reserve_b_sub,
+    cum_fee_a_per_share_increment: d.cum_fee_a_per_share_increment,
+    cum_fee_b_per_share_increment: d.cum_fee_b_per_share_increment,
+  });
+
+  const bucketDeltasV2 = (clearing.bucketDeltas ?? []).map(toCircuitBucketDelta);
+  const bucketStatesBeforeV2 = (clearing.bucketStatesBefore ?? []).map((s, i) =>
+    toCircuitBucketState(s, (clearing.bucketDeltas ?? [])[i]?.bucket_id ?? i),
+  );
+  const bucketStatesAfterV2 = (clearing.bucketStatesAfter ?? []).map((s, i) =>
+    toCircuitBucketState(s, (clearing.bucketDeltas ?? [])[i]?.bucket_id ?? i),
+  );
+  const currentSqrtPriceAfter = clearing.currentSqrtPriceAfter ?? 0n;
+  const currentSqrtPriceBefore = pool.current_sqrt_price ?? 0n;
 
   const witness = await buildClearingWitness({
     epoch: {
@@ -111,14 +169,14 @@ export async function runOneClearingCycle(ctx: DaemonContext): Promise<void> {
       order_count: epoch.order_count,
       cancel_count: epoch.cancel_count,
     },
-    pool: { reserve_a: pool.reserve_a, reserve_b: pool.reserve_b, current_sqrt_price_before: 0n },
+    pool: { reserve_a: pool.reserve_a, reserve_b: pool.reserve_b, current_sqrt_price_before: currentSqrtPriceBefore },
     orders: orderPreimages,
     cancellationIndices: [],  // Sub-3 daemon does not collect cancel reveals yet
     clearing,
-    bucketStatesBefore: [],
-    bucketStatesAfter: [],
-    bucketDeltas: [],
-    currentSqrtPriceAfter: 0n,
+    bucketStatesBefore: bucketStatesBeforeV2,
+    bucketStatesAfter: bucketStatesAfterV2,
+    bucketDeltas: bucketDeltasV2,
+    currentSqrtPriceAfter,
   });
 
   await ctx.runNargoExecute(witness.proverToml);
@@ -134,9 +192,42 @@ export async function runOneClearingCycle(ctx: DaemonContext): Promise<void> {
     tree,
   });
 
-  // Build the on-chain ClearingPublic struct shape.
-  const deltaA = clearing.newReserveA - pool.reserve_a;
-  const deltaB = clearing.newReserveB - pool.reserve_b;
+  // Build the on-chain ClearingPublic struct shape (Sub-2.5: 42-field layout).
+  // The swap field uses the new Sub-2.5 shape: aggregate flows + sqrt_p chain
+  // endpoint + sparse per-bucket deltas. The Sub-1 fields (reserve_a_add/sub,
+  // fee_a/b_per_share_increment, lp_supply) are replaced by the bucket-delta
+  // array and current_sqrt_price_after.
+  const paddedBucketDeltas = Array.from({ length: 4 }, (_, i) => {
+    const d = bucketDeltasV2[i];
+    return d
+      ? {
+          bucket_id: d.bucket_id,
+          reserve_a_add: d.reserve_a_add,
+          reserve_a_sub: d.reserve_a_sub,
+          reserve_b_add: d.reserve_b_add,
+          reserve_b_sub: d.reserve_b_sub,
+          cum_fee_a_per_share_increment: d.cum_fee_a_per_share_increment,
+          cum_fee_b_per_share_increment: d.cum_fee_b_per_share_increment,
+        }
+      : {
+          bucket_id: 0xffff,
+          reserve_a_add: 0n, reserve_a_sub: 0n,
+          reserve_b_add: 0n, reserve_b_sub: 0n,
+          cum_fee_a_per_share_increment: 0n,
+          cum_fee_b_per_share_increment: 0n,
+        };
+  });
+
+  // Derive aggregate a_to_pool / b_to_pool flows from clearing fills.
+  let grossBuyInA = 0n, grossSellInB = 0n, buyerPayoutsB = 0n, sellerPayoutsA = 0n;
+  for (const f of clearing.fills) {
+    const o = orderPreimages.find((x) => x.order_nonce === f.orderNonce);
+    if (!o) continue;
+    if (o.side) { grossSellInB += o.amount_in; sellerPayoutsA += f.amountOut; }
+    else        { grossBuyInA  += o.amount_in; buyerPayoutsB  += f.amountOut; }
+  }
+  const sat = (x: bigint, y: bigint) => (x > y ? x - y : 0n);
+
   const publicInputs = {
     order_acc: epoch.order_acc.toBigInt(),
     cancel_acc: epoch.cancel_acc.toBigInt(),
@@ -144,17 +235,17 @@ export async function runOneClearingCycle(ctx: DaemonContext): Promise<void> {
     cancel_count: epoch.cancel_count,
     reserve_a: pool.reserve_a,
     reserve_b: pool.reserve_b,
-    lp_supply: pool.lp_supply,
+    pool_sqrt_p_before: currentSqrtPriceBefore,
     clearing_price: clearing.clearingPrice,
     fills_root: tree.root.toBigInt(),
     swap: {
-      a_to_pool: 0n, b_to_pool: 0n, a_from_pool: 0n, b_from_pool: 0n,
-      reserve_a_add: deltaA > 0n ? deltaA : 0n,
-      reserve_a_sub: deltaA < 0n ? -deltaA : 0n,
-      reserve_b_add: deltaB > 0n ? deltaB : 0n,
-      reserve_b_sub: deltaB < 0n ? -deltaB : 0n,
-      fee_a_per_share_increment: clearing.feeAPerShareIncrement,
-      fee_b_per_share_increment: clearing.feeBPerShareIncrement,
+      a_to_pool:   sat(grossBuyInA,    sellerPayoutsA),
+      b_to_pool:   sat(grossSellInB,   buyerPayoutsB),
+      a_from_pool: sat(sellerPayoutsA, grossBuyInA),
+      b_from_pool: sat(buyerPayoutsB,  grossSellInB),
+      current_sqrt_price_after: currentSqrtPriceAfter,
+      active_bucket_count: bucketDeltasV2.length,
+      active_bucket_deltas: paddedBucketDeltas,
     },
   };
 

@@ -420,7 +420,7 @@ pub contract Orderbook {
     /// produces a hash that fails this internal check (revert).
     ///
     /// Flow:
-    /// 1. Flatten public_inputs to the [Field; 19] vector matching the prover's view.
+    /// 1. Flatten public_inputs to the [Field; 42] vector matching the prover's view.
     /// 2. `std::verify_proof_with_type(vk, proof, flat, vk_hash, 1)` -- recursive verify.
     /// 3. Enqueue `_apply_verified_clearing` which under public-state guards verifies
     ///    freshness (binding inputs match the current epoch's accumulators), runs the

@@ -7,7 +7,7 @@ mod buckets;
 mod test;
 
 use types::{
-    BucketDelta, BucketState, ClearingSwap, FillEntry, OrderPreimage,
+    BucketDelta, BucketState, FillEntry, OrderPreimage,
     MAX_ACTIVE_BUCKETS_PER_EPOCH, MAX_ORDERS_PER_EPOCH, NUM_BUCKETS,
 };
 
