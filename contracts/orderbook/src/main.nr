@@ -127,10 +127,15 @@ pub contract Orderbook {
     struct Storage<Context> {
         orders: Owned<PrivateSet<OrderNote, Context>, Context>,
         current_epoch: PublicMutable<EpochState, Context>,
-        token_a_addr: PublicImmutable<AztecAddress, Context>,
-        token_b_addr: PublicImmutable<AztecAddress, Context>,
         epoch_length: PublicImmutable<u32, Context>,
-        pool_addr: PublicImmutable<AztecAddress, Context>,
+        // Sub-4 NEW: multi-pool registry.
+        // pool_id -> Pool contract address
+        pools: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
+        // pool_id -> canonical (token_a, token_b) where token_a < token_b as Field
+        pool_token_a: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
+        pool_token_b: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
+        // How many pools were registered at deploy (so we can iterate 0..pool_count).
+        pool_count: PublicImmutable<u32, Context>,
         /// Hash of the clearing-circuit VK. Initialised at deploy and immutable.
         /// The full VK is provided as calldata to close_epoch_and_clear_verified.
         clearing_vk_hash: PublicImmutable<Field, Context>,
@@ -150,11 +155,12 @@ pub contract Orderbook {
         aggregator_fee: PublicImmutable<u128, Context>,
     }
 
-    /// Deploy-time initializer (Sub-3 form).
+    /// Deploy-time initializer (Sub-4 form).
     ///
-    /// - Records the two tradable token addresses.
-    /// - Records `pool_addr` (the LiquidityPool the net clearing flow swaps through)
-    ///   and `clearing_vk_hash` (the VK hash that binds this orderbook to one specific
+    /// - Sub-4: accepts a deploy-time pool registry of up to 4 pools.
+    ///   Each pool entry: (pool contract address, token_a canonical, token_b canonical).
+    ///   Caller MUST pre-canonicalize token_a < token_b as Field for each pair.
+    /// - Records `clearing_vk_hash` (the VK hash that binds this orderbook to one specific
     ///   clearing circuit; the full VK is provided as calldata at clearing time).
     /// - Sub-3 additions: `aggregator_registry` gates close_epoch_and_clear_verified;
     ///   `treasury` pays the winner; `aggregator_fee` is the per-clearing payout.
@@ -162,23 +168,35 @@ pub contract Orderbook {
     #[external("public")]
     #[initializer]
     fn constructor(
-        token_a: AztecAddress,
-        token_b: AztecAddress,
         epoch_length: u32,
-        pool_addr: AztecAddress,
         clearing_vk_hash: Field,
         aggregator_registry: AztecAddress,
         treasury: AztecAddress,
         aggregator_fee: u128,
+        // Sub-4: deploy-time pool registry; up to 4 pools.
+        // Each slot: (addr, token_a_canonical, token_b_canonical).
+        // Caller MUST pre-canonicalize token_a < token_b as Field.
+        pool_count: u32,
+        pool_addrs: [AztecAddress; 4],
+        pool_token_a_addrs: [AztecAddress; 4],
+        pool_token_b_addrs: [AztecAddress; 4],
     ) {
-        self.storage.token_a_addr.initialize(token_a);
-        self.storage.token_b_addr.initialize(token_b);
         self.storage.epoch_length.initialize(epoch_length);
-        self.storage.pool_addr.initialize(pool_addr);
         self.storage.clearing_vk_hash.initialize(clearing_vk_hash);
         self.storage.aggregator_registry.initialize(aggregator_registry);
         self.storage.treasury.initialize(treasury);
         self.storage.aggregator_fee.initialize(aggregator_fee);
+        // Sub-4 NEW
+        assert((pool_count > 0 as u32) & (pool_count <= 4 as u32), "pool_count in [1, 4]");
+        self.storage.pool_count.initialize(pool_count);
+        for i in 0..4 {
+            if (i as u32) < pool_count {
+                self.storage.pools.at(i as u32).initialize(pool_addrs[i]);
+                // Caller responsibility: token_a < token_b as Field
+                self.storage.pool_token_a.at(i as u32).initialize(pool_token_a_addrs[i]);
+                self.storage.pool_token_b.at(i as u32).initialize(pool_token_b_addrs[i]);
+            }
+        }
 
         let block: u32 = self.context.block_number();
         self.storage.current_epoch.write(EpochState {
@@ -191,6 +209,32 @@ pub contract Orderbook {
             order_count: 0,
             cancel_count: 0,
         });
+    }
+
+    /// Sub-4: resolve which pool_id matches an unordered (token_a, token_b) pair.
+    /// Canonicalises internally (smaller Field first) so the caller can pass either order.
+    /// Returns 0xFFFFFFFF if no registered pool matches the pair.
+    #[external("public")]
+    #[view]
+    fn resolve_pool_id_by_pair(token_a: AztecAddress, token_b: AztecAddress) -> u32 {
+        let count = self.storage.pool_count.read();
+        // Canonical: smaller-as-Field first
+        let (lo, hi) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+            (token_a, token_b)
+        } else {
+            (token_b, token_a)
+        };
+        let mut found: u32 = 0xFFFFFFFF;
+        for i in 0..4 {
+            if (i as u32) < count {
+                let pa = self.storage.pool_token_a.at(i as u32).read();
+                let pb = self.storage.pool_token_b.at(i as u32).read();
+                if (pa == lo) & (pb == hi) {
+                    found = i as u32;
+                }
+            }
+        }
+        found
     }
 
     // ============================ ORDER SUBMISSION ============================
@@ -252,10 +296,11 @@ pub contract Orderbook {
         // PublicImmutable can be read from a private context (it is initialized once at deploy
         // time and the value is therefore historically fixed). PublicMutable cannot, hence the
         // epoch check is deferred to the enqueued public callback below.
+        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
         let token_addr: AztecAddress = if side {
-            self.storage.token_b_addr.read()
+            self.storage.pool_token_b.at(0 as u32).read()
         } else {
-            self.storage.token_a_addr.read()
+            self.storage.pool_token_a.at(0 as u32).read()
         };
 
         // Escrow: drain the maker's private balance, credit the orderbook's PUBLIC balance.
@@ -510,15 +555,16 @@ pub contract Orderbook {
         assert(public_inputs.cancel_count == current.cancel_count, "cancel_count mismatch");
 
         // Net AMM swap (identical to the W5c/5d-3 flow).
-        let pool = self.storage.pool_addr.read();
+        // TEMPORARY (Task B4 replaces this with per-pool loop):
+        let pool = self.storage.pools.at(0 as u32).read();
         let swap = public_inputs.swap;
         if swap.a_to_pool > 0 as u128 {
-            self.call(Token::at(self.storage.token_a_addr.read()).transfer_public_to_public(
+            self.call(Token::at(self.storage.pool_token_a.at(0 as u32).read()).transfer_public_to_public(
                 self.address, pool, swap.a_to_pool, 0,
             ));
         }
         if swap.b_to_pool > 0 as u128 {
-            self.call(Token::at(self.storage.token_b_addr.read()).transfer_public_to_public(
+            self.call(Token::at(self.storage.pool_token_b.at(0 as u32).read()).transfer_public_to_public(
                 self.address, pool, swap.b_to_pool, 0,
             ));
         }
@@ -600,10 +646,11 @@ pub contract Orderbook {
         assert(idx == 0, "leaf_index out of bounds");
 
         // 4. Pay out: a buy (side=false) is owed token B; a sell (side=true) is owed token A.
+        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
         let token: AztecAddress = if order.side {
-            self.storage.token_a_addr.read()
+            self.storage.pool_token_a.at(0 as u32).read()
         } else {
-            self.storage.token_b_addr.read()
+            self.storage.pool_token_b.at(0 as u32).read()
         };
         self.call(Token::at(token).transfer_public_to_private(
             self.address,
@@ -672,10 +719,11 @@ pub contract Orderbook {
         // Defence-in-depth: the per-owner PrivateSet already scopes retrieval to `maker`.
         assert(order.owner == maker, "not order owner");
 
+        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
         let token_addr: AztecAddress = if order.side {
-            self.storage.token_b_addr.read()
+            self.storage.pool_token_b.at(0 as u32).read()
         } else {
-            self.storage.token_a_addr.read()
+            self.storage.pool_token_a.at(0 as u32).read()
         };
 
         // Recompute the same per-order commitment submit_order folded into order_acc.
@@ -721,14 +769,16 @@ pub contract Orderbook {
         self.storage.current_epoch.read()
     }
 
+    /// Sub-4: returns the canonical token_a (lower Field) for a given pool_id.
     #[external("utility")]
-    unconstrained fn get_token_a_addr() -> AztecAddress {
-        self.storage.token_a_addr.read()
+    unconstrained fn get_pool_token_a(pool_id: u32) -> AztecAddress {
+        self.storage.pool_token_a.at(pool_id).read()
     }
 
+    /// Sub-4: returns the canonical token_b (higher Field) for a given pool_id.
     #[external("utility")]
-    unconstrained fn get_token_b_addr() -> AztecAddress {
-        self.storage.token_b_addr.read()
+    unconstrained fn get_pool_token_b(pool_id: u32) -> AztecAddress {
+        self.storage.pool_token_b.at(pool_id).read()
     }
 
     #[external("utility")]
@@ -736,9 +786,16 @@ pub contract Orderbook {
         self.storage.epoch_length.read()
     }
 
+    /// Sub-4: takes pool_id; returns the Pool contract address for that pool.
     #[external("utility")]
-    unconstrained fn get_pool_addr() -> AztecAddress {
-        self.storage.pool_addr.read()
+    unconstrained fn get_pool_addr(pool_id: u32) -> AztecAddress {
+        self.storage.pools.at(pool_id).read()
+    }
+
+    /// Sub-4: returns the number of registered pools.
+    #[external("utility")]
+    unconstrained fn get_pool_count() -> u32 {
+        self.storage.pool_count.read()
     }
 
     /// Exposes the embedded clearing-circuit VK hash.

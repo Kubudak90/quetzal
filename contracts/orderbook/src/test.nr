@@ -89,14 +89,16 @@ unconstrained fn order_note_different_nonce_different_hash() {
     assert(any_diff, "serialize() must differ when only nonce differs");
 }
 
-// Helper: deploy a fresh Orderbook with the given token addresses and epoch length,
-// returning the deployed address. The `deployer` light account pushes the public
-// initializer.
+// Helper: deploy a fresh Orderbook with a single pool (pool_addr, token_a, token_b)
+// and the given epoch length, returning the deployed address. The `deployer` light
+// account pushes the public initializer.
 //
-// Sub-3 constructor took on 3 new args (aggregator_registry, treasury, aggregator_fee).
-// Tests that don't exercise the Sub-3 paths pass `deployer` as a stand-in for both
-// new address args and 0 for the fee, matching the 5d-4 token_a/token_b/pool_addr
-// stand-in convention.
+// Sub-4 constructor takes multi-pool arrays. This helper wraps a single-pool deploy:
+// pool_count=1, pool_addrs[0]=pool_addr, token_a/b canonicalized automatically.
+// Slots [1..3] are filled with the deployer address as a harmless sentinel.
+//
+// Tests that don't exercise Sub-3/Sub-4 paths pass `deployer` as a stand-in for
+// all address args and 0 for the fee.
 unconstrained fn deploy_orderbook(
     env: &mut TestEnvironment,
     deployer: AztecAddress,
@@ -106,15 +108,23 @@ unconstrained fn deploy_orderbook(
     pool_addr: AztecAddress,
     clearing_vk_hash: Field,
 ) -> AztecAddress {
+    // Canonicalize: smaller-as-Field first (required by constructor invariant).
+    let (canon_a, canon_b) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+        (token_a, token_b)
+    } else {
+        (token_b, token_a)
+    };
     let initializer_call = Orderbook::interface().constructor(
-        token_a,
-        token_b,
         epoch_length,
-        pool_addr,
         clearing_vk_hash,
         deployer,    // aggregator_registry stand-in
         deployer,    // treasury stand-in
         0 as u128,   // aggregator_fee stand-in
+        // Sub-4: single-pool registration
+        1 as u32,    // pool_count
+        [pool_addr, deployer, deployer, deployer],       // pool_addrs[4]
+        [canon_a, deployer, deployer, deployer],         // pool_token_a_addrs[4]
+        [canon_b, deployer, deployer, deployer],         // pool_token_b_addrs[4]
     );
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
@@ -216,14 +226,21 @@ unconstrained fn constructor_records_token_addrs_and_epoch_length() {
     let vk_hash_dummy: Field = 0;
     let orderbook = deploy_orderbook(&mut env, deployer, token_a, token_b, 42, pool_placeholder, vk_hash_dummy);
 
-    let stored_a: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_a_addr());
-    let stored_b: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_token_b_addr());
+    // Sub-4: getters now take pool_id=0 for the single-pool deploy.
+    // The helper canonicalizes token_a/b, so we canonicalize here too before asserting.
+    let (canon_a, canon_b) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+        (token_a, token_b)
+    } else {
+        (token_b, token_a)
+    };
+    let stored_a: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_token_a(0 as u32));
+    let stored_b: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_token_b(0 as u32));
     let stored_len: u32 = env.execute_utility(Orderbook::at(orderbook).get_epoch_length());
-    let stored_pool: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_addr());
+    let stored_pool: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_pool_addr(0 as u32));
     let stored_vk_hash: Field = env.execute_utility(Orderbook::at(orderbook).get_clearing_vk_hash());
 
-    assert(stored_a == token_a, "stored token_a must round-trip");
-    assert(stored_b == token_b, "stored token_b must round-trip");
+    assert(stored_a == canon_a, "stored token_a must round-trip (canonical)");
+    assert(stored_b == canon_b, "stored token_b must round-trip (canonical)");
     assert(stored_len == 42, "stored epoch_length must round-trip");
     assert(stored_pool == pool_placeholder, "stored pool_addr must round-trip");
     assert(stored_vk_hash == 0, "stored clearing_vk_hash must round-trip");
@@ -534,6 +551,66 @@ unconstrained fn t4b_merkle_leaf_and_root_are_consistent() {
 // T9b (cancel-after-fill underflow) similarly requires a real Token+Pool deployment
 // that TXE doesn't easily provide. The spec flags this protection as worth verifying
 // and it is also exercised by Task 12.
+
+// ============================================================================
+// Sub-4 Task B1: multi-pool storage + canonical pool lookup tests.
+// resolve_pool_id_by_pair is a #[external("public")] #[view] function; it is
+// called via env.call_public in TXE.
+
+#[test]
+unconstrained fn pool_tokens_canonical_ordering_finds_pool() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Set up 3 distinct pool addresses and 3 distinct token addresses.
+    let usdc = env.create_light_account();
+    let eth  = env.create_light_account();
+    let btc  = env.create_light_account();
+    let pool_p0 = env.create_light_account();
+    let pool_p1 = env.create_light_account();
+    let pool_p2 = env.create_light_account();
+
+    // Canonicalize each pair: smaller-as-Field first.
+    let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
+        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+    };
+    let (usdc_eth_a, usdc_eth_b) = canon(usdc, eth);
+    let (usdc_btc_a, usdc_btc_b) = canon(usdc, btc);
+    let (eth_btc_a,  eth_btc_b)  = canon(eth,  btc);
+
+    // Deploy with 3 pools. Slot [3] uses deployer as a harmless sentinel.
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,         // epoch_length
+        0 as Field,         // clearing_vk_hash
+        deployer,           // aggregator_registry stand-in
+        deployer,           // treasury stand-in
+        0 as u128,          // aggregator_fee stand-in
+        3 as u32,           // pool_count
+        [pool_p0, pool_p1, pool_p2, deployer],
+        [usdc_eth_a, usdc_btc_a, eth_btc_a, deployer],
+        [usdc_eth_b, usdc_btc_b, eth_btc_b, deployer],
+    );
+    let orderbook = env.deploy("Orderbook").with_public_initializer(deployer, initializer_call);
+
+    // Pool 0 should match (usdc, eth) in either order.
+    let pid_ab: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, eth));
+    assert(pid_ab == 0 as u32, "usdc,eth must resolve to pool 0");
+    // Reverse order: canonical normalisation must yield the same pool_id.
+    let pid_ba: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, usdc));
+    assert(pid_ba == 0 as u32, "eth,usdc (reversed) must resolve to pool 0");
+
+    // Pool 1: usdc/btc pair.
+    let pid_p1: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, btc));
+    assert(pid_p1 == 1 as u32, "usdc,btc must resolve to pool 1");
+
+    // Pool 2: eth/btc pair.
+    let pid_p2: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, btc));
+    assert(pid_p2 == 2 as u32, "eth,btc must resolve to pool 2");
+
+    // Unknown pair must return 0xFFFFFFFF.
+    let pid_unknown: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, deployer));
+    assert(pid_unknown == 0xFFFFFFFF as u32, "unknown pair must return 0xFFFFFFFF");
+}
 
 // ============================================================================
 // Sub-4 Task A1: path extension negative-validation tests.
