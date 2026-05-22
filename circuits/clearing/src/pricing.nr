@@ -146,3 +146,30 @@ pub fn payout(order: OrderPreimage, clearing_price: u128) -> u128 {
 pub fn saturating_sub(x: u128, y: u128) -> u128 {
     if x > y { x - y } else { 0 as u128 }
 }
+
+// ============================================================================
+// Sub-4: per-hop eligibility + payout helpers.
+// ============================================================================
+
+/// Sub-4: order eligibility at a clearing price p_star.
+///   ask (side=true):  limit_price <= p_star
+///   bid (side=false): limit_price >= p_star
+pub fn eligible_with_p(side: bool, limit_price: u128, p_star: u128) -> bool {
+    if side {
+        limit_price <= p_star
+    } else {
+        limit_price >= p_star
+    }
+}
+
+/// Sub-4: per-hop payout = amount_in * (SCALE/p_star or p_star/SCALE) * fee.
+///   ask (side=true):  amount_in (path[last]) * p_star / SCALE -> path[0]
+///   bid (side=false): amount_in (path[0])   * SCALE / p_star -> path[last]
+pub fn payout_at_price(amount_in: u128, p_star: u128, side: bool) -> u128 {
+    let gross: u128 = if side {
+        mul_div(amount_in, p_star, SCALE)
+    } else {
+        mul_div(amount_in, SCALE, p_star)
+    };
+    mul_div(gross, FEE_DEN - FEE_NUM, FEE_DEN)
+}

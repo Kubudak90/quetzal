@@ -8,7 +8,7 @@
 //! (from noir-lang/poseidon v0.3.0), so using the same underlying function here
 //! produces identical hashes.
 
-use crate::types::{OrderPreimage, MAX_ORDERS_PER_EPOCH};
+use crate::types::{OrderPreimage, OrderPreimagePath, MAX_ORDERS_PER_EPOCH};
 
 /// Per-order commitment, exactly the formula submit_order / cancel_order use.
 /// Input order: owner, side(0/1), amount_in, limit_price, order_nonce, submitted_at_block.
@@ -64,6 +64,67 @@ pub fn replay_cancel_chain(
                 }
             }
             acc = poseidon::poseidon2::Poseidon2::hash([acc, c_i(selected)], 2);
+        }
+    }
+    acc
+}
+
+// ============================================================================
+// Sub-4: path-aware binding (replay chain hashes 11 fields incl. path).
+// ============================================================================
+
+/// Sub-4: order_acc replay over OrderPreimagePath. Hashes 11 fields per link:
+///   [acc, side, amount_in, limit_price, order_nonce,
+///    submitted_at_block, owner, path_len, path[0], path[1], path[2]]
+pub fn replay_chain_with_path(
+    orders: [OrderPreimagePath; MAX_ORDERS_PER_EPOCH],
+    order_count: u32,
+) -> Field {
+    let mut acc: Field = 0;
+    for i in 0..MAX_ORDERS_PER_EPOCH {
+        if (i as u32) < order_count {
+            let o = orders[i];
+            let side_field: Field = if o.side { 1 } else { 0 };
+            acc = poseidon::poseidon2::Poseidon2::hash(
+                [
+                    acc,
+                    side_field,
+                    o.amount_in as Field,
+                    o.limit_price as Field,
+                    o.order_nonce,
+                    o.submitted_at_block as Field,
+                    o.owner,
+                    o.path_len as Field,
+                    o.path[0],
+                    o.path[1],
+                    o.path[2],
+                ],
+                11,
+            );
+        }
+    }
+    acc
+}
+
+/// Sub-4: cancel_acc replay over OrderPreimagePath. Each cancelled order
+/// contributes poseidon2([acc, order_nonce], 2).
+pub fn replay_cancel_chain_with_path(
+    orders: [OrderPreimagePath; MAX_ORDERS_PER_EPOCH],
+    cancelled_indices: [u32; MAX_ORDERS_PER_EPOCH],
+    cancel_count: u32,
+    order_count: u32,
+) -> Field {
+    let mut acc: Field = 0;
+    for c in 0..MAX_ORDERS_PER_EPOCH {
+        if (c as u32) < cancel_count {
+            let idx = cancelled_indices[c];
+            assert(idx < order_count, "cancelled idx >= order_count");
+            // Scan-and-pick: constraint-safe dynamic select.
+            let mut o: OrderPreimagePath = orders[0];
+            for k in 0..MAX_ORDERS_PER_EPOCH {
+                if (k as u32) == idx { o = orders[k]; }
+            }
+            acc = poseidon::poseidon2::Poseidon2::hash([acc, o.order_nonce], 2);
         }
     }
     acc
