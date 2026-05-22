@@ -53,3 +53,11 @@ unconstrained fn r5_is_registered_false_for_unknown_addr() {
         env.execute_utility(AggregatorRegistry::at(registry).is_registered(stranger));
     assert(!registered, "stranger must not be registered");
 }
+
+// R1 (register happy-path) and R2 (double-register revert) cannot be exercised
+// in TXE: both require minting tUSDC + wiring an authwit for the inner
+// Token.transfer_private_to_public call inside register(). The orderbook
+// contract's TXE tests follow the same convention (see contracts/orderbook/
+// src/test.nr's submit_order tests, which only cover input-validation reverts
+// that fire BEFORE any cross-contract Token call). Full happy-path R1/R2
+// coverage lands in the Task 18 e2e (tests/integration/aggregator-race.test.ts).
