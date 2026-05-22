@@ -6,6 +6,13 @@ MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auct
 
 **Sub-2.5 CODE-COMPLETE (2026-05-22):** 15 tasks across 6 phases (A-F) delivered. The circuit's `fn main` emits 42 public fields matching the orderbook's `flatten_clearing_public`; the aggregator's `traceBucketSwap` is a true multi-bucket state machine (UP + DOWN, empty-bucket skip, MAX_BUCKET_HOPS=4, last-bucket-residual fee); the witness builder rewritten for Sub-2.5 42-field public layout; bb prove passes (500-field proof, 115-field VK, EMPTY_ROOT unchanged, new vk_hash `0e634a5b7cb463a6...`, gate count 107,762). Test scoreboard: 52 Noir TXE tests + 86+ JS aggregator tests passing. Joint testnet runner scaffolded at `scripts/testnet-sub2-5.ts` (9-step state machine + AZTEC_NODE_URL safety check); **testnet execution deferred to a future session when an Aztec testnet endpoint is configured.**
 
+**Sub-4 LANDED:** multi-pair routing with explicit maker 2-hop paths.
+Single Orderbook now manages N pools (MVP triangle: USDC/ETH, USDC/BTC,
+ETH/BTC). ClearingPublic grew to 114 fields. bb prove confirmed against
+the new circuit; bridge constants (500-field proof, 115-field VK)
+HOLD. Gate count: 276,250 (ACIR opcodes: 153,805).
+New vk_hash: `03180b0a5131de64`.
+
 ## Quickstart
 
 Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `4.2.1`, Foundry (anvil).
@@ -88,6 +95,8 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Sub-project 2: Implementation Plan](docs/superpowers/plans/2026-05-22-zswap-aztec-subproject-02-concentrated-liquidity.md)
 - [Sub-project 2.5: Circuit Integration Design](docs/superpowers/specs/2026-05-22-zswap-aztec-subproject-02-5-circuit-integration-design.md)
 - [Sub-project 2.5: Implementation Plan](docs/superpowers/plans/2026-05-22-zswap-aztec-subproject-02-5-circuit-integration.md)
+- [Sub-project 4: Multi-Pair Routing Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-04-multi-pair-routing-design.md)
+- [Sub-project 4: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-04-multi-pair-routing.md)
 
 ## Operator Runbook (Sub-3)
 
