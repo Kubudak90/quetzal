@@ -76,3 +76,13 @@ unconstrained fn r3_update_endpoint_rejects_unregistered_caller() {
     let stranger = env.create_light_account();
     env.call_public(stranger, AggregatorRegistry::at(registry).update_endpoint(0xBB));
 }
+
+// R4 (unregister positive: returns bond + zeros maps) and R6 (count tracks
+// registers + unregister cycles) require the same Token authwit setup as R1.
+// Both are deferred to Task 18 e2e. The unregister-side _assert_registered
+// (called from unregister via enqueue_self) IS structurally identical to R3's
+// assert path, just from a private fn rather than public, so the same revert
+// message ("not registered") covers an unregistered-caller path that hits
+// _assert_registered. We don't add an explicit TXE test for that because
+// unregister itself calls Token before the assert callback enqueues, and
+// the Token call from an unregistered caller still needs authwit machinery.

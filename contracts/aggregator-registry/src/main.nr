@@ -7,7 +7,7 @@ pub contract AggregatorRegistry {
             functions::{external, initializer, only_self},
             storage::storage,
         },
-        protocol::address::AztecAddress,
+        protocol::{address::AztecAddress, traits::FromField},
         state_vars::{Map, PublicImmutable, PublicMutable},
     };
 
@@ -83,6 +83,49 @@ pub contract AggregatorRegistry {
         let bonded = self.storage.bonded_amount_by_addr.at(caller).read();
         assert(bonded > 0 as u128, "not registered");
         self.storage.endpoint_hash_by_addr.at(caller).write(new_endpoint_url_hash);
+    }
+
+    /// Unregister the caller and return their bond. No unbonding period (MVP
+    /// slashing model is anti-Sybil only). Reverts if caller is not registered.
+    ///
+    /// # Arguments
+    /// - `nonce`: authwit nonce for the inner Token.transfer_public_to_private call.
+    ///   Must be 0 (self-spending registry contract).
+    #[external("private")]
+    fn unregister(nonce: Field) {
+        let caller = self.msg_sender();
+        self.enqueue_self._assert_registered(caller);
+
+        let bond_token = self.storage.bond_token.read();
+        let bond_amount = self.storage.bond_amount.read();
+
+        self.call(Token::at(bond_token).transfer_public_to_private(
+            self.address,
+            caller,
+            bond_amount,
+            nonce,
+        ));
+
+        self.enqueue_self._unregister_public(caller);
+    }
+
+    /// Public callback: assert caller is currently registered. only_self.
+    #[external("public")]
+    #[only_self]
+    fn _assert_registered(caller: AztecAddress) {
+        let bonded = self.storage.bonded_amount_by_addr.at(caller).read();
+        assert(bonded > 0 as u128, "not registered");
+    }
+
+    /// Public callback: zero out the four maps for `caller`. only_self.
+    #[external("public")]
+    #[only_self]
+    fn _unregister_public(caller: AztecAddress) {
+        let id = self.storage.aggregator_id_by_addr.at(caller).read();
+        self.storage.aggregator_id_by_addr.at(caller).write(0);
+        self.storage.bonded_amount_by_addr.at(caller).write(0 as u128);
+        self.storage.endpoint_hash_by_addr.at(caller).write(0);
+        self.storage.registered_addrs.at(id).write(AztecAddress::from_field(0));
     }
 
     // ============================ UNCONSTRAINED GETTERS ============================
