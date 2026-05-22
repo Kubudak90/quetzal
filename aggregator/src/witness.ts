@@ -280,3 +280,202 @@ export async function buildClearingWitness(args: {
     maxOrdersPerEpoch: maxPerEpoch,
   };
 }
+
+// ============================================================================
+// Sub-4 Task C3: multi-pair circuit witness builder
+// ============================================================================
+import type { HopFill, PoolClearingResult } from "./clearing.js";
+
+export const MAX_ACTIVE_POOLS_PER_EPOCH = 3;
+export const INVALID_POOL_ID = 0xffffffff;
+
+/**
+ * Build the Prover.toml witness for the Sub-4 multi-pair circuit.
+ *
+ * Public input shape (114 fields):
+ *   order_acc, cancel_acc, order_count, cancel_count  (4)
+ *   fills_root                                         (1)
+ *   active_pool_count                                  (1)
+ *   active_pools[3] of PoolClearing:
+ *     per pool: pool_id, clearing_price, swap{a_to_pool, b_to_pool,
+ *       a_from_pool, b_from_pool, current_sqrt_price_after,
+ *       active_bucket_count, active_bucket_deltas[4]{7 fields each}}
+ *     = 2 + 6 + 4*7 = 36 fields per pool * 3 pools = 108
+ *   Total = 4 + 1 + 1 + 108 = 114 fields.
+ *
+ * Private witnesses: orders (padded to maxOrders, now with path_len + path),
+ *   cancelled_indices, fills (2 * maxOrders with hop_index + pool_id), fills_len.
+ *
+ * NOTE: Aggregate flow scalars (a_to_pool etc.) are emitted as 0 placeholders.
+ * Task D2's circuit derives them from per-bucket deltas; the witness builder
+ * does not need to re-derive them independently for correctness of the TOML shape.
+ * When real end-to-end prover integration lands, these can be derived from
+ * PoolClearingResult.bucketDeltas if needed, but the circuit is the source of truth.
+ *
+ * NOTE: Uses Sub-1's buildFillsTree as a placeholder Merkle. Task C4 will
+ * introduce buildHopFillsTree (64-leaf, 4-field-per-leaf) and wire it here.
+ */
+export async function buildClearingWitnessMultiPair(args: {
+  epoch: EpochState;
+  orders: OrderNotePreimage[];
+  cancellationIndices: number[];
+  perPoolClearings: PoolClearingResult[];
+  fills: HopFill[];
+  maxOrders?: number;
+}): Promise<ClearingWitness> {
+  const maxPerEpoch = args.maxOrders ?? MAX_ORDERS_PER_EPOCH;
+  const { epoch, orders, cancellationIndices, perPoolClearings, fills } = args;
+
+  if (perPoolClearings.length > MAX_ACTIVE_POOLS_PER_EPOCH) {
+    throw new Error(`perPoolClearings.length (${perPoolClearings.length}) > cap ${MAX_ACTIVE_POOLS_PER_EPOCH}`);
+  }
+  if (fills.length > 2 * maxPerEpoch) {
+    throw new Error(`fills.length (${fills.length}) > 2 * maxOrders (${2 * maxPerEpoch})`);
+  }
+
+  // Pad orders + cancellationIndices (Sub-1 pattern). OrderNotePreimage may or
+  // may not carry path_len + path (Sub-4 extension); defaults applied below.
+  const ordersPadded: OrderNotePreimage[] = orders.slice();
+  while (ordersPadded.length < maxPerEpoch) {
+    ordersPadded.push({
+      side: false, amount_in: 0n, limit_price: 0n,
+      order_nonce: 0n, submitted_at_block: 0, owner: 0n,
+    });
+  }
+  const cancelledPadded: number[] = cancellationIndices.slice();
+  while (cancelledPadded.length < maxPerEpoch) cancelledPadded.push(0);
+
+  // Build fills Merkle tree (placeholder: Sub-1's 2-field-per-leaf scheme).
+  // Task C4 will replace this with buildHopFillsTree (4-field-per-leaf, 64 leaves).
+  // Sub-1's tree expects unique nonces; for 2-hop orders the same nonce appears
+  // twice (hop=0 + hop=1). Deduplicate by nonce, keeping the first occurrence,
+  // since the root value here is a placeholder that C4 will replace entirely.
+  const { buildFillsTree } = await import("./merkle.js");
+  const { Fr } = await import("@aztec/aztec.js/fields");
+  const seenNonces = new Set<bigint>();
+  const fillsForTree: { order_nonce: Fr; amount_out: bigint }[] = [];
+  for (const f of fills) {
+    if (!seenNonces.has(f.orderNonce)) {
+      seenNonces.add(f.orderNonce);
+      fillsForTree.push({ order_nonce: new Fr(f.orderNonce), amount_out: f.amountOut });
+    }
+  }
+  const tree = await buildFillsTree(fillsForTree);
+
+  // Pad active_pools to MAX_ACTIVE_POOLS_PER_EPOCH with INVALID_POOL_ID sentinels.
+  const sentinelPool: PoolClearingResult = {
+    pool_id: INVALID_POOL_ID,
+    clearingPrice: 0n,
+    bucketDeltas: [],
+    currentSqrtPriceAfter: 0n,
+    bucketStatesBefore: [],
+    bucketStatesAfter: [],
+  };
+  const sortedPools = perPoolClearings.slice().sort((a, b) => a.pool_id - b.pool_id);
+  while (sortedPools.length < MAX_ACTIVE_POOLS_PER_EPOCH) sortedPools.push(sentinelPool);
+
+  const lines: string[] = [];
+
+  // ===== Top-level public inputs =====
+  lines.push(`order_acc = "0x${epoch.order_acc.toString(16)}"`);
+  lines.push(`cancel_acc = "0x${epoch.cancel_acc.toString(16)}"`);
+  lines.push(`order_count = ${epoch.order_count}`);
+  lines.push(`cancel_count = ${epoch.cancel_count}`);
+  lines.push(`fills_root = "${tree.root.toString()}"`);
+  lines.push(`active_pool_count = ${perPoolClearings.length}`);
+
+  // ===== active_pools[3] =====
+  lines.push(`active_pools = [`);
+  for (const pc of sortedPools) {
+    // Pad bucket deltas to MAX_ACTIVE_BUCKETS_PER_EPOCH with INVALID_BUCKET_ID sentinels.
+    const padsDelta = pc.bucketDeltas.slice() as Array<{
+      bucket_id: number;
+      reserve_a_add: bigint; reserve_a_sub: bigint;
+      reserve_b_add: bigint; reserve_b_sub: bigint;
+      cum_fee_a_per_share_increment: bigint;
+      cum_fee_b_per_share_increment: bigint;
+    }>;
+    while (padsDelta.length < MAX_ACTIVE_BUCKETS_PER_EPOCH) {
+      padsDelta.push({
+        bucket_id: INVALID_BUCKET_ID,
+        reserve_a_add: 0n, reserve_a_sub: 0n,
+        reserve_b_add: 0n, reserve_b_sub: 0n,
+        cum_fee_a_per_share_increment: 0n,
+        cum_fee_b_per_share_increment: 0n,
+      });
+    }
+
+    // Aggregate flow scalars: emitted as 0 placeholders.
+    // The Sub-4 circuit (Task D2) re-derives these from per-bucket deltas;
+    // the witness builder does not need to compute them for the TOML shape to
+    // be valid. If pre-computed values become required for the prover, they can
+    // be derived from sum(bucketDeltas) per the same logic as Sub-2.5.
+    const aToPool = 0n;
+    const bToPool = 0n;
+    const aFromPool = 0n;
+    const bFromPool = 0n;
+
+    lines.push(`  {`);
+    lines.push(`    pool_id = ${pc.pool_id},`);
+    lines.push(`    clearing_price = "${pc.clearingPrice}",`);
+    lines.push(`    swap = {`);
+    lines.push(`      a_to_pool = "${aToPool}",`);
+    lines.push(`      b_to_pool = "${bToPool}",`);
+    lines.push(`      a_from_pool = "${aFromPool}",`);
+    lines.push(`      b_from_pool = "${bFromPool}",`);
+    lines.push(`      current_sqrt_price_after = "${pc.currentSqrtPriceAfter}",`);
+    lines.push(`      active_bucket_count = ${pc.bucketDeltas.length},`);
+    lines.push(`      active_bucket_deltas = [`);
+    for (const d of padsDelta) {
+      lines.push(
+        `        { bucket_id = ${d.bucket_id}, ` +
+        `reserve_a_add = "${d.reserve_a_add}", reserve_a_sub = "${d.reserve_a_sub}", ` +
+        `reserve_b_add = "${d.reserve_b_add}", reserve_b_sub = "${d.reserve_b_sub}", ` +
+        `cum_fee_a_per_share_increment = "${d.cum_fee_a_per_share_increment}", ` +
+        `cum_fee_b_per_share_increment = "${d.cum_fee_b_per_share_increment}" },`,
+      );
+    }
+    lines.push(`      ]`);
+    lines.push(`    }`);
+    lines.push(`  },`);
+  }
+  lines.push(`]`);
+
+  // ===== Private witnesses =====
+  // orders: Sub-4 adds path_len + path; fall back to defaults if not present on preimage.
+  lines.push(`orders = [`);
+  for (const o of ordersPadded) {
+    const path_len: number = (o as any).path_len ?? 2;
+    const path: bigint[] = (o as any).path ?? [0n, 0n, 0n];
+    lines.push(
+      `  { side = ${o.side}, amount_in = "${o.amount_in}", limit_price = "${o.limit_price}", ` +
+      `order_nonce = "0x${o.order_nonce.toString(16)}", submitted_at_block = ${o.submitted_at_block}, ` +
+      `owner = "0x${o.owner.toString(16)}", path_len = ${path_len}, ` +
+      `path = ["0x${BigInt(path[0] ?? 0n).toString(16)}", "0x${BigInt(path[1] ?? 0n).toString(16)}", "0x${BigInt(path[2] ?? 0n).toString(16)}"] },`,
+    );
+  }
+  lines.push(`]`);
+  lines.push(`cancelled_indices = [${cancelledPadded.join(", ")}]`);
+
+  // fills: 2 * MAX_ORDERS_PER_EPOCH slots; each has nonce, hop_index, amount_out, pool_id.
+  const fillsPadded: HopFill[] = fills.slice();
+  while (fillsPadded.length < 2 * maxPerEpoch) {
+    fillsPadded.push({ orderNonce: 0n, hop_index: 0, amountOut: 0n, pool_id: 0 });
+  }
+  lines.push(`fills = [`);
+  for (const f of fillsPadded) {
+    lines.push(
+      `  { order_nonce = "0x${f.orderNonce.toString(16)}", hop_index = ${f.hop_index}, ` +
+      `amount_out = "${f.amountOut}", pool_id = ${f.pool_id} },`,
+    );
+  }
+  lines.push(`]`);
+  lines.push(`fills_len = ${fills.length}`);
+
+  return {
+    proverToml: lines.join("\n") + "\n",
+    fillsRoot: tree.root.toString(),
+    leaves: tree.leaves.map((l) => l.toString()),
+    maxOrdersPerEpoch: maxPerEpoch,
+  };
+}

@@ -140,3 +140,66 @@ describe("buildClearingWitness padding (Sub-2.5)", () => {
     );
   });
 });
+
+import { buildClearingWitnessMultiPair } from "../src/witness.js";
+import type { HopFill, PoolClearingResult } from "../src/clearing.js";
+
+describe("Sub-4 buildClearingWitnessMultiPair", () => {
+  it("W1: empty multi-pair clearing emits 114-field shape headers", async () => {
+    const w = await buildClearingWitnessMultiPair({
+      epoch: { order_acc: 0n, cancel_acc: 0n, order_count: 0, cancel_count: 0 },
+      orders: [],
+      cancellationIndices: [],
+      perPoolClearings: [],
+      fills: [],
+    });
+    assert.match(w.proverToml, /order_acc\s*=/);
+    assert.match(w.proverToml, /fills_root\s*=/);
+    assert.match(w.proverToml, /active_pool_count\s*=\s*0/);
+    assert.match(w.proverToml, /active_pools\s*=/);
+  });
+
+  it("W2: pads active_pools to 3 with INVALID_POOL_ID sentinels", async () => {
+    const w = await buildClearingWitnessMultiPair({
+      epoch: { order_acc: 0n, cancel_acc: 0n, order_count: 0, cancel_count: 0 },
+      orders: [],
+      cancellationIndices: [],
+      perPoolClearings: [],
+      fills: [],
+    });
+    // 3 sentinel slots (pool_id = 0xFFFFFFFF = 4294967295)
+    const sentinelCount = (w.proverToml.match(/pool_id\s*=\s*4294967295/g) ?? []).length;
+    assert.equal(sentinelCount, 3);
+  });
+
+  it("W3: 2-hop fills produce hop_index 0 and 1 entries", async () => {
+    const perPool: PoolClearingResult[] = [
+      {
+        pool_id: 0, clearingPrice: 2_000_000_000_000_000_000n,
+        bucketDeltas: [],
+        currentSqrtPriceAfter: 1_000_000_000_000_000_000n,
+        bucketStatesBefore: [], bucketStatesAfter: [],
+      },
+      {
+        pool_id: 2, clearingPrice: 1_000_000_000_000_000_000n,
+        bucketDeltas: [],
+        currentSqrtPriceAfter: 1_000_000_000_000_000_000n,
+        bucketStatesBefore: [], bucketStatesAfter: [],
+      },
+    ];
+    const fills: HopFill[] = [
+      { orderNonce: 42n, hop_index: 0, amountOut: 50n, pool_id: 0 },
+      { orderNonce: 42n, hop_index: 1, amountOut: 25n, pool_id: 2 },
+    ];
+    const w = await buildClearingWitnessMultiPair({
+      epoch: { order_acc: 0n, cancel_acc: 0n, order_count: 1, cancel_count: 0 },
+      orders: [{ side: false, amount_in: 100n, limit_price: 1n, order_nonce: 42n, submitted_at_block: 1, owner: 1n }],
+      cancellationIndices: [],
+      perPoolClearings: perPool,
+      fills,
+    });
+    // fills array entries include hop_index = 0 and 1
+    assert.match(w.proverToml, /hop_index\s*=\s*0/);
+    assert.match(w.proverToml, /hop_index\s*=\s*1/);
+  });
+});
