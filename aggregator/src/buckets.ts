@@ -94,19 +94,24 @@ export function maxBInToLower(state: BucketState, bounds: BucketBounds, sqrt_p: 
 /**
  * Sub-2.5: V3 swap-step math. Q-format 1e18, round-down convention.
  */
+
+/** input is token B going in (pool moves UP) */
 export function nextSqrtPUp(L: bigint, sqrtP: bigint, deltaB: bigint): bigint {
   return sqrtP + (deltaB * SCALE) / L;
 }
 
+/** input is token A going in (pool moves DOWN) */
 export function nextSqrtPDown(L: bigint, sqrtP: bigint, deltaA: bigint): bigint {
   return (sqrtP * L * SCALE) / (L * SCALE + deltaA * sqrtP);
 }
 
+/** token A paid out as pool moved UP from sqrtP to sqrtPNew (precondition: sqrtPNew >= sqrtP) */
 export function swapStepOutA(L: bigint, sqrtP: bigint, sqrtPNew: bigint): bigint {
   const denom = (sqrtP * sqrtPNew) / SCALE;
   return (L * (sqrtPNew - sqrtP)) / denom;
 }
 
+/** token B paid out as pool moved DOWN from sqrtP to sqrtPNew (precondition: sqrtPNew <= sqrtP) */
 export function swapStepOutB(L: bigint, sqrtP: bigint, sqrtPNew: bigint): bigint {
   return (L * (sqrtP - sqrtPNew)) / SCALE;
 }

@@ -117,11 +117,13 @@ pub fn next_sqrt_p_down(L: u128, sqrt_p: u128, delta_a: u128) -> u128 {
     mul_div(sqrt_p, L, denom)
 }
 
+/// Pool moved UP: sqrt_p_new >= sqrt_p. Violations panic via u128 underflow.
 pub fn swap_step_out_a(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
     let denom = mul_div(sqrt_p, sqrt_p_new, SCALE);
     mul_div(L, sqrt_p_new - sqrt_p, denom)
 }
 
+/// Pool moved DOWN: sqrt_p_new <= sqrt_p. Violations panic via u128 underflow.
 pub fn swap_step_out_b(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
     mul_div(L, sqrt_p - sqrt_p_new, SCALE)
 }

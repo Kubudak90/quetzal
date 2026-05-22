@@ -359,6 +359,12 @@ fn swap_step_b7_next_sqrt_p_down_monotone() {
     let delta_a: u128 = crate::pricing::SCALE / 100;
     let out = crate::buckets::next_sqrt_p_down(l, sqrt_p, delta_a);
     assert(out < sqrt_p, "sqrt_p_down must be strictly less than starting sqrt_p");
+    let expected = crate::pricing::mul_div(
+        sqrt_p,
+        l,
+        l + crate::pricing::mul_div(delta_a, sqrt_p, crate::pricing::SCALE),
+    );
+    assert(out == expected, "next_sqrt_p_down result diverges from expected formula");
 }
 
 #[test]
