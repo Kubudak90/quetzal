@@ -2,7 +2,7 @@
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Sub-project 1 (trustless clearing via ZK proof) complete through Week 5d-4. The clearing circuit emits a single `fills_root: Field` Merkle root (depth-5 Poseidon2 over 32 fill leaves) instead of the flat 32-fill public-input vector — `ClearingPublic` shrunk from 83 to 19 public-input fields (~4× smaller calldata). On-chain, the orderbook stores a per-epoch `fills_root: Map<u32, Field>` (1 slot per clearing, down from up to 32). `claim_fill` is now inclusion-proof based: `(order_nonce, claimed_amount_out, epoch_id, siblings[5], leaf_index)`. The maker reads the per-epoch snapshot at `aggregator/snapshots/epoch-<N>.json`, constructs the path, and the contract walks the 5-level Merkle tree against `fills_root[epoch_id]`. Three-way Merkle parity (Noir circuit / JS aggregator / Noir contract) is pinned by the bb-verified empty-root constant. Cancel-after-fill protection moved from a `fills` Map check to the token contract's `transfer_public_to_private` underflow (apply_clearing already moved the filled amount_in to the pool, so a cancel attempt reverts at the token level). Previous 5d-3 carry-overs still apply: `MAX_ORDERS_PER_EPOCH=32`, bb proof file 500 fields (truncate to contract's 456), bb vk file 115 fields (pad with `Fr.ZERO` to contract's 127), `vk_hash` (not full VK) stored on-chain. Test status: TXE Noir tests + JS aggregator tests + CLI typecheck all green. `tests/integration/claim-merkle.test.ts` is typecheck-clean but dormant pending the dev stack (Docker broken on dev box per `memory/project_week05c_integration_gap.md`); subsumes the deferred 5d-3 testnet validation. Next: sub-project 2 of 6.
+**Status:** Sub-project 3 (permissionless aggregator) complete; Sub-project 1 trustless clearing fully shipped via Sub-projects 1+3. New `AggregatorRegistry` and `Treasury` Noir contracts wire a bonded-race model on top of the W5d-4 clearing primitive — anyone can register as an aggregator by escrowing 1000 tUSDC, run a Fastify reveal-ingestion server + clearing daemon, and race to submit `close_epoch_and_clear_verified`. The first valid submission wins; the on-chain `_assert_aggregator_registered` gate enforces a non-zero bond, then `_apply_verified_clearing` calls `Treasury.pay_aggregator(winner, fee)` with silent-partial-pay semantics (dry treasury does NOT block clearing). Off-chain `aggregator-manifest.json` maps addresses to HTTPS endpoints; maker PXEs hash-verify URLs against `view_bonded_amount` before broadcasting reveals. New CLI: `zswap aggregator {register, list, unregister}`. Test status: TXE Noir tests (orderbook + aggregator-registry + treasury) + JS aggregator tests (55 total) + CLI typecheck all green. O1 (registration gate), R1/R2/R4/R6 (Token-authwit-dependent paths), T1/T2/T4-deposit, and the e2e race test (`tests/integration/aggregator-race.test.ts`) are dormant pending the dev stack — same pattern as W5d-4's claim-merkle e2e. Deploy script writes 8 fields to zswap.config.json (adds `aggregatorRegistry`, `treasury`); the 4-deploy circular dep between Orderbook and Treasury is an MVP wart flagged for Sub-5. Previous Sub-1 carry-overs still apply: `MAX_ORDERS_PER_EPOCH=32`, ClearingPublic 19 fields, bb proof 500/contract 456, bb vk 115/contract 127, fills_root Merkle settlement per epoch. Next: sub-project 2 of 6.
 
 ## Quickstart
 
@@ -80,6 +80,30 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Week 5d-3 Implementation Plan](docs/superpowers/plans/2026-05-20-zswap-aztec-week-05d-3-onchain-recursive-verify.md)
 - [Week 5d-4 Merkle Settlement Root Design](docs/superpowers/specs/2026-05-21-zswap-aztec-week-05d-4-merkle-settlement-root-design.md)
 - [Week 5d-4 Implementation Plan](docs/superpowers/plans/2026-05-21-zswap-aztec-week-05d-4-merkle-settlement-root.md)
+- [Sub-project 3: Permissionless Aggregator Design](docs/superpowers/specs/2026-05-22-zswap-aztec-subproject-03-dar-permissionless-aggregator-design.md)
+- [Sub-project 3: Implementation Plan](docs/superpowers/plans/2026-05-22-zswap-aztec-subproject-03-dar-permissionless-aggregator.md)
+
+## Operator Runbook (Sub-3)
+
+To run as a permissionless aggregator:
+
+1. Acquire ≥ 1000 tUSDC (the registry's default `bond_amount = 1_000_000_000` at 6 decimals).
+2. Register on-chain:
+   ```bash
+   pnpm --filter @zswap/cli zswap aggregator register --bond 1000000000 --url https://my-aggregator.example.com
+   ```
+3. Add your address+URL to `cli/aggregator-manifest.json` via a PR.
+4. Run the Fastify HTTP reveal server (in one terminal):
+   ```bash
+   pnpm tsx -e 'import { startServer } from "./aggregator/src/server.ts"; startServer();'
+   ```
+   The server listens on `:3000` by default (override via `PORT=<n>`).
+5. Run the clearing daemon in another terminal (you provide the DaemonContext wiring against your node + wallet).
+
+To unregister and reclaim your bond:
+```bash
+pnpm --filter @zswap/cli zswap aggregator unregister
+```
 
 ## License
 
