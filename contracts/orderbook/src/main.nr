@@ -124,14 +124,26 @@ pub contract Orderbook {
         /// `_apply_verified_clearing` writes one slot per clearing; claim_fill reads
         /// it back to verify a maker-supplied inclusion proof.
         fills_root: Map<u32, PublicMutable<Field, Context>, Context>,
+        /// Sub-3: AggregatorRegistry contract. The close_epoch_and_clear_verified
+        /// gate cross-contract-reads bonded_amount to ensure the caller is bonded.
+        aggregator_registry: PublicImmutable<AztecAddress, Context>,
+        /// Sub-3: Treasury contract that holds the per-clearing fee pool. Called
+        /// via Treasury.pay_aggregator(winner, aggregator_fee) at the end of
+        /// _apply_verified_clearing.
+        treasury: PublicImmutable<AztecAddress, Context>,
+        /// Sub-3: flat fee (in bond_token's smallest unit) paid per successful
+        /// clearing. Treasury silently partial-pays if its tracked_balance is short.
+        aggregator_fee: PublicImmutable<u128, Context>,
     }
 
-    /// Deploy-time initializer.
+    /// Deploy-time initializer (Sub-3 form).
     ///
     /// - Records the two tradable token addresses.
     /// - Records `pool_addr` (the LiquidityPool the net clearing flow swaps through)
     ///   and `clearing_vk_hash` (the VK hash that binds this orderbook to one specific
     ///   clearing circuit; the full VK is provided as calldata at clearing time).
+    /// - Sub-3 additions: `aggregator_registry` gates close_epoch_and_clear_verified;
+    ///   `treasury` pays the winner; `aggregator_fee` is the per-clearing payout.
     /// - Stores `epoch_length`; opens epoch 0.
     #[external("public")]
     #[initializer]
@@ -141,12 +153,18 @@ pub contract Orderbook {
         epoch_length: u32,
         pool_addr: AztecAddress,
         clearing_vk_hash: Field,
+        aggregator_registry: AztecAddress,
+        treasury: AztecAddress,
+        aggregator_fee: u128,
     ) {
         self.storage.token_a_addr.initialize(token_a);
         self.storage.token_b_addr.initialize(token_b);
         self.storage.epoch_length.initialize(epoch_length);
         self.storage.pool_addr.initialize(pool_addr);
         self.storage.clearing_vk_hash.initialize(clearing_vk_hash);
+        self.storage.aggregator_registry.initialize(aggregator_registry);
+        self.storage.treasury.initialize(treasury);
+        self.storage.aggregator_fee.initialize(aggregator_fee);
 
         let block: u32 = self.context.block_number();
         self.storage.current_epoch.write(EpochState {
@@ -656,6 +674,22 @@ pub contract Orderbook {
     #[external("utility")]
     unconstrained fn get_fills_root(epoch_id: u32) -> Field {
         self.storage.fills_root.at(epoch_id).read()
+    }
+
+    /// Sub-3 utility getters.
+    #[external("utility")]
+    unconstrained fn get_aggregator_registry() -> AztecAddress {
+        self.storage.aggregator_registry.read()
+    }
+
+    #[external("utility")]
+    unconstrained fn get_treasury() -> AztecAddress {
+        self.storage.treasury.read()
+    }
+
+    #[external("utility")]
+    unconstrained fn get_aggregator_fee() -> u128 {
+        self.storage.aggregator_fee.read()
     }
 
     /// Return the resting orders owned by `owner` (up to MAX_NOTES_PER_PAGE). `owner` is

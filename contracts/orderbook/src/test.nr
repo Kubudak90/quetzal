@@ -81,6 +81,11 @@ unconstrained fn order_note_different_nonce_different_hash() {
 // Helper: deploy a fresh Orderbook with the given token addresses and epoch length,
 // returning the deployed address. The `deployer` light account pushes the public
 // initializer.
+//
+// Sub-3 constructor took on 3 new args (aggregator_registry, treasury, aggregator_fee).
+// Tests that don't exercise the Sub-3 paths pass `deployer` as a stand-in for both
+// new address args and 0 for the fee, matching the 5d-4 token_a/token_b/pool_addr
+// stand-in convention.
 unconstrained fn deploy_orderbook(
     env: &mut TestEnvironment,
     deployer: AztecAddress,
@@ -90,8 +95,16 @@ unconstrained fn deploy_orderbook(
     pool_addr: AztecAddress,
     clearing_vk_hash: Field,
 ) -> AztecAddress {
-    let initializer_call =
-        Orderbook::interface().constructor(token_a, token_b, epoch_length, pool_addr, clearing_vk_hash);
+    let initializer_call = Orderbook::interface().constructor(
+        token_a,
+        token_b,
+        epoch_length,
+        pool_addr,
+        clearing_vk_hash,
+        deployer,    // aggregator_registry stand-in
+        deployer,    // treasury stand-in
+        0 as u128,   // aggregator_fee stand-in
+    );
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
 
