@@ -13,6 +13,38 @@ import { type ClearingResult } from "./clearing.js";
 
 export const MAX_ORDERS_PER_EPOCH = 32;
 
+/** Sub-2.5: per-bucket state snapshot (before + after slot in private witness). */
+export interface BucketStateForCircuit {
+  bucket_id: number;
+  reserve_a: bigint;
+  reserve_b: bigint;
+  liquidity: bigint;
+  cum_fee_a_per_share: bigint;
+  cum_fee_b_per_share: bigint;
+}
+
+/** Sub-2.5: per-bucket delta emitted to the circuit's public input. */
+export interface BucketDeltaForCircuit {
+  bucket_id: number;
+  reserve_a_add: bigint;
+  reserve_a_sub: bigint;
+  reserve_b_add: bigint;
+  reserve_b_sub: bigint;
+  cum_fee_a_per_share_increment: bigint;
+  cum_fee_b_per_share_increment: bigint;
+}
+
+/** Sub-2.5: pre-clearing pool snapshot for the new bucket-aware circuit. */
+export interface PoolSnapshotForCircuitSub2 {
+  reserve_a: bigint;
+  reserve_b: bigint;
+  current_sqrt_price_before: bigint;
+}
+
+/** Sub-2.5: padding sentinel for unused BucketDelta slots. */
+export const INVALID_BUCKET_ID = 0xffff;
+export const MAX_ACTIVE_BUCKETS_PER_EPOCH = 4;
+
 /** Mirror of contracts/orderbook/src/main.nr's EpochState (subset the circuit binds to). */
 export interface EpochState {
   order_acc: bigint;       // Field
