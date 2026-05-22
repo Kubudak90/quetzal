@@ -330,7 +330,13 @@ export function computeClearing(pool: PoolSnapshot, orders: ClearingOrder[]): Cl
 // Sub-2: bucket-tracing swap (V3-style concentrated liquidity).
 // ============================================================================
 import type { BucketBounds, BucketState } from "./buckets.js";
-import { maxAInToUpper, maxBInToLower, SCALE as BUCKET_SCALE } from "./buckets.js";
+import {
+  SCALE as BUCKET_SCALE,
+  nextSqrtPUp,
+  nextSqrtPDown,
+  swapStepOutA,
+  swapStepOutB,
+} from "./buckets.js";
 
 export interface PoolWithBuckets {
   reserveA: bigint;
@@ -359,10 +365,19 @@ export interface BucketTraceOutput {
 }
 
 /**
- * Sub-2: trace a swap through one or more buckets from currentSqrtPrice
- * toward a target driven by (netA, netB). MVP version handles the single-
- * bucket-stays-in-range case correctly; multi-bucket crossing is a
- * follow-up (full V3 swap-step formula derivation).
+ * Sub-2: full V3 multi-bucket state machine. Traces a swap through one or
+ * more concentrated-liquidity buckets starting from currentSqrtPrice.
+ *
+ * - Withholds 0.3% LP fee from the gross input before routing.
+ * - Crosses bucket boundaries: when the remaining after-fee input exhausts
+ *   the current bucket it steps to the next bucket (UP or DOWN) and
+ *   continues, accumulating per-bucket reserve deltas and fee shares.
+ * - Empty buckets (liquidity == 0) are skipped.
+ * - Pro-rated fee shares are distributed across touched buckets; the final
+ *   touched bucket absorbs any truncation residual so sum(stepFee) ==
+ *   feeWithheld exactly.
+ * - Throws if the input exceeds all available buckets in the chosen
+ *   direction, or if more than MAX_BUCKET_HOPS distinct buckets are touched.
  *
  * Inputs:
  *   netA > 0: token A flows in (pool moves DOWN as A becomes plentiful)
@@ -384,9 +399,9 @@ export function traceBucketSwap(
     };
   }
 
-  const FEE_NUM = 30n;
-  const FEE_DEN = 10_000n;
-  const MAX_ACTIVE = 4;
+  const BUCKET_FEE_BPS = 30n;
+  const BUCKET_FEE_SCALE = 10_000n;
+  const MAX_BUCKET_HOPS = 4;
 
   let bucketId = pool.bucketBounds.findIndex(
     (b) => pool.currentSqrtPrice >= b.sqrt_lower && pool.currentSqrtPrice < b.sqrt_upper,
@@ -395,14 +410,13 @@ export function traceBucketSwap(
 
   const direction = netB > 0n;
   let remaining = direction ? netB : netA;
-  const totalIn = remaining;
-  const fee = (remaining * (FEE_DEN - FEE_NUM)) / FEE_DEN;
-  let inAfterFee = fee;
-  let feeWithheld = remaining - fee;
+  const inAfterFeeTotal = (remaining * (BUCKET_FEE_SCALE - BUCKET_FEE_BPS)) / BUCKET_FEE_SCALE;
+  let inAfterFee = inAfterFeeTotal;
+  let feeWithheld = remaining - inAfterFeeTotal;
 
   const deltas = new Map<number, BucketDeltaResult>();
   let sqrtP = pool.currentSqrtPrice;
-  let totalOut = 0n;
+  let feeDistributed = 0n;
 
   while (inAfterFee > 0n && bucketId >= 0 && bucketId < pool.bucketBounds.length) {
     const bucket = pool.bucketStates[bucketId]!;
@@ -429,30 +443,33 @@ export function traceBucketSwap(
     if (inAfterFee <= stepInMax) {
       stepIn = inAfterFee;
       if (direction) {
-        sqrtPNew = sqrtP + (stepIn * BUCKET_SCALE) / bucket.liquidity;
-        const denomOut = (sqrtP * sqrtPNew) / BUCKET_SCALE;
-        stepOut = (bucket.liquidity * (sqrtPNew - sqrtP)) / denomOut;
+        sqrtPNew = nextSqrtPUp(bucket.liquidity, sqrtP, stepIn);
+        stepOut = swapStepOutA(bucket.liquidity, sqrtP, sqrtPNew);
       } else {
-        sqrtPNew =
-          (sqrtP * bucket.liquidity * BUCKET_SCALE) /
-          (bucket.liquidity * BUCKET_SCALE + stepIn * sqrtP);
-        stepOut = (bucket.liquidity * (sqrtP - sqrtPNew)) / BUCKET_SCALE;
+        sqrtPNew = nextSqrtPDown(bucket.liquidity, sqrtP, stepIn);
+        stepOut = swapStepOutB(bucket.liquidity, sqrtP, sqrtPNew);
       }
       inAfterFee = 0n;
     } else {
       stepIn = stepInMax;
       sqrtPNew = direction ? bounds.sqrt_upper : bounds.sqrt_lower;
       if (direction) {
-        const denomOut = (sqrtP * sqrtPNew) / BUCKET_SCALE;
-        stepOut = (bucket.liquidity * (sqrtPNew - sqrtP)) / denomOut;
+        stepOut = swapStepOutA(bucket.liquidity, sqrtP, sqrtPNew);
       } else {
-        stepOut = (bucket.liquidity * (sqrtP - sqrtPNew)) / BUCKET_SCALE;
+        stepOut = swapStepOutB(bucket.liquidity, sqrtP, sqrtPNew);
       }
       inAfterFee -= stepIn;
     }
 
-    totalOut += stepOut;
-    const stepFee = (feeWithheld * stepIn) / (totalIn - feeWithheld === 0n ? 1n : totalIn - feeWithheld);
+    // I1: last-bucket residual pattern — guarantees sum(stepFee) == feeWithheld.
+    let stepFee: bigint;
+    if (inAfterFee === 0n) {
+      // This is the final touched bucket; assign the remainder to avoid truncation loss.
+      stepFee = feeWithheld - feeDistributed;
+    } else {
+      stepFee = (feeWithheld * stepIn) / inAfterFeeTotal;
+    }
+    feeDistributed += stepFee;
     const cumFeeAInc = direction ? 0n : (stepFee * BUCKET_SCALE) / bucket.liquidity;
     const cumFeeBInc = direction ? (stepFee * BUCKET_SCALE) / bucket.liquidity : 0n;
 
@@ -479,8 +496,8 @@ export function traceBucketSwap(
   if (inAfterFee > 0n) {
     throw new Error("swap exceeded all buckets in the chosen direction");
   }
-  if (deltas.size > MAX_ACTIVE) {
-    throw new Error(`traceBucketSwap touched ${deltas.size} buckets (cap ${MAX_ACTIVE})`);
+  if (deltas.size > MAX_BUCKET_HOPS) {
+    throw new Error(`traceBucketSwap touched ${deltas.size} buckets (cap ${MAX_BUCKET_HOPS})`);
   }
 
   let aggA = 0n;
