@@ -98,3 +98,54 @@ export async function buildFillsTree(fills: JsFillEntry[]): Promise<MerkleTreeOu
 
   return { root, leaves, paths };
 }
+
+export interface HopFillLeaf {
+  order_nonce: Fr;
+  hop_index: number;
+  amount_out: bigint;
+  pool_id: number;
+}
+
+/**
+ * Sub-4: 64-leaf Merkle over hop-fill leaves.
+ * Each leaf = poseidon2([order_nonce, hop_index, amount_out, pool_id]).
+ * Empty slots use poseidon2([0, 0, 0, 0]) sentinel.
+ * @param fills - list of hop-fill leaves (order is significant; padded to `depth` entries)
+ * @param depth - total leaf count (must be a power of 2, e.g. 64)
+ */
+export async function buildHopFillsTree(
+  fills: HopFillLeaf[],
+  depth: number,
+): Promise<{ leaves: Fr[]; root: Fr }> {
+  const leafCount = depth;
+  const emptyLeaf = await poseidon2Hash([0n, 0n, 0n, 0n]);
+
+  // Hash leaves (populated + padding sentinels).
+  const leaves: Fr[] = [];
+  for (let i = 0; i < leafCount; i++) {
+    if (i < fills.length) {
+      const f = fills[i]!;
+      const hash = await poseidon2Hash([
+        f.order_nonce.toBigInt(),
+        BigInt(f.hop_index),
+        f.amount_out,
+        BigInt(f.pool_id),
+      ]);
+      leaves.push(hash);
+    } else {
+      leaves.push(emptyLeaf);
+    }
+  }
+
+  // Binary reduction (same pattern as buildFillsTree).
+  let layer = leaves.slice();
+  while (layer.length > 1) {
+    const next: Fr[] = [];
+    for (let i = 0; i < layer.length; i += 2) {
+      next.push(await poseidon2Hash([layer[i]!.toBigInt(), layer[i + 1]!.toBigInt()]));
+    }
+    layer = next;
+  }
+
+  return { leaves, root: layer[0]! };
+}

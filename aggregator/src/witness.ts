@@ -312,8 +312,7 @@ export const INVALID_POOL_ID = 0xffffffff;
  * When real end-to-end prover integration lands, these can be derived from
  * PoolClearingResult.bucketDeltas if needed, but the circuit is the source of truth.
  *
- * NOTE: Uses Sub-1's buildFillsTree as a placeholder Merkle. Task C4 will
- * introduce buildHopFillsTree (64-leaf, 4-field-per-leaf) and wire it here.
+ * NOTE: Uses Sub-4's buildHopFillsTree (64-leaf, 4-field-per-leaf) wired in Task C4.
  */
 export async function buildClearingWitnessMultiPair(args: {
   epoch: EpochState;
@@ -345,22 +344,18 @@ export async function buildClearingWitnessMultiPair(args: {
   const cancelledPadded: number[] = cancellationIndices.slice();
   while (cancelledPadded.length < maxPerEpoch) cancelledPadded.push(0);
 
-  // Build fills Merkle tree (placeholder: Sub-1's 2-field-per-leaf scheme).
-  // Task C4 will replace this with buildHopFillsTree (4-field-per-leaf, 64 leaves).
-  // Sub-1's tree expects unique nonces; for 2-hop orders the same nonce appears
-  // twice (hop=0 + hop=1). Deduplicate by nonce, keeping the first occurrence,
-  // since the root value here is a placeholder that C4 will replace entirely.
-  const { buildFillsTree } = await import("./merkle.js");
+  // Build fills Merkle tree: Sub-4's 4-field-per-leaf scheme (64 leaves).
+  // Each leaf = poseidon2([order_nonce, hop_index, amount_out, pool_id]).
+  // Correctly distinguishes 2-hop orders with the same nonce via hop_index.
+  const { buildHopFillsTree } = await import("./merkle.js");
   const { Fr } = await import("@aztec/aztec.js/fields");
-  const seenNonces = new Set<bigint>();
-  const fillsForTree: { order_nonce: Fr; amount_out: bigint }[] = [];
-  for (const f of fills) {
-    if (!seenNonces.has(f.orderNonce)) {
-      seenNonces.add(f.orderNonce);
-      fillsForTree.push({ order_nonce: new Fr(f.orderNonce), amount_out: f.amountOut });
-    }
-  }
-  const tree = await buildFillsTree(fillsForTree);
+  const fillsForTree = fills.map((f) => ({
+    order_nonce: new Fr(f.orderNonce),
+    hop_index: f.hop_index,
+    amount_out: f.amountOut,
+    pool_id: f.pool_id,
+  }));
+  const tree = await buildHopFillsTree(fillsForTree, 2 * maxPerEpoch);
 
   // Pad active_pools to MAX_ACTIVE_POOLS_PER_EPOCH with INVALID_POOL_ID sentinels.
   const sentinelPool: PoolClearingResult = {

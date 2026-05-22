@@ -92,3 +92,35 @@ describe("aggregator/merkle", () => {
     );
   });
 });
+
+import { buildHopFillsTree } from "../src/merkle.js";
+
+describe("Sub-4 64-leaf hop-fills Merkle", () => {
+  it("HF1: empty tree returns deterministic root", async () => {
+    const t1 = await buildHopFillsTree([], 64);
+    const t2 = await buildHopFillsTree([], 64);
+    assert.equal(t1.leaves.length, 64);
+    assert.equal(t1.root.toString(), t2.root.toString());
+  });
+
+  it("HF2: 2-hop fill produces 2 leaves; root differs from empty", async () => {
+    const empty = await buildHopFillsTree([], 64);
+    const filled = await buildHopFillsTree([
+      { order_nonce: new Fr(42n), hop_index: 0, amount_out: 100n, pool_id: 0 },
+      { order_nonce: new Fr(42n), hop_index: 1, amount_out: 50n, pool_id: 2 },
+    ], 64);
+    assert.notEqual(filled.root.toString(), empty.root.toString());
+    assert.equal(filled.leaves.length, 64);
+  });
+
+  it("HF3: hop_index distinguishes leaves with same nonce", async () => {
+    const r0 = await buildHopFillsTree([
+      { order_nonce: new Fr(42n), hop_index: 0, amount_out: 100n, pool_id: 0 },
+    ], 64);
+    const r1 = await buildHopFillsTree([
+      { order_nonce: new Fr(42n), hop_index: 1, amount_out: 100n, pool_id: 0 },
+    ], 64);
+    // Same nonce + pool_id + amount but different hop_index → different root
+    assert.notEqual(r0.root.toString(), r1.root.toString());
+  });
+});
