@@ -7,7 +7,7 @@
 //! linear in the V3 swap formulas).
 
 use crate::pricing::{mul_div, SCALE};
-use crate::types::{BucketBounds, BucketState};
+use crate::types::{BucketBounds, BucketDelta, BucketState};
 
 /// Result of a deposit's liquidity math: (l_used, used_a, used_b).
 pub struct DepositMath {
@@ -126,4 +126,58 @@ pub fn swap_step_out_a(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
 /// Pool moved DOWN: sqrt_p_new <= sqrt_p. Violations panic via u128 underflow.
 pub fn swap_step_out_b(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
     mul_div(L, sqrt_p - sqrt_p_new, SCALE)
+}
+
+/// Sub-2.5: assert that a single bucket's pre + post state are consistent
+/// with the BucketDelta and chain through sqrt_p. Returns sqrt_p_out so the
+/// caller can chain across multiple active buckets.
+///
+/// Direction is inferred from the delta:
+///   reserve_b_add > 0 (and reserve_a_sub > 0) => UP (B in, A out)
+///   reserve_a_add > 0 (and reserve_b_sub > 0) => DOWN (A in, B out)
+///   both zero on each side => no-op slot, skip
+pub fn assert_bucket_step(
+    before: BucketState,
+    after: BucketState,
+    delta: BucketDelta,
+    sqrt_p_in: u128,
+) -> u128 {
+    // Reserves consistent with delta.
+    assert(after.reserve_a == before.reserve_a + delta.reserve_a_add - delta.reserve_a_sub,
+           "bucket reserve_a delta mismatch");
+    assert(after.reserve_b == before.reserve_b + delta.reserve_b_add - delta.reserve_b_sub,
+           "bucket reserve_b delta mismatch");
+    // Liquidity preserved across swap (no add/withdraw inside a clearing).
+    assert(after.liquidity == before.liquidity, "bucket liquidity changed during swap");
+
+    // Fee cum_*_per_share consistent with cum_fee_*_per_share_increment.
+    assert(after.cum_fee_a_per_share == before.cum_fee_a_per_share + delta.cum_fee_a_per_share_increment,
+           "bucket cum_fee_a mismatch");
+    assert(after.cum_fee_b_per_share == before.cum_fee_b_per_share + delta.cum_fee_b_per_share_increment,
+           "bucket cum_fee_b mismatch");
+
+    // sqrt_p out = sqrt_p_in updated per the V3 formula matching the delta.
+    let mut sqrt_p_out = sqrt_p_in;
+    if delta.reserve_b_add > 0 as u128 {
+        // UP: B in by reserve_b_add (after-fee amount; matches aggregator)
+        sqrt_p_out = next_sqrt_p_up(before.liquidity, sqrt_p_in, delta.reserve_b_add);
+        let expected_out_a = swap_step_out_a(before.liquidity, sqrt_p_in, sqrt_p_out);
+        // Allow 1-unit dust (rounding).
+        let dust = if expected_out_a >= delta.reserve_a_sub {
+            expected_out_a - delta.reserve_a_sub
+        } else {
+            delta.reserve_a_sub - expected_out_a
+        };
+        assert(dust <= 1 as u128, "bucket out_a deviates from V3 formula");
+    } else if delta.reserve_a_add > 0 as u128 {
+        sqrt_p_out = next_sqrt_p_down(before.liquidity, sqrt_p_in, delta.reserve_a_add);
+        let expected_out_b = swap_step_out_b(before.liquidity, sqrt_p_in, sqrt_p_out);
+        let dust = if expected_out_b >= delta.reserve_b_sub {
+            expected_out_b - delta.reserve_b_sub
+        } else {
+            delta.reserve_b_sub - expected_out_b
+        };
+        assert(dust <= 1 as u128, "bucket out_b deviates from V3 formula");
+    }
+    sqrt_p_out
 }
