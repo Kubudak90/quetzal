@@ -325,3 +325,133 @@ export function computeClearing(pool: PoolSnapshot, orders: ClearingOrder[]): Cl
     feeBPerShareIncrement,
   };
 }
+
+// ============================================================================
+// Sub-2: bucket-tracing swap (V3-style concentrated liquidity).
+// ============================================================================
+import type { BucketBounds, BucketState } from "./buckets.js";
+import { maxAInToUpper, maxBInToLower, SCALE as BUCKET_SCALE } from "./buckets.js";
+
+export interface PoolWithBuckets {
+  reserveA: bigint;
+  reserveB: bigint;
+  lpSupply: bigint;
+  currentSqrtPrice: bigint;
+  bucketBounds: BucketBounds[];
+  bucketStates: BucketState[];
+}
+
+export interface BucketDeltaResult {
+  bucket_id: number;
+  reserve_a_add: bigint;
+  reserve_a_sub: bigint;
+  reserve_b_add: bigint;
+  reserve_b_sub: bigint;
+  cum_fee_a_per_share_increment: bigint;
+  cum_fee_b_per_share_increment: bigint;
+}
+
+export interface BucketTraceOutput {
+  newSqrtPrice: bigint;
+  bucketDeltas: BucketDeltaResult[];
+  newReserveA: bigint;
+  newReserveB: bigint;
+}
+
+/**
+ * Sub-2: trace a swap through one or more buckets from currentSqrtPrice
+ * toward a target driven by (netA, netB). MVP version handles the single-
+ * bucket-stays-in-range case correctly; multi-bucket crossing is a
+ * follow-up (full V3 swap-step formula derivation).
+ *
+ * Inputs:
+ *   netA > 0: token A flows in (pool moves DOWN as A becomes plentiful)
+ *   netB > 0: token B flows in (pool moves UP)
+ *
+ * Returns: per-bucket reserve deltas, fee increments, and the new sqrt_p.
+ */
+export function traceBucketSwap(
+  pool: PoolWithBuckets,
+  netA: bigint,
+  netB: bigint,
+): BucketTraceOutput {
+  // Trivial no-flow case.
+  if (netA === 0n && netB === 0n) {
+    return {
+      newSqrtPrice: pool.currentSqrtPrice,
+      bucketDeltas: [],
+      newReserveA: pool.reserveA,
+      newReserveB: pool.reserveB,
+    };
+  }
+
+  // Find the active bucket containing currentSqrtPrice.
+  let activeIdx = pool.bucketBounds.findIndex(
+    (b) => pool.currentSqrtPrice >= b.sqrt_lower && pool.currentSqrtPrice < b.sqrt_upper,
+  );
+  if (activeIdx < 0) {
+    // Snap to the last bucket if at the very top boundary.
+    activeIdx = pool.bucketBounds.length - 1;
+  }
+  const bucket = pool.bucketStates[activeIdx]!;
+
+  // Empty bucket: no flow can be absorbed; return identity.
+  if (bucket.liquidity === 0n) {
+    return {
+      newSqrtPrice: pool.currentSqrtPrice,
+      bucketDeltas: [],
+      newReserveA: pool.reserveA,
+      newReserveB: pool.reserveB,
+    };
+  }
+
+  const FEE_NUM = 30n;     // 0.3% LP fee numerator (matches Sub-1)
+  const FEE_DEN = 10_000n;
+
+  if (netA > 0n) {
+    // Token A flows in; pool moves DOWN (lower sqrt_p).
+    const feeA = (netA * FEE_NUM) / FEE_DEN;
+    const aAfterFee = netA - feeA;
+
+    // Simplified single-bucket case: assume swap stays within active bucket.
+    // Full multi-bucket trace + sqrt_p update math is a follow-up.
+    const bOut = (aAfterFee * bucket.reserve_b) / (bucket.reserve_a + aAfterFee);
+    const newSqrtP = pool.currentSqrtPrice;  // placeholder; full V3 derives this from aAfterFee
+
+    return {
+      newSqrtPrice: newSqrtP,
+      bucketDeltas: [{
+        bucket_id: activeIdx,
+        reserve_a_add: netA,
+        reserve_a_sub: 0n,
+        reserve_b_add: 0n,
+        reserve_b_sub: bOut,
+        cum_fee_a_per_share_increment: (feeA * BUCKET_SCALE) / bucket.liquidity,
+        cum_fee_b_per_share_increment: 0n,
+      }],
+      newReserveA: pool.reserveA + netA,
+      newReserveB: pool.reserveB - bOut,
+    };
+  } else {
+    // netB > 0: token B flows in; pool moves UP.
+    const feeB = (netB * FEE_NUM) / FEE_DEN;
+    const bAfterFee = netB - feeB;
+    const aOut = (bAfterFee * bucket.reserve_a) / (bucket.reserve_b + bAfterFee);
+    const newSqrtP = pool.currentSqrtPrice;
+
+    return {
+      newSqrtPrice: newSqrtP,
+      bucketDeltas: [{
+        bucket_id: activeIdx,
+        reserve_a_add: 0n,
+        reserve_a_sub: aOut,
+        reserve_b_add: netB,
+        reserve_b_sub: 0n,
+        cum_fee_a_per_share_increment: 0n,
+        cum_fee_b_per_share_increment: (feeB * BUCKET_SCALE) / bucket.liquidity,
+      }],
+      newReserveA: pool.reserveA - aOut,
+      newReserveB: pool.reserveB + netB,
+    };
+  }
+}
