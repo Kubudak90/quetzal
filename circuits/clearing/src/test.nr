@@ -344,6 +344,36 @@ fn b4_compute_deposit_above_range_only_token_b() {
 }
 
 #[test]
+fn swap_step_b6_next_sqrt_p_up() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p: u128 = crate::pricing::SCALE;
+    let delta_b: u128 = crate::pricing::SCALE / 100;
+    let out = crate::buckets::next_sqrt_p_up(l, sqrt_p, delta_b);
+    assert(out == sqrt_p + crate::pricing::mul_div(delta_b, crate::pricing::SCALE, l));
+}
+
+#[test]
+fn swap_step_b7_next_sqrt_p_down_monotone() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p: u128 = crate::pricing::SCALE;
+    let delta_a: u128 = crate::pricing::SCALE / 100;
+    let out = crate::buckets::next_sqrt_p_down(l, sqrt_p, delta_a);
+    assert(out < sqrt_p, "sqrt_p_down must be strictly less than starting sqrt_p");
+}
+
+#[test]
+fn swap_step_b8_b9_outputs_nonzero() {
+    let l: u128 = 10 as u128 * crate::pricing::SCALE;
+    let sqrt_p: u128 = crate::pricing::SCALE;
+    let sqrt_p_up: u128 = sqrt_p + crate::pricing::SCALE / 1000;
+    let sqrt_p_dn: u128 = sqrt_p - crate::pricing::SCALE / 1000;
+    let out_a = crate::buckets::swap_step_out_a(l, sqrt_p, sqrt_p_up);
+    let out_b = crate::buckets::swap_step_out_b(l, sqrt_p, sqrt_p_dn);
+    assert(out_a > 0 as u128, "out_a must be positive when sqrt_p increased");
+    assert(out_b > 0 as u128, "out_b must be positive when sqrt_p decreased");
+}
+
+#[test]
 fn b5_max_in_to_boundary_consistent_with_liquidity() {
     let empty = BucketState {
         reserve_a: 0 as u128, reserve_b: 0 as u128, liquidity: 0 as u128,

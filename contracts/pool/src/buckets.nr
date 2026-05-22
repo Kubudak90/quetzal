@@ -82,3 +82,25 @@ pub fn compute_deposit(
         compute_deposit_in_range(x_a, x_b, sqrt_p, bounds.sqrt_lower, bounds.sqrt_upper)
     }
 }
+
+/// Sub-2.5: V3 swap-step math.
+pub fn next_sqrt_p_up(L: u128, sqrt_p: u128, delta_b: u128) -> u128 {
+    sqrt_p + mul_div(delta_b, SCALE, L)
+}
+
+pub fn next_sqrt_p_down(L: u128, sqrt_p: u128, delta_a: u128) -> u128 {
+    // Avoid overflow: factor out SCALE from numerator and denominator.
+    // sqrt_p * L * SCALE / (L * SCALE + delta_a * sqrt_p)
+    //   = sqrt_p * L / (L + delta_a * sqrt_p / SCALE)
+    let denom = L + mul_div(delta_a, sqrt_p, SCALE);
+    mul_div(sqrt_p, L, denom)
+}
+
+pub fn swap_step_out_a(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
+    let denom = mul_div(sqrt_p, sqrt_p_new, SCALE);
+    mul_div(L, sqrt_p_new - sqrt_p, denom)
+}
+
+pub fn swap_step_out_b(L: u128, sqrt_p: u128, sqrt_p_new: u128) -> u128 {
+    mul_div(L, sqrt_p - sqrt_p_new, SCALE)
+}

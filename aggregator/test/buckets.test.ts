@@ -89,6 +89,64 @@ describe("buckets.maxAInToUpper / maxBInToLower", () => {
   });
 });
 
+// ============================================================================
+// Sub-2.5: V3 swap-step math (B6-B10)
+// ============================================================================
+import {
+  nextSqrtPUp,
+  nextSqrtPDown,
+  swapStepOutA,
+  swapStepOutB,
+} from "../src/buckets.js";
+
+describe("V3 swap-step math (Sub-2.5)", () => {
+  it("B6: nextSqrtPUp adds delta_b * SCALE / L", () => {
+    const L = 10n * SCALE;
+    const sqrtP = SCALE;
+    const deltaB = SCALE / 100n;
+    const out = nextSqrtPUp(L, sqrtP, deltaB);
+    assert.equal(out, sqrtP + (deltaB * SCALE) / L);
+  });
+
+  it("B7: nextSqrtPDown matches (sqrt_p * L * SCALE)/(L * SCALE + delta_a * sqrt_p)", () => {
+    const L = 10n * SCALE;
+    const sqrtP = SCALE;
+    const deltaA = SCALE / 100n;
+    const out = nextSqrtPDown(L, sqrtP, deltaA);
+    const expected = (sqrtP * L * SCALE) / (L * SCALE + deltaA * sqrtP);
+    assert.equal(out, expected);
+  });
+
+  it("B8: swapStepOutA = L * (sqrt_p_new - sqrt_p) / mul_div(sqrt_p, sqrt_p_new, SCALE)", () => {
+    const L = 10n * SCALE;
+    const sqrtP = SCALE;
+    const sqrtPNew = sqrtP + SCALE / 1000n;
+    const out = swapStepOutA(L, sqrtP, sqrtPNew);
+    const denom = (sqrtP * sqrtPNew) / SCALE;
+    assert.equal(out, (L * (sqrtPNew - sqrtP)) / denom);
+  });
+
+  it("B9: swapStepOutB = L * (sqrt_p - sqrt_p_new) / SCALE", () => {
+    const L = 10n * SCALE;
+    const sqrtP = SCALE;
+    const sqrtPNew = sqrtP - SCALE / 1000n;
+    const out = swapStepOutB(L, sqrtP, sqrtPNew);
+    assert.equal(out, (L * (sqrtP - sqrtPNew)) / SCALE);
+  });
+
+  it("B10: round-trip up-then-down at single bucket converges to within dust", () => {
+    const L = 10n * SCALE;
+    const sqrtP0 = SCALE;
+    const deltaB = SCALE / 100n;
+    const sqrtP1 = nextSqrtPUp(L, sqrtP0, deltaB);
+    const outA = swapStepOutA(L, sqrtP0, sqrtP1);
+    const sqrtP2 = nextSqrtPDown(L, sqrtP1, outA);
+    const outB = swapStepOutB(L, sqrtP1, sqrtP2);
+    const dust = deltaB > outB ? deltaB - outB : outB - deltaB;
+    assert.ok(dust * 10n ** 12n < deltaB, `round-trip dust ${dust} too large`);
+  });
+});
+
 // Parity-spirit: structural assertions mirroring circuits/clearing/src/test.nr
 // b1-b5 expectations. Tighter numeric parity (exact bigint equality) is left
 // to a future fixture-capture pass.

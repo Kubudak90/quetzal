@@ -90,3 +90,23 @@ export function maxBInToLower(state: BucketState, bounds: BucketBounds, sqrt_p: 
   const span = sqrt_p - bounds.sqrt_lower;
   return mulDiv(state.liquidity, span, SCALE);
 }
+
+/**
+ * Sub-2.5: V3 swap-step math. Q-format 1e18, round-down convention.
+ */
+export function nextSqrtPUp(L: bigint, sqrtP: bigint, deltaB: bigint): bigint {
+  return sqrtP + (deltaB * SCALE) / L;
+}
+
+export function nextSqrtPDown(L: bigint, sqrtP: bigint, deltaA: bigint): bigint {
+  return (sqrtP * L * SCALE) / (L * SCALE + deltaA * sqrtP);
+}
+
+export function swapStepOutA(L: bigint, sqrtP: bigint, sqrtPNew: bigint): bigint {
+  const denom = (sqrtP * sqrtPNew) / SCALE;
+  return (L * (sqrtPNew - sqrtP)) / denom;
+}
+
+export function swapStepOutB(L: bigint, sqrtP: bigint, sqrtPNew: bigint): bigint {
+  return (L * (sqrtP - sqrtPNew)) / SCALE;
+}
