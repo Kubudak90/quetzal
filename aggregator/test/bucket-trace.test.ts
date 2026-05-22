@@ -152,3 +152,46 @@ describe("traceBucketSwap multi-bucket (Sub-2.5)", () => {
     assert.ok(ids.includes(4) && ids.includes(6), "buckets 4 and 6 in deltas");
   });
 });
+
+describe("traceBucketSwap multi-bucket DOWN (Sub-2.5)", () => {
+  it("M4: in-bucket DOWN (small netA) stays in active bucket", () => {
+    const pool = buildPool(SCALE / 5n, 4);
+    const out = traceBucketSwap(pool, SCALE / 1000n, 0n);
+    assert.equal(out.bucketDeltas.length, 1);
+    assert.equal(out.bucketDeltas[0]!.bucket_id, 4);
+    assert.ok(out.newSqrtPrice < pool.currentSqrtPrice, "sqrt_p moved DOWN");
+  });
+
+  it("M5: cross-bucket DOWN exits bucket k to bucket k-1", () => {
+    const pool = buildPool(SCALE / 5n, 4);
+    const bucket4 = pool.bucketStates[4]!;
+    const lower4 = pool.bucketBounds[4]!.sqrt_lower;
+    const denom = (pool.currentSqrtPrice * lower4) / SCALE;
+    const maxAin = (bucket4.liquidity * (pool.currentSqrtPrice - lower4)) / denom;
+    // Bucket 3 needs liquidity >= bucket 4 because sqrtP enters bucket 3 at its
+    // upper bound (= lower4) and must absorb ~0.5 * maxAin of remainder;
+    // SCALE/2n stepInMax is ~493e15, remainder is ~535e15, so use SCALE.
+    pool.bucketStates[3] = {
+      reserve_a: 1000n * SCALE, reserve_b: 1000n * SCALE,
+      liquidity: SCALE, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n,
+    };
+    const out = traceBucketSwap(pool, maxAin * 2n, 0n);
+    const ids = out.bucketDeltas.map((d) => d.bucket_id).sort();
+    assert.deepEqual(ids, [3, 4], "buckets 3 and 4 crossed in that order");
+    assert.ok(out.newSqrtPrice < pool.currentSqrtPrice, "sqrt_p moved DOWN");
+  });
+
+  it("M6: trace exceeds 4 buckets => throws", () => {
+    const pool = buildPool(SCALE / 5n, 4);
+    for (const k of [0, 1, 2, 3]) {
+      pool.bucketStates[k] = {
+        reserve_a: 10n * SCALE, reserve_b: 10n * SCALE,
+        liquidity: SCALE / 1000n, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n,
+      };
+    }
+    assert.throws(
+      () => traceBucketSwap(pool, 10000n * SCALE, 0n),
+      /touched .* cap 4|exceeded all buckets/,
+    );
+  });
+});
