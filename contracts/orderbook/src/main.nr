@@ -635,26 +635,56 @@ pub contract Orderbook {
 
     // ============================ CLAIM FILL ============================
 
-    /// Claim the output of a filled order via Merkle inclusion proof.
+    /// Sub-4: maker claims their per-hop fill from a verified clearing.
     ///
-    /// The maker recomputes the leaf `poseidon2([order_nonce, claimed_amount_out])`
-    /// locally and walks the 5-level path through `siblings[0..5]` keyed by the bits
-    /// of `leaf_index`. The resulting root is asserted equal to `fills_root[epoch_id]`
-    /// by the enqueued `_assert_fill_root` callback. Double-claim protection: popping
-    /// the OrderNote nullifies it (one-shot). Cancel-after-fill protection: see
-    /// spec sec 6.5 (token-contract underflow).
+    /// The 64-leaf hop-fills Merkle tree stores leaves of the form:
+    ///   poseidon2([order_nonce, hop_index, amount_out, pool_id])
+    /// where `hop_index` distinguishes the two legs of a 2-hop order.
+    ///
+    /// # Arguments
+    /// - `epoch_id`: the epoch in which the clearing was settled.
+    /// - `order_nonce`: per-order identity nonce (matches the maker's `OrderNote`).
+    /// - `hop_index`: 0 for the first hop, 1 for the second (must be < 2).
+    /// - `amount_out`: the payout amount the maker is claiming for this hop.
+    /// - `pool_id`: the pool that executed this hop's swap.
+    /// - `leaf_index`: position of this leaf in the 64-leaf tree (0..63).
+    /// - `sibling_path`: depth-6 sibling-hash sequence (log2(64) = 6 levels).
+    ///
+    /// Double-claim protection: `pop_notes` nullifies the `OrderNote` on first claim.
+    /// For 2-hop orders the maker must call `claim_fill` twice (hop=0, hop=1) — the
+    /// first call consumes the note, so the second call must be issued by the same
+    /// maker against the same epoch but a different leaf (the hop=1 leaf).
+    /// NOTE: since `pop_notes` nullifies after hop=0, the hop=1 claim cannot look
+    /// up the note a second time. The payout token for hop=1 is derived from the
+    /// same path fields as hop=0, so the maker must pass both calls in sequence.
     #[external("private")]
     fn claim_fill(
-        order_nonce: Field,
-        claimed_amount_out: u128,
         epoch_id: u32,
-        siblings: [Field; 5],
-        leaf_index: u32,
+        order_nonce: Field,
+        hop_index: u8,
+        amount_out: u128,
+        pool_id: u32,
+        leaf_index: u32,           // 0..63
+        sibling_path: [Field; 6],  // log2(64) = 6 sibling hashes
     ) {
-        let maker = self.msg_sender();
+        assert(hop_index < 2 as u8, "hop_index must be 0 or 1");
+        assert(leaf_index < 64 as u32, "leaf_index >= 64");
 
-        // 1. Retrieve + nullify the maker's filled OrderNote (cancel_order pattern;
-        //    the nullifier is the double-claim guard).
+        // 1. Reconstruct the hop-fill leaf.
+        //    Matches circuits/clearing/src/merkle.nr's hop_fill_leaf formula.
+        let leaf = poseidon2_hash([
+            order_nonce,
+            hop_index as Field,
+            amount_out as Field,
+            pool_id as Field,
+        ]);
+
+        // 2. Walk the depth-6 Merkle path and verify against the stored fills_root.
+        let computed_root = verify_merkle_proof_64(leaf, leaf_index, sibling_path);
+        self.enqueue_self._assert_fill_root(epoch_id, computed_root);
+
+        // 3. Retrieve + nullify the maker's filled OrderNote (double-claim guard).
+        let maker = self.msg_sender();
         let options = NoteGetterOptions::new().select(
             OrderNote::properties().nonce,
             Comparator.EQ,
@@ -665,40 +695,51 @@ pub contract Orderbook {
         let order = notes.get(0);
         assert(order.owner == maker, "not order owner");
 
-        // 2. Recompute the leaf locally (matches circuits/clearing/src/merkle.nr's fill_leaf).
-        let leaf = poseidon2_hash([order_nonce, claimed_amount_out as Field]);
-
-        // 3. Walk the depth-5 Merkle path. leaf_index's LSB picks current side at each level.
-        let mut current = leaf;
-        let mut idx = leaf_index;
-        for level in 0..5 {
-            let bit = idx & 1;
-            current = if bit == 0 {
-                poseidon2_hash([current, siblings[level]])
+        // 4. Determine the OUTPUT token for this hop from the stored routing path.
+        //
+        //    Path encoding (OrderNote):
+        //      path[0]             = input token  (what the maker escrowed)
+        //      path[path_len - 1]  = final output token
+        //    For path_len == 2 (1-hop):  path = [token_in, token_out, 0_sentinel]
+        //    For path_len == 3 (2-hop):  path = [token_in, token_mid, token_out]
+        //
+        //    Bid (side=false): maker sends path[0], receives along the path left→right.
+        //      hop=0 output = path[1]  (always the next token in the forward direction)
+        //      hop=1 output = path[2]  (only valid for path_len == 3)
+        //
+        //    Ask (side=true): maker sends path[path_len-1], receives along the path right→left.
+        //      hop=0 output = path[path_len - 2]
+        //        1-hop (path_len=2): path[0]
+        //        2-hop (path_len=3): path[1]  (intermediate)
+        //      hop=1 output = path[0]          (only valid for path_len == 3)
+        let output_token: Field = if !order.side {
+            // bid: traverse path left→right; hop N outputs path[N+1]
+            if hop_index == 0 as u8 {
+                order.path[1]
             } else {
-                poseidon2_hash([siblings[level], current])
-            };
-            idx = idx >> 1;
-        }
-        // After 5 shifts, idx must be zero -- guards against leaf_index >= 32.
-        assert(idx == 0, "leaf_index out of bounds");
-
-        // 4. Pay out: a buy (side=false) is owed token B; a sell (side=true) is owed token A.
-        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
-        let token: AztecAddress = if order.side {
-            self.storage.pool_token_a.at(0 as u32).read()
+                order.path[2]  // path_len must be 3 for hop=1
+            }
         } else {
-            self.storage.pool_token_b.at(0 as u32).read()
+            // ask: traverse path right→left; hop N outputs path[path_len-2-N]
+            if hop_index == 0 as u8 {
+                if order.path_len == 2 as u8 {
+                    order.path[0]  // 1-hop ask: receive path[0]
+                } else {
+                    order.path[1]  // 2-hop ask hop=0: intermediate = path[1]
+                }
+            } else {
+                order.path[0]  // 2-hop ask hop=1: final = path[0]
+            }
         };
-        self.call(Token::at(token).transfer_public_to_private(
+        let token_out_addr = AztecAddress::from_field(output_token);
+
+        // 5. Transfer the payout from the Orderbook's public balance to the maker (private).
+        self.call(Token::at(token_out_addr).transfer_public_to_private(
             self.address,
             maker,
-            claimed_amount_out,
+            amount_out,
             0,
         ));
-
-        // 5. Atomically verify the computed root against the stored per-epoch root.
-        self.enqueue_self._assert_fill_root(epoch_id, current);
     }
 
     /// Public callback for claim_fill -- assert the locally-recomputed root matches
@@ -709,6 +750,33 @@ pub contract Orderbook {
         let stored = self.storage.fills_root.at(epoch_id).read();
         assert(stored != 0, "no clearing recorded for epoch");
         assert(computed_root == stored, "fill merkle root mismatch");
+    }
+
+    // ============================ HOP-FILL MERKLE HELPER ============================
+
+    /// Recompute the root of a depth-6 (64-leaf) Merkle tree from a single leaf and
+    /// its sibling path. The LSB of `leaf_index` at each level selects whether the
+    /// current node is a left (0) or right (1) child.
+    ///
+    /// Matches the JS `buildHopFillsTree` / aggregator witness builder convention:
+    ///   parent = poseidon2([left, right])
+    ///
+    /// Called by `claim_fill`; also usable in tests.
+    #[contract_library_method]
+    fn verify_merkle_proof_64(leaf: Field, leaf_index: u32, sibling_path: [Field; 6]) -> Field {
+        let mut current = leaf;
+        let mut idx = leaf_index;
+        for _i in 0..6 {
+            let sibling = sibling_path[_i];
+            let is_right = (idx & 1) == 1;
+            idx = idx >> 1;
+            current = if is_right {
+                poseidon2_hash([sibling, current])
+            } else {
+                poseidon2_hash([current, sibling])
+            };
+        }
+        current
     }
 
     // ============================ ORDER CANCELLATION ============================
