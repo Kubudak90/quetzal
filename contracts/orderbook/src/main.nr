@@ -293,20 +293,52 @@ pub contract Orderbook {
 
         let maker = self.msg_sender();
 
-        // PublicImmutable can be read from a private context (it is initialized once at deploy
-        // time and the value is therefore historically fixed). PublicMutable cannot, hence the
-        // epoch check is deferred to the enqueued public callback below.
-        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
-        let token_addr: AztecAddress = if side {
-            self.storage.pool_token_b.at(0 as u32).read()
+        // Sub-4 (B2): validate each hop's pool exists in the registry.
+        // PublicImmutable is readable from private context (fixed at deploy time).
+        let pool_count = self.storage.pool_count.read();
+        // Hop 0: path[0] -> path[1]
+        let (lo0, hi0) = if path[0] < path[1] { (path[0], path[1]) } else { (path[1], path[0]) };
+        let mut found0: u32 = 0xFFFFFFFF as u32;
+        for i in 0..4 {
+            if (i as u32) < pool_count {
+                let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
+                let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
+                if (pa == lo0) & (pb == hi0) {
+                    found0 = i as u32;
+                }
+            }
+        }
+        assert(found0 != 0xFFFFFFFF as u32, "pool not found for path[0..2]");
+        // Hop 1 (only for 2-hop paths): path[1] -> path[2]
+        if path_len == 3 {
+            let (lo1, hi1) = if path[1] < path[2] { (path[1], path[2]) } else { (path[2], path[1]) };
+            let mut found1: u32 = 0xFFFFFFFF as u32;
+            for i in 0..4 {
+                if (i as u32) < pool_count {
+                    let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
+                    let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
+                    if (pa == lo1) & (pb == hi1) {
+                        found1 = i as u32;
+                    }
+                }
+            }
+            assert(found1 != 0xFFFFFFFF as u32, "pool not found for path[1..3]");
+        }
+
+        // Determine which token the maker is escrowing.
+        // side == false (bid): input = path[0]
+        // side == true  (ask): input = path[path_len-1]
+        let input_token: Field = if !side {
+            path[0]
         } else {
-            self.storage.pool_token_a.at(0 as u32).read()
+            if path_len == 2 { path[1] } else { path[2] }
         };
+        let token_in_addr = AztecAddress::from_field(input_token);
 
         // Escrow: drain the maker's private balance, credit the orderbook's PUBLIC balance.
         // This is a private->private call (transfer_private_to_public is itself a private
         // function on Token that internally enqueues a public balance increase).
-        self.call(Token::at(token_addr).transfer_private_to_public(
+        self.call(Token::at(token_in_addr).transfer_private_to_public(
             maker,
             self.address,
             amount_in,
@@ -719,12 +751,15 @@ pub contract Orderbook {
         // Defence-in-depth: the per-owner PrivateSet already scopes retrieval to `maker`.
         assert(order.owner == maker, "not order owner");
 
-        // TEMPORARY (Task B2 replaces this with path-aware pool lookup):
-        let token_addr: AztecAddress = if order.side {
-            self.storage.pool_token_b.at(0 as u32).read()
+        // Sub-4 (B2): derive the escrowed token from the order's stored path.
+        // side == false (bid): input was path[0]
+        // side == true  (ask): input was path[path_len-1]
+        let cancel_input_token: Field = if !order.side {
+            order.path[0]
         } else {
-            self.storage.pool_token_a.at(0 as u32).read()
+            if order.path_len == 2 { order.path[1] } else { order.path[2] }
         };
+        let token_addr: AztecAddress = AztecAddress::from_field(cancel_input_token);
 
         // Recompute the same per-order commitment submit_order folded into order_acc.
         // The popped OrderNote carries every preimage field, so this matches the original

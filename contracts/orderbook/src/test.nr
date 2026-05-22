@@ -553,6 +553,61 @@ unconstrained fn t4b_merkle_leaf_and_root_are_consistent() {
 // and it is also exercised by Task 12.
 
 // ============================================================================
+// Sub-4 Task B2: submit_order path-to-pool validation tests.
+// The rejection test fires BEFORE the cross-contract Token call, so placeholder
+// token addresses are sufficient (the pool-lookup assert fires first).
+
+#[test(should_fail_with = "pool not found for path[0..2]")]
+unconstrained fn submit_order_rejects_path_with_no_matching_pool() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    // Deploy with only ONE pool: usdc/eth.
+    let usdc = env.create_light_account();
+    let eth  = env.create_light_account();
+    let btc  = env.create_light_account(); // NOT registered in any pool
+    let pool_p0 = env.create_light_account();
+
+    // Canonicalize usdc/eth pair (smaller Field first).
+    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+        (usdc, eth)
+    } else {
+        (eth, usdc)
+    };
+
+    // Deploy orderbook with a single usdc/eth pool only.
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,        // epoch_length
+        0 as Field,        // clearing_vk_hash
+        deployer,          // aggregator_registry stand-in
+        deployer,          // treasury stand-in
+        0 as u128,         // aggregator_fee stand-in
+        1 as u32,          // pool_count
+        [pool_p0, deployer, deployer, deployer],
+        [lo, deployer, deployer, deployer],
+        [hi, deployer, deployer, deployer],
+    );
+    let orderbook = env.deploy("Orderbook").with_public_initializer(deployer, initializer_call);
+
+    let maker = env.create_light_account();
+
+    // Submit a bid with path[0]=usdc, path[1]=btc — no usdc/btc pool exists.
+    // The pool-lookup assert must fire: "pool not found for path[0..2]".
+    env.call_private(
+        maker,
+        Orderbook::at(orderbook).submit_order(
+            false,
+            100 as u128,
+            1 as u128,
+            0 as Field,
+            42 as Field,
+            2 as u8,
+            [usdc.to_field(), btc.to_field(), 0 as Field],
+        ),
+    );
+}
+
+// ============================================================================
 // Sub-4 Task B1: multi-pool storage + canonical pool lookup tests.
 // resolve_pool_id_by_pair is a #[external("public")] #[view] function; it is
 // called via env.call_public in TXE.
