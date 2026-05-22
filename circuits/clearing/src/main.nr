@@ -3,6 +3,7 @@ mod binding;
 mod pricing;
 mod amm;
 mod merkle;
+mod buckets;
 mod test;
 
 use types::{ClearingSwap, FillEntry, OrderPreimage, MAX_ORDERS_PER_EPOCH};
