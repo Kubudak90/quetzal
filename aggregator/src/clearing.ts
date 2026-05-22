@@ -514,3 +514,72 @@ export function traceBucketSwap(
     newReserveB: pool.reserveB + aggB,
   };
 }
+
+// ============================================================================
+// Sub-2.5: bucket-aware clearing (computeClearingV2).
+// ============================================================================
+
+export interface ClearingResultV2 extends ClearingResult {
+  bucketDeltas?: BucketDeltaResult[];
+  currentSqrtPriceAfter?: bigint;
+  bucketStatesBefore?: BucketState[];
+  bucketStatesAfter?: BucketState[];
+}
+
+/**
+ * Sub-2.5: bucket-aware clearing. Calls computeClearing for fills + P*,
+ * then routes the net imbalance through traceBucketSwap to produce
+ * per-bucket deltas + the new sqrt_p_after + bucket states before/after.
+ *
+ * Output shape feeds buildClearingWitness directly.
+ */
+export function computeClearingV2(
+  pool: PoolWithBuckets,
+  orders: ClearingOrder[],
+): ClearingResultV2 {
+  const base: ClearingResult = computeClearing(
+    { reserveA: pool.reserveA, reserveB: pool.reserveB, lpSupply: pool.lpSupply },
+    orders,
+  );
+  if (!base.cleared) {
+    return {
+      ...base,
+      bucketDeltas: [],
+      currentSqrtPriceAfter: pool.currentSqrtPrice,
+      bucketStatesBefore: [],
+      bucketStatesAfter: [],
+    };
+  }
+  // Net flows from base.newReserve* vs pool's pre-clearing reserves.
+  const netA = base.newReserveA - pool.reserveA;
+  const netB = base.newReserveB - pool.reserveB;
+  // traceBucketSwap takes positive netA / positive netB; figure out direction.
+  const netAPositive = netA > 0n ? netA : 0n;
+  const netBPositive = netB > 0n ? netB : 0n;
+  const trace = traceBucketSwap(pool, netAPositive, netBPositive);
+
+  // Snapshot bucket states before + after for the witness.
+  const touchedIds = trace.bucketDeltas.map((d) => d.bucket_id);
+  const before: BucketState[] = touchedIds.map((id) => ({ ...pool.bucketStates[id]! }));
+  const after: BucketState[] = touchedIds.map((id) => {
+    const d = trace.bucketDeltas.find((x) => x.bucket_id === id)!;
+    const s = pool.bucketStates[id]!;
+    return {
+      reserve_a: s.reserve_a + d.reserve_a_add - d.reserve_a_sub,
+      reserve_b: s.reserve_b + d.reserve_b_add - d.reserve_b_sub,
+      liquidity: s.liquidity,
+      cum_fee_a_per_share: s.cum_fee_a_per_share + d.cum_fee_a_per_share_increment,
+      cum_fee_b_per_share: s.cum_fee_b_per_share + d.cum_fee_b_per_share_increment,
+    };
+  });
+
+  return {
+    ...base,
+    newReserveA: trace.newReserveA,
+    newReserveB: trace.newReserveB,
+    bucketDeltas: trace.bucketDeltas,
+    currentSqrtPriceAfter: trace.newSqrtPrice,
+    bucketStatesBefore: before,
+    bucketStatesAfter: after,
+  };
+}
