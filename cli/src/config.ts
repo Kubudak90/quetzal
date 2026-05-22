@@ -15,6 +15,8 @@ export interface ZswapConfig {
   // Sub-2 bucket schema params (set by deploy-tokens.ts).
   bucketPMinSqrt?: string;
   bucketGrowthNum?: string;
+  // Sub-4 multi-hop routing: optional third token for 2-hop paths.
+  tBTC?: string;
 }
 
 const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];

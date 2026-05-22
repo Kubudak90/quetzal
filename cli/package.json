@@ -6,6 +6,7 @@
   "bin": { "zswap": "src/index.ts" },
   "scripts": {
     "zswap": "tsx src/index.ts",
+    "test": "node --import tsx --test --test-reporter=spec 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
