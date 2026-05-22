@@ -284,6 +284,20 @@ unconstrained fn close_epoch_rejects_before_expiry() {
 
 #[test]
 unconstrained fn flatten_clearing_public_slot_order() {
+    // Sub-2: 42-field flatten. Per-bucket delta slots checked via single
+    // BucketDelta entry; remaining delta slots are zero-initialized.
+    let zero_delta = pool::LiquidityPool::BucketDelta {
+        bucket_id: 0, reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128,
+        reserve_b_add: 0 as u128, reserve_b_sub: 0 as u128,
+        cum_fee_a_per_share_increment: 0 as u128, cum_fee_b_per_share_increment: 0 as u128,
+    };
+    let delta0 = pool::LiquidityPool::BucketDelta {
+        bucket_id: 5,
+        reserve_a_add: 101 as u128, reserve_a_sub: 102 as u128,
+        reserve_b_add: 103 as u128, reserve_b_sub: 104 as u128,
+        cum_fee_a_per_share_increment: 105 as u128,
+        cum_fee_b_per_share_increment: 106 as u128,
+    };
     let p = Orderbook::ClearingPublic {
         order_acc:      11,
         cancel_acc:     22,
@@ -291,39 +305,43 @@ unconstrained fn flatten_clearing_public_slot_order() {
         cancel_count:   44,
         reserve_a:      55 as u128,
         reserve_b:      66 as u128,
-        lp_supply:      77 as u128,
-        clearing_price: 88 as u128,
-        fills_root:     99,
+        clearing_price: 77 as u128,
+        fills_root:     88,
         swap: pool::LiquidityPool::ClearingSwap {
             a_to_pool: 1001 as u128, b_to_pool: 1002 as u128,
             a_from_pool: 1003 as u128, b_from_pool: 1004 as u128,
-            reserve_a_add: 1005 as u128, reserve_a_sub: 1006 as u128,
-            reserve_b_add: 1007 as u128, reserve_b_sub: 1008 as u128,
-            fee_a_per_share_increment: 1009 as u128, fee_b_per_share_increment: 1010 as u128,
+            active_bucket_deltas: [delta0, zero_delta, zero_delta, zero_delta],
+            active_bucket_count: 1,
+            current_sqrt_price_after: 1005 as u128,
         },
     };
 
     let flat = Orderbook::flatten_clearing_public(p);
-
     assert(flat[0] == 11, "slot 0 order_acc");
     assert(flat[1] == 22, "slot 1 cancel_acc");
     assert(flat[2] == 33, "slot 2 order_count");
     assert(flat[3] == 44, "slot 3 cancel_count");
     assert(flat[4] == 55, "slot 4 reserve_a");
     assert(flat[5] == 66, "slot 5 reserve_b");
-    assert(flat[6] == 77, "slot 6 lp_supply");
-    assert(flat[7] == 88, "slot 7 clearing_price");
-    assert(flat[8] == 99, "slot 8 fills_root");
-    assert(flat[9] == 1001, "slot 9 swap.a_to_pool");
-    assert(flat[10] == 1002, "slot 10 swap.b_to_pool");
-    assert(flat[11] == 1003, "slot 11 swap.a_from_pool");
-    assert(flat[12] == 1004, "slot 12 swap.b_from_pool");
-    assert(flat[13] == 1005, "slot 13 swap.reserve_a_add");
-    assert(flat[14] == 1006, "slot 14 swap.reserve_a_sub");
-    assert(flat[15] == 1007, "slot 15 swap.reserve_b_add");
-    assert(flat[16] == 1008, "slot 16 swap.reserve_b_sub");
-    assert(flat[17] == 1009, "slot 17 swap.fee_a_per_share_increment");
-    assert(flat[18] == 1010, "slot 18 swap.fee_b_per_share_increment");
+    assert(flat[6] == 77, "slot 6 clearing_price");
+    assert(flat[7] == 88, "slot 7 fills_root");
+    assert(flat[8] == 1001, "slot 8 swap.a_to_pool");
+    assert(flat[9] == 1002, "slot 9 swap.b_to_pool");
+    assert(flat[10] == 1003, "slot 10 swap.a_from_pool");
+    assert(flat[11] == 1004, "slot 11 swap.b_from_pool");
+    assert(flat[12] == 1005, "slot 12 current_sqrt_price_after");
+    assert(flat[13] == 1, "slot 13 active_bucket_count");
+    // BucketDelta[0] at slots 14..20
+    assert(flat[14] == 5, "slot 14 delta0.bucket_id");
+    assert(flat[15] == 101, "slot 15 delta0.reserve_a_add");
+    assert(flat[16] == 102, "slot 16 delta0.reserve_a_sub");
+    assert(flat[17] == 103, "slot 17 delta0.reserve_b_add");
+    assert(flat[18] == 104, "slot 18 delta0.reserve_b_sub");
+    assert(flat[19] == 105, "slot 19 delta0.cum_fee_a_per_share_increment");
+    assert(flat[20] == 106, "slot 20 delta0.cum_fee_b_per_share_increment");
+    // BucketDelta[1..3] zeros at slots 21..41
+    assert(flat[21] == 0, "delta1 bucket_id zero");
+    assert(flat[41] == 0, "delta3 cum_fee_b zero");
 }
 
 // _apply_verified_clearing is #[only_self]; an external public call must reject.
@@ -334,14 +352,20 @@ unconstrained fn apply_verified_clearing_rejects_external_call() {
     let deployer = env.create_light_account();
     let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
 
+    let zero_delta = pool::LiquidityPool::BucketDelta {
+        bucket_id: 0, reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128,
+        reserve_b_add: 0 as u128, reserve_b_sub: 0 as u128,
+        cum_fee_a_per_share_increment: 0 as u128, cum_fee_b_per_share_increment: 0 as u128,
+    };
     let zero_swap = pool::LiquidityPool::ClearingSwap {
         a_to_pool: 0 as u128, b_to_pool: 0 as u128, a_from_pool: 0 as u128, b_from_pool: 0 as u128,
-        reserve_a_add: 0 as u128, reserve_a_sub: 0 as u128, reserve_b_add: 0 as u128,
-        reserve_b_sub: 0 as u128, fee_a_per_share_increment: 0 as u128, fee_b_per_share_increment: 0 as u128,
+        active_bucket_deltas: [zero_delta, zero_delta, zero_delta, zero_delta],
+        active_bucket_count: 0,
+        current_sqrt_price_after: 0 as u128,
     };
     let pi = Orderbook::ClearingPublic {
         order_acc: 0, cancel_acc: 0, order_count: 0, cancel_count: 0,
-        reserve_a: 0 as u128, reserve_b: 0 as u128, lp_supply: 0 as u128,
+        reserve_a: 0 as u128, reserve_b: 0 as u128,
         clearing_price: 0 as u128,
         fills_root: 0,
         swap: zero_swap,
