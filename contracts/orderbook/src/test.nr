@@ -349,7 +349,7 @@ unconstrained fn apply_verified_clearing_rejects_external_call() {
 
     let stranger = env.create_light_account();
     // The #[only_self] guard fires before any body logic.
-    env.call_public(stranger, Orderbook::at(orderbook)._apply_verified_clearing(pi));
+    env.call_public(stranger, Orderbook::at(orderbook)._apply_verified_clearing(pi, stranger));
 }
 
 // ============================================================================
@@ -481,3 +481,19 @@ unconstrained fn t4b_merkle_leaf_and_root_are_consistent() {
 // T9b (cancel-after-fill underflow) similarly requires a real Token+Pool deployment
 // that TXE doesn't easily provide. The spec flags this protection as worth verifying
 // and it is also exercised by Task 12.
+
+// ============================================================================
+// Sub-3: Aggregator registration gate (O1) -- deferred to Task 18 e2e.
+//
+// O1 requires deploying both Orderbook AND AggregatorRegistry in the SAME
+// TXE session (so the orderbook's _assert_aggregator_registered callback can
+// cross-contract-read view_bonded_amount). TXE in aztec 4.2.1 cannot resolve
+// @aggregator_registry/AggregatorRegistry from contracts/orderbook/'s test
+// session (the artifact lives at contracts/aggregator-registry/target/, not
+// in orderbook/target/). The cross-package deploy returns "Failed calling
+// external resolver. client error (Connect)" inside TXE.
+//
+// Full O1 coverage lands in the Task 18 e2e (tests/integration/aggregator-
+// race.test.ts) where deploy-tokens.ts wires Orderbook + Registry + Treasury
+// against a real Aztec sandbox and exercises the gate end-to-end.
+// ============================================================================

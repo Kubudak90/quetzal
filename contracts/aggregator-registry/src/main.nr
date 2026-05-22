@@ -4,7 +4,7 @@ use aztec::macros::aztec;
 pub contract AggregatorRegistry {
     use aztec::{
         macros::{
-            functions::{external, initializer, only_self},
+            functions::{external, initializer, only_self, view},
             storage::storage,
         },
         protocol::{address::AztecAddress, traits::FromField},
@@ -157,6 +157,15 @@ pub contract AggregatorRegistry {
 
     #[external("utility")]
     unconstrained fn get_bonded_amount(addr: AztecAddress) -> u128 {
+        self.storage.bonded_amount_by_addr.at(addr).read()
+    }
+
+    /// Public-view variant of get_bonded_amount, callable from other contracts'
+    /// public context (the utility variant only works from off-chain TXE callers).
+    /// The Orderbook's _assert_aggregator_registered callback uses this.
+    #[external("public")]
+    #[view]
+    fn view_bonded_amount(addr: AztecAddress) -> u128 {
         self.storage.bonded_amount_by_addr.at(addr).read()
     }
 

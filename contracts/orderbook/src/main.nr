@@ -25,6 +25,8 @@ pub contract Orderbook {
 
     use token::Token;
     use pool::LiquidityPool;
+    use aggregator_registry::AggregatorRegistry;
+    use treasury::Treasury;
     use aztec::protocol::{hash::poseidon2_hash, traits::ToField};
 
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
@@ -412,21 +414,40 @@ pub contract Orderbook {
         proof: [Field; 456],
         vk: [Field; 127],
     ) {
+        let caller = self.msg_sender();
+        // Sub-3: gate on caller being a bonded aggregator. Public callback because
+        // private context cannot read PublicMutable on the registry contract.
+        self.enqueue_self._assert_aggregator_registered(caller);
+
         let vk_hash = self.storage.clearing_vk_hash.read();
         // 1 = Honk proof type per Aztec/bb conventions.
         // Honk proofs embed public inputs in the proof bytes (IVC IO); the
         // public_inputs argument must be empty -- passing a non-empty array
         // causes bb to abort with "unexpected non-empty public_inputs in HN constraint".
         std::verify_proof_with_type(vk, proof, [], vk_hash, 1);
-        self.enqueue_self._apply_verified_clearing(public_inputs);
+        self.enqueue_self._apply_verified_clearing(public_inputs, caller);
+    }
+
+    /// Public callback: cross-contract read of AggregatorRegistry to gate the
+    /// caller. only_self.
+    #[external("public")]
+    #[only_self]
+    fn _assert_aggregator_registered(addr: AztecAddress) {
+        let registry = self.storage.aggregator_registry.read();
+        let bonded: u128 =
+            self.view(AggregatorRegistry::at(registry).view_bonded_amount(addr));
+        assert(bonded > 0 as u128, "caller is not a bonded aggregator");
     }
 
     /// Public callback: run the net AMM swap, store the per-epoch fills root,
     /// and advance the epoch. only_self ensures only the matching
     /// close_epoch_and_clear_verified private call can invoke it.
+    ///
+    /// `winner` is the AggregatorRegistry-bonded address that submitted the
+    /// clearing -- Treasury.pay_aggregator credits this address at the end.
     #[external("public")]
     #[only_self]
-    fn _apply_verified_clearing(public_inputs: ClearingPublic) {
+    fn _apply_verified_clearing(public_inputs: ClearingPublic, winner: AztecAddress) {
         let current = self.storage.current_epoch.read();
         let block: u32 = self.context.block_number();
         assert(block >= current.closes_at_block, "epoch has not expired yet");
