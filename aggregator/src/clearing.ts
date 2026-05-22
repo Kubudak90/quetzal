@@ -375,7 +375,6 @@ export function traceBucketSwap(
   netA: bigint,
   netB: bigint,
 ): BucketTraceOutput {
-  // Trivial no-flow case.
   if (netA === 0n && netB === 0n) {
     return {
       newSqrtPrice: pool.currentSqrtPrice,
@@ -385,73 +384,116 @@ export function traceBucketSwap(
     };
   }
 
-  // Find the active bucket containing currentSqrtPrice.
-  let activeIdx = pool.bucketBounds.findIndex(
+  const FEE_NUM = 30n;
+  const FEE_DEN = 10_000n;
+  const MAX_ACTIVE = 4;
+
+  let bucketId = pool.bucketBounds.findIndex(
     (b) => pool.currentSqrtPrice >= b.sqrt_lower && pool.currentSqrtPrice < b.sqrt_upper,
   );
-  if (activeIdx < 0) {
-    // Snap to the last bucket if at the very top boundary.
-    activeIdx = pool.bucketBounds.length - 1;
-  }
-  const bucket = pool.bucketStates[activeIdx]!;
+  if (bucketId < 0) bucketId = pool.bucketBounds.length - 1;
 
-  // Empty bucket: no flow can be absorbed; return identity.
-  if (bucket.liquidity === 0n) {
-    return {
-      newSqrtPrice: pool.currentSqrtPrice,
-      bucketDeltas: [],
-      newReserveA: pool.reserveA,
-      newReserveB: pool.reserveB,
+  const direction = netB > 0n;
+  let remaining = direction ? netB : netA;
+  const totalIn = remaining;
+  const fee = (remaining * (FEE_DEN - FEE_NUM)) / FEE_DEN;
+  let inAfterFee = fee;
+  let feeWithheld = remaining - fee;
+
+  const deltas = new Map<number, BucketDeltaResult>();
+  let sqrtP = pool.currentSqrtPrice;
+  let totalOut = 0n;
+
+  while (inAfterFee > 0n && bucketId >= 0 && bucketId < pool.bucketBounds.length) {
+    const bucket = pool.bucketStates[bucketId]!;
+    const bounds = pool.bucketBounds[bucketId]!;
+
+    if (bucket.liquidity === 0n) {
+      sqrtP = direction ? bounds.sqrt_upper : bounds.sqrt_lower;
+      bucketId = direction ? bucketId + 1 : bucketId - 1;
+      continue;
+    }
+
+    let stepInMax: bigint;
+    if (direction) {
+      stepInMax = (bucket.liquidity * (bounds.sqrt_upper - sqrtP)) / BUCKET_SCALE;
+    } else {
+      const denom = (sqrtP * bounds.sqrt_lower) / BUCKET_SCALE;
+      stepInMax = (bucket.liquidity * (sqrtP - bounds.sqrt_lower)) / denom;
+    }
+
+    let stepIn: bigint;
+    let stepOut: bigint;
+    let sqrtPNew: bigint;
+
+    if (inAfterFee <= stepInMax) {
+      stepIn = inAfterFee;
+      if (direction) {
+        sqrtPNew = sqrtP + (stepIn * BUCKET_SCALE) / bucket.liquidity;
+        const denomOut = (sqrtP * sqrtPNew) / BUCKET_SCALE;
+        stepOut = (bucket.liquidity * (sqrtPNew - sqrtP)) / denomOut;
+      } else {
+        sqrtPNew =
+          (sqrtP * bucket.liquidity * BUCKET_SCALE) /
+          (bucket.liquidity * BUCKET_SCALE + stepIn * sqrtP);
+        stepOut = (bucket.liquidity * (sqrtP - sqrtPNew)) / BUCKET_SCALE;
+      }
+      inAfterFee = 0n;
+    } else {
+      stepIn = stepInMax;
+      sqrtPNew = direction ? bounds.sqrt_upper : bounds.sqrt_lower;
+      if (direction) {
+        const denomOut = (sqrtP * sqrtPNew) / BUCKET_SCALE;
+        stepOut = (bucket.liquidity * (sqrtPNew - sqrtP)) / denomOut;
+      } else {
+        stepOut = (bucket.liquidity * (sqrtP - sqrtPNew)) / BUCKET_SCALE;
+      }
+      inAfterFee -= stepIn;
+    }
+
+    totalOut += stepOut;
+    const stepFee = (feeWithheld * stepIn) / (totalIn - feeWithheld === 0n ? 1n : totalIn - feeWithheld);
+    const cumFeeAInc = direction ? 0n : (stepFee * BUCKET_SCALE) / bucket.liquidity;
+    const cumFeeBInc = direction ? (stepFee * BUCKET_SCALE) / bucket.liquidity : 0n;
+
+    const prev = deltas.get(bucketId);
+    const delta: BucketDeltaResult = {
+      bucket_id: bucketId,
+      reserve_a_add: (prev?.reserve_a_add ?? 0n) + (direction ? 0n : stepIn),
+      reserve_a_sub: (prev?.reserve_a_sub ?? 0n) + (direction ? stepOut : 0n),
+      reserve_b_add: (prev?.reserve_b_add ?? 0n) + (direction ? stepIn : 0n),
+      reserve_b_sub: (prev?.reserve_b_sub ?? 0n) + (direction ? 0n : stepOut),
+      cum_fee_a_per_share_increment:
+        (prev?.cum_fee_a_per_share_increment ?? 0n) + cumFeeAInc,
+      cum_fee_b_per_share_increment:
+        (prev?.cum_fee_b_per_share_increment ?? 0n) + cumFeeBInc,
     };
+    deltas.set(bucketId, delta);
+
+    sqrtP = sqrtPNew;
+    if (inAfterFee > 0n) {
+      bucketId = direction ? bucketId + 1 : bucketId - 1;
+    }
   }
 
-  const FEE_NUM = 30n;     // 0.3% LP fee numerator (matches Sub-1)
-  const FEE_DEN = 10_000n;
-
-  if (netA > 0n) {
-    // Token A flows in; pool moves DOWN (lower sqrt_p).
-    const feeA = (netA * FEE_NUM) / FEE_DEN;
-    const aAfterFee = netA - feeA;
-
-    // Simplified single-bucket case: assume swap stays within active bucket.
-    // Full multi-bucket trace + sqrt_p update math is a follow-up.
-    const bOut = (aAfterFee * bucket.reserve_b) / (bucket.reserve_a + aAfterFee);
-    const newSqrtP = pool.currentSqrtPrice;  // placeholder; full V3 derives this from aAfterFee
-
-    return {
-      newSqrtPrice: newSqrtP,
-      bucketDeltas: [{
-        bucket_id: activeIdx,
-        reserve_a_add: netA,
-        reserve_a_sub: 0n,
-        reserve_b_add: 0n,
-        reserve_b_sub: bOut,
-        cum_fee_a_per_share_increment: (feeA * BUCKET_SCALE) / bucket.liquidity,
-        cum_fee_b_per_share_increment: 0n,
-      }],
-      newReserveA: pool.reserveA + netA,
-      newReserveB: pool.reserveB - bOut,
-    };
-  } else {
-    // netB > 0: token B flows in; pool moves UP.
-    const feeB = (netB * FEE_NUM) / FEE_DEN;
-    const bAfterFee = netB - feeB;
-    const aOut = (bAfterFee * bucket.reserve_a) / (bucket.reserve_b + bAfterFee);
-    const newSqrtP = pool.currentSqrtPrice;
-
-    return {
-      newSqrtPrice: newSqrtP,
-      bucketDeltas: [{
-        bucket_id: activeIdx,
-        reserve_a_add: 0n,
-        reserve_a_sub: aOut,
-        reserve_b_add: netB,
-        reserve_b_sub: 0n,
-        cum_fee_a_per_share_increment: 0n,
-        cum_fee_b_per_share_increment: (feeB * BUCKET_SCALE) / bucket.liquidity,
-      }],
-      newReserveA: pool.reserveA - aOut,
-      newReserveB: pool.reserveB + netB,
-    };
+  if (inAfterFee > 0n) {
+    throw new Error("swap exceeded all buckets in the chosen direction");
   }
+  if (deltas.size > MAX_ACTIVE) {
+    throw new Error(`traceBucketSwap touched ${deltas.size} buckets (cap ${MAX_ACTIVE})`);
+  }
+
+  let aggA = 0n;
+  let aggB = 0n;
+  for (const d of deltas.values()) {
+    aggA += d.reserve_a_add - d.reserve_a_sub;
+    aggB += d.reserve_b_add - d.reserve_b_sub;
+  }
+
+  return {
+    newSqrtPrice: sqrtP,
+    bucketDeltas: Array.from(deltas.values()).sort((a, b) => a.bucket_id - b.bucket_id),
+    newReserveA: pool.reserveA + aggA,
+    newReserveB: pool.reserveB + aggB,
+  };
 }
