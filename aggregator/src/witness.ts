@@ -296,7 +296,7 @@ export const INVALID_POOL_ID = 0xffffffff;
  *   order_acc, cancel_acc, order_count, cancel_count  (4)
  *   fills_root                                         (1)
  *   active_pool_count                                  (1)
- *   active_pools[3] of PoolClearing:
+ *   active_pool_clearings[3] of PoolClearing:
  *     per pool: pool_id, clearing_price, swap{a_to_pool, b_to_pool,
  *       a_from_pool, b_from_pool, current_sqrt_price_after,
  *       active_bucket_count, active_bucket_deltas[4]{7 fields each}}
@@ -304,7 +304,9 @@ export const INVALID_POOL_ID = 0xffffffff;
  *   Total = 4 + 1 + 1 + 108 = 114 fields.
  *
  * Private witnesses: orders (padded to maxOrders, now with path_len + path),
- *   cancelled_indices, fills (2 * maxOrders with hop_index + pool_id), fills_len.
+ *   cancelled_indices, fills (2 * maxOrders with hop_index + pool_id), fills_len,
+ *   fill_to_order_index (64), pool_bucket_states_before/after ([4][3]),
+ *   pool_sqrt_p_before ([3]), pool_token_pairs ([[Field;2];3]).
  *
  * NOTE: Aggregate flow scalars (a_to_pool etc.) are emitted as 0 placeholders.
  * Task D2's circuit derives them from per-bucket deltas; the witness builder
@@ -321,6 +323,9 @@ export async function buildClearingWitnessMultiPair(args: {
   perPoolClearings: PoolClearingResult[];
   fills: HopFill[];
   maxOrders?: number;
+  // F2 additions: optional per-pool sqrt price + canonical token pairs
+  poolSqrtPBefore?: bigint[];
+  poolTokenPairs?: [bigint, bigint][];
 }): Promise<ClearingWitness> {
   const maxPerEpoch = args.maxOrders ?? MAX_ORDERS_PER_EPOCH;
   const { epoch, orders, cancellationIndices, perPoolClearings, fills } = args;
@@ -379,8 +384,8 @@ export async function buildClearingWitnessMultiPair(args: {
   lines.push(`fills_root = "${tree.root.toString()}"`);
   lines.push(`active_pool_count = ${perPoolClearings.length}`);
 
-  // ===== active_pools[3] =====
-  lines.push(`active_pools = [`);
+  // ===== active_pool_clearings[3] =====
+  lines.push(`active_pool_clearings = [`);
   for (const pc of sortedPools) {
     // Pad bucket deltas to MAX_ACTIVE_BUCKETS_PER_EPOCH with INVALID_BUCKET_ID sentinels.
     const padsDelta = pc.bucketDeltas.slice() as Array<{
@@ -466,6 +471,69 @@ export async function buildClearingWitnessMultiPair(args: {
   }
   lines.push(`]`);
   lines.push(`fills_len = ${fills.length}`);
+
+  // fill_to_order_index: 2*maxPerEpoch u32s — maps fill slot i to its order index.
+  const fillToOrderIndex: number[] = [];
+  for (let i = 0; i < 2 * maxPerEpoch; i++) {
+    const f = i < fills.length ? fills[i] : null;
+    if (f) {
+      const idx = orders.findIndex((o) => o.order_nonce === f.orderNonce);
+      fillToOrderIndex.push(idx >= 0 ? idx : 0);
+    } else {
+      fillToOrderIndex.push(0);
+    }
+  }
+  lines.push(`fill_to_order_index = [${fillToOrderIndex.join(", ")}]`);
+
+  // Sentinel BucketState used when padding pool bucket arrays.
+  const SENTINEL_BUCKET = {
+    reserve_a: 0n, reserve_b: 0n, liquidity: 0n,
+    cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n,
+  };
+  function fmtBucketState(s: { reserve_a: bigint; reserve_b: bigint; liquidity: bigint; cum_fee_a_per_share: bigint; cum_fee_b_per_share: bigint }): string {
+    return `      { reserve_a = "${s.reserve_a}", reserve_b = "${s.reserve_b}", liquidity = "${s.liquidity}", cum_fee_a_per_share = "${s.cum_fee_a_per_share}", cum_fee_b_per_share = "${s.cum_fee_b_per_share}" },`;
+  }
+
+  // pool_bucket_states_before: [[BucketState; 4]; 3]
+  lines.push(`pool_bucket_states_before = [`);
+  for (const pc of sortedPools) {
+    const raw = pc.bucketStatesBefore ?? [];
+    const states = raw.slice() as Array<{ reserve_a: bigint; reserve_b: bigint; liquidity: bigint; cum_fee_a_per_share: bigint; cum_fee_b_per_share: bigint }>;
+    while (states.length < MAX_ACTIVE_BUCKETS_PER_EPOCH) states.push({ ...SENTINEL_BUCKET });
+    lines.push(`  [`);
+    for (const s of states) lines.push(fmtBucketState(s));
+    lines.push(`  ],`);
+  }
+  lines.push(`]`);
+
+  // pool_bucket_states_after: [[BucketState; 4]; 3]
+  lines.push(`pool_bucket_states_after = [`);
+  for (const pc of sortedPools) {
+    const raw = pc.bucketStatesAfter ?? [];
+    const states = raw.slice() as Array<{ reserve_a: bigint; reserve_b: bigint; liquidity: bigint; cum_fee_a_per_share: bigint; cum_fee_b_per_share: bigint }>;
+    while (states.length < MAX_ACTIVE_BUCKETS_PER_EPOCH) states.push({ ...SENTINEL_BUCKET });
+    lines.push(`  [`);
+    for (const s of states) lines.push(fmtBucketState(s));
+    lines.push(`  ],`);
+  }
+  lines.push(`]`);
+
+  // pool_sqrt_p_before: [u128; 3] — pre-clearing sqrt price per pool.
+  const poolSqrtPBefore = args.poolSqrtPBefore ?? [];
+  lines.push(`pool_sqrt_p_before = [`);
+  for (let i = 0; i < MAX_ACTIVE_POOLS_PER_EPOCH; i++) {
+    lines.push(`  "${poolSqrtPBefore[i] ?? 0n}",`);
+  }
+  lines.push(`]`);
+
+  // pool_token_pairs: [[Field; 2]; 3] — canonical (token_a, token_b) per pool slot.
+  const poolTokenPairs = args.poolTokenPairs ?? [];
+  lines.push(`pool_token_pairs = [`);
+  for (let i = 0; i < MAX_ACTIVE_POOLS_PER_EPOCH; i++) {
+    const pair = poolTokenPairs[i] ?? [0n, 0n];
+    lines.push(`  ["0x${pair[0].toString(16)}", "0x${pair[1].toString(16)}"],`);
+  }
+  lines.push(`]`);
 
   return {
     proverToml: lines.join("\n") + "\n",

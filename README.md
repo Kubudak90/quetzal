@@ -6,12 +6,15 @@ MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auct
 
 **Sub-2.5 CODE-COMPLETE (2026-05-22):** 15 tasks across 6 phases (A-F) delivered. The circuit's `fn main` emits 42 public fields matching the orderbook's `flatten_clearing_public`; the aggregator's `traceBucketSwap` is a true multi-bucket state machine (UP + DOWN, empty-bucket skip, MAX_BUCKET_HOPS=4, last-bucket-residual fee); the witness builder rewritten for Sub-2.5 42-field public layout; bb prove passes (500-field proof, 115-field VK, EMPTY_ROOT unchanged, new vk_hash `0e634a5b7cb463a6...`, gate count 107,762). Test scoreboard: 52 Noir TXE tests + 86+ JS aggregator tests passing. Joint testnet runner scaffolded at `scripts/testnet-sub2-5.ts` (9-step state machine + AZTEC_NODE_URL safety check); **testnet execution deferred to a future session when an Aztec testnet endpoint is configured.**
 
-**Sub-4 LANDED:** multi-pair routing with explicit maker 2-hop paths.
-Single Orderbook now manages N pools (MVP triangle: USDC/ETH, USDC/BTC,
-ETH/BTC). ClearingPublic grew to 114 fields. bb prove confirmed against
-the new circuit; bridge constants (500-field proof, 115-field VK)
-HOLD. Gate count: 276,250 (ACIR opcodes: 153,805).
-New vk_hash: `03180b0a5131de64`.
+**Sub-4 CODE-COMPLETE (2026-05-23):** multi-pair routing with explicit maker 2-hop paths across 18 tasks in 6 phases (A-F).
+Single Orderbook manages N pools (MVP triangle: USDC/ETH, USDC/BTC, ETH/BTC). ClearingPublic grew to 114 fields.
+bb prove confirmed against the new circuit; bridge constants (500-field proof, 115-field VK) HOLD.
+Gate count: 276,250 (ACIR opcodes: 153,805). New vk_hash: `03180b0a5131de64`.
+Witness builder (`buildClearingWitnessMultiPair`) now fully self-consistent with circuit fn main:
+`active_pool_clearings`, `fill_to_order_index` (64-entry), `pool_bucket_states_before/after` ([[BucketState;4];3]),
+`pool_sqrt_p_before` ([u128;3]), `pool_token_pairs` ([[Field;2];3]).
+7 documented carry-forward limitations (2-hop double-claim, 1-hop DoS gap, token-pair truncation,
+Sub-3 circular-dep, statistical privacy leak, fixed pool count, naive composite pricing).
 
 ## Quickstart
 

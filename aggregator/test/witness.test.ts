@@ -156,7 +156,13 @@ describe("Sub-4 buildClearingWitnessMultiPair", () => {
     assert.match(w.proverToml, /order_acc\s*=/);
     assert.match(w.proverToml, /fills_root\s*=/);
     assert.match(w.proverToml, /active_pool_count\s*=\s*0/);
-    assert.match(w.proverToml, /active_pools\s*=/);
+    assert.match(w.proverToml, /active_pool_clearings\s*=/);
+    assert.match(w.proverToml, /fill_to_order_index\s*=/);
+    assert.match(w.proverToml, /pool_bucket_states_before\s*=/);
+    assert.match(w.proverToml, /pool_bucket_states_after\s*=/);
+    assert.match(w.proverToml, /pool_sqrt_p_before\s*=/);
+    assert.match(w.proverToml, /pool_token_pairs\s*=/);
+    assert.doesNotMatch(w.proverToml, /active_pools\s*=/);
   });
 
   it("W2: pads active_pools to 3 with INVALID_POOL_ID sentinels", async () => {
