@@ -13,6 +13,7 @@ export function registerWithdraw(program: Command): void {
     .description("burn an LP position and reclaim its liquidity (Sub-2: per-bucket)")
     .requiredOption("--nonce <field>", "position nonce")
     .requiredOption("--bucket <id>", "bucket id the position belongs to (0..15)")
+    .option("--pool-id <n>", "Pool ID from zswap pools list", "0")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const positionNonce = new Fr(parseField(String(opts.nonce)));
@@ -22,10 +23,14 @@ export function registerWithdraw(program: Command): void {
       }
 
       const config = loadConfig(opts.config);
+      const poolId = Number(opts.poolId ?? 0);
+      const poolEntry = config.pools[poolId];
+      if (!poolEntry) throw new Error(`pool_id ${poolId} not found in config.pools`);
+      const poolAddress = poolEntry.address;
       const ctx = await openCli(config, Number(opts.account));
       try {
         const pool = await LiquidityPoolContract.at(
-          AztecAddress.fromString(config.pool),
+          AztecAddress.fromString(poolAddress),
           ctx.wallet,
         );
         const poolHint = await readPoolHint(pool, ctx.account);

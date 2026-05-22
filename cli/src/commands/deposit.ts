@@ -14,6 +14,7 @@ export function registerDeposit(program: Command): void {
     .requiredOption("--amount-a <n>", "token A amount (smallest unit)")
     .option("--amount-b <n>", "token B amount; omit with --auto-b")
     .option("--auto-b", "auto-derive amount_b from bucket's current ratio")
+    .option("--pool-id <n>", "Pool ID from zswap pools list", "0")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const bucketId = Number(opts.bucket);
@@ -23,10 +24,14 @@ export function registerDeposit(program: Command): void {
       const amountA = BigInt(opts.amountA);
 
       const config = loadConfig(opts.config);
+      const poolId = Number(opts.poolId ?? 0);
+      const poolEntry = config.pools[poolId];
+      if (!poolEntry) throw new Error(`pool_id ${poolId} not found in config.pools`);
+      const poolAddress = poolEntry.address;
       const ctx = await openCli(config, Number(opts.account));
       try {
         const pool = await LiquidityPoolContract.at(
-          AztecAddress.fromString(config.pool),
+          AztecAddress.fromString(poolAddress),
           ctx.wallet,
         );
 

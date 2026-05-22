@@ -44,7 +44,6 @@ export async function openCli(config: ZswapConfig, accountIndex: number): Promis
 
   const contracts: [string, "orderbook" | "pool" | "tUSDC" | "tETH"][] = [
     [config.orderbook, "orderbook"],
-    [config.pool, "pool"],
     [config.tUSDC, "tUSDC"],
     [config.tETH, "tETH"],
   ];
@@ -55,9 +54,18 @@ export async function openCli(config: ZswapConfig, accountIndex: number): Promis
     }
     let artifact;
     if (label === "orderbook") artifact = OrderbookContract.artifact;
-    else if (label === "pool") artifact = LiquidityPoolContract.artifact;
     else artifact = TokenContract.artifact;
     await wallet.registerContract(instance, artifact);
+  }
+  // Register all pools from config.pools[]
+  for (const poolEntry of config.pools) {
+    const instance = await node.getContract(AztecAddress.fromString(poolEntry.address));
+    if (!instance) {
+      throw new Error(
+        `pool_id ${poolEntry.pool_id} contract not found on-chain at ${poolEntry.address} — is the config stale?`,
+      );
+    }
+    await wallet.registerContract(instance, LiquidityPoolContract.artifact);
   }
 
   const stop = async () => {
