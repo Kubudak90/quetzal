@@ -1,19 +1,25 @@
 import type { Command } from "commander";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { Fr } from "@aztec/aztec.js/fields";
 import { LiquidityPoolContract } from "../../../tests/integration/generated/LiquidityPool.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { parseField } from "../field.js";
-import { readPoolHint } from "../pool-hint.js";
+import { readPoolHint, readBucketHint } from "../pool-hint.js";
 
 export function registerWithdraw(program: Command): void {
   program
     .command("withdraw")
-    .description("burn an LP position and reclaim its liquidity")
-    .requiredOption("--nonce <field>", "position nonce (from `zswap deposit` / `zswap positions`)")
+    .description("burn an LP position and reclaim its liquidity (Sub-2: per-bucket)")
+    .requiredOption("--nonce <field>", "position nonce")
+    .requiredOption("--bucket <id>", "bucket id the position belongs to (0..15)")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
-      const positionNonce = parseField(String(opts.nonce));
+      const positionNonce = new Fr(parseField(String(opts.nonce)));
+      const bucketId = Number(opts.bucket);
+      if (!Number.isInteger(bucketId) || bucketId < 0 || bucketId > 15) {
+        throw new Error("--bucket must be an integer in 0..15");
+      }
 
       const config = loadConfig(opts.config);
       const ctx = await openCli(config, Number(opts.account));
@@ -22,10 +28,13 @@ export function registerWithdraw(program: Command): void {
           AztecAddress.fromString(config.pool),
           ctx.wallet,
         );
-        const hint = await readPoolHint(pool, ctx.account);
+        const poolHint = await readPoolHint(pool, ctx.account);
+        const bucketHint = await readBucketHint(pool, bucketId, ctx.account);
 
-        await pool.methods.withdraw(positionNonce, hint).send({ from: ctx.account });
-        console.log(`position 0x${positionNonce.toString(16)} withdrawn; liquidity returned`);
+        await pool.methods
+          .withdraw(positionNonce, poolHint, bucketHint, new Fr(0n), new Fr(0n))
+          .send({ from: ctx.account });
+        console.log(`position ${positionNonce.toString()} (bucket ${bucketId}) withdrawn; liquidity returned`);
       } finally {
         await ctx.stop();
       }

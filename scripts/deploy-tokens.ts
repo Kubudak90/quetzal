@@ -87,9 +87,13 @@ async function main() {
     TETH_NAME, TETH_SYMBOL, TETH_DECIMALS, admin,
   ).send({ from: admin });
 
-  // Pool.
+  // Pool (Sub-2: concentrated liquidity with 16 buckets, geometric 1.5x spacing).
+  // p_min_sqrt = sqrt(0.01) = 0.1e18; growth_num = 1.5e18.
+  const P_MIN_SQRT = 100_000_000_000_000_000n;
+  const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n;
   const deployedPool = await LiquidityPoolContract.deploy(
     wallet, tokenA.contract.address, tokenB.contract.address,
+    P_MIN_SQRT, BUCKET_GROWTH_NUM,
   ).send({ from: admin });
 
   // AggregatorRegistry (independent of Orderbook).
@@ -168,6 +172,9 @@ async function main() {
     admin: admin.toString(),
     aggregatorRegistry: deployedRegistry.contract.address.toString(),
     treasury: finalTreasury.contract.address.toString(),
+    // Sub-2: bucket schema params (offsets the CLI uses to derive bounds).
+    bucketPMinSqrt: P_MIN_SQRT.toString(),
+    bucketGrowthNum: BUCKET_GROWTH_NUM.toString(),
   };
 
   writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));

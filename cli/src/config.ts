@@ -12,6 +12,9 @@ export interface ZswapConfig {
   // commands assert their presence at runtime).
   aggregatorRegistry?: string;
   treasury?: string;
+  // Sub-2 bucket schema params (set by deploy-tokens.ts).
+  bucketPMinSqrt?: string;
+  bucketGrowthNum?: string;
 }
 
 const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
