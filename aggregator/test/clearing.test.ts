@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { computeClearingV2 } from "../src/clearing.js";
+import { computeClearingV2, computeClearingMultiPair } from "../src/clearing.js";
+import type { ClearingOrderMultiPair, PoolStateForRouting } from "../src/clearing.js";
 import { SCALE } from "../src/buckets.js";
+import type { PoolRegistry } from "../src/path.js";
 
 describe("computeClearingV2 (Sub-2.5 bucket-aware)", () => {
   it("V1: BUY-only batch routes through traceBucketSwap and emits deltas", () => {
@@ -48,5 +50,99 @@ describe("computeClearingV2 (Sub-2.5 bucket-aware)", () => {
     assert.ok(Array.isArray(result.bucketStatesBefore), "result has bucketStatesBefore");
     assert.ok(Array.isArray(result.bucketStatesAfter), "result has bucketStatesAfter");
     assert.ok(result.currentSqrtPriceAfter !== undefined, "result has currentSqrtPriceAfter");
+  });
+});
+
+/**
+ * Build a minimal PoolStateForRouting with a single wide bucket.
+ * sqrt_lower must be > 0 to avoid division-by-zero in traceBucketSwap
+ * (the V3 formula has denom = sqrtP * sqrt_lower / SCALE).
+ * We place currentSqrtPrice at the geometric midpoint of the bucket so both
+ * buy and sell directions have room to move.
+ */
+function buildSinglePool(reserveA: bigint, reserveB: bigint): PoolStateForRouting {
+  const sqrtLower = SCALE / 100n;          // 0.01 in 1e18 fixed-point
+  const sqrtUpper = SCALE * 100n;          // 100.0 in 1e18 fixed-point
+  const sqrtMid   = SCALE;                 // 1.0 (geometric midpoint approx)
+  return {
+    reserveA, reserveB, lpSupply: SCALE,
+    currentSqrtPrice: sqrtMid,
+    bucketBounds: [{ sqrt_lower: sqrtLower, sqrt_upper: sqrtUpper }],
+    bucketStates: [{
+      reserve_a: reserveA, reserve_b: reserveB,
+      liquidity: SCALE,
+      cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n,
+    }],
+  };
+}
+
+describe("Sub-4 computeClearingMultiPair", () => {
+  const reg: PoolRegistry = [
+    { pool_id: 0, token_a: 0x111n, token_b: 0x222n },  // tUSDC/tETH
+    { pool_id: 1, token_a: 0x111n, token_b: 0x333n },  // tUSDC/tBTC
+    { pool_id: 2, token_a: 0x222n, token_b: 0x333n },  // tETH/tBTC
+  ];
+
+  it("R1: 1-hop only batch routes to single pool (Sub-1 regression)", () => {
+    const pools = new Map<number, PoolStateForRouting>();
+    pools.set(0, buildSinglePool(10_000n * SCALE, 5_000n * SCALE));
+
+    const orders: ClearingOrderMultiPair[] = [
+      { side: false, amountIn: 100n * SCALE, limitPrice: 5n * SCALE,
+        submittedAtBlock: 1, orderNonce: 42n,
+        path: [0x111n, 0x222n, 0n], path_len: 2 },
+      { side: true, amountIn: 50n * SCALE, limitPrice: SCALE / 2n,
+        submittedAtBlock: 1, orderNonce: 43n,
+        path: [0x111n, 0x222n, 0n], path_len: 2 },
+    ];
+    const r = computeClearingMultiPair({ orders, pools, registry: reg });
+    assert.equal(r.cleared, true);
+    assert.equal(r.activePoolCount, 1);
+    assert.equal(r.perPoolClearings[0]!.pool_id, 0);
+    // All fills should be 1-hop (hop_index = 0)
+    for (const f of r.fills) {
+      assert.equal(f.hop_index, 0);
+    }
+    assert.ok(r.fills.length >= 1);
+  });
+
+  it("R2: 2-hop happy path emits two hop-fills for the 2-hop order", () => {
+    const pools = new Map<number, PoolStateForRouting>();
+    pools.set(0, buildSinglePool(10_000n * SCALE, 5_000n * SCALE));   // USDC/ETH
+    pools.set(2, buildSinglePool(5_000n * SCALE, 200n * SCALE));      // ETH/BTC
+
+    const orders: ClearingOrderMultiPair[] = [
+      { side: false, amountIn: 100n * SCALE, limitPrice: 10_000n * SCALE,
+        submittedAtBlock: 1, orderNonce: 42n,
+        path: [0x111n, 0x222n, 0x333n], path_len: 3 },
+      // Counterparty for hop_0 (ETH side)
+      { side: true, amountIn: 50n * SCALE, limitPrice: SCALE / 10n,
+        submittedAtBlock: 1, orderNonce: 100n,
+        path: [0x111n, 0x222n, 0n], path_len: 2 },
+      // Counterparty for hop_1 (BTC side)
+      { side: true, amountIn: 1n * SCALE, limitPrice: SCALE / 100n,
+        submittedAtBlock: 1, orderNonce: 101n,
+        path: [0x222n, 0x333n, 0n], path_len: 2 },
+    ];
+    const r = computeClearingMultiPair({ orders, pools, registry: reg });
+    assert.equal(r.cleared, true);
+    const hops = r.fills.filter((f) => f.orderNonce === 42n).map((f) => f.hop_index).sort();
+    assert.deepEqual(hops, [0, 1]);
+  });
+
+  it("R3: 2-hop ineligible composite drops BOTH legs", () => {
+    const pools = new Map<number, PoolStateForRouting>();
+    pools.set(0, buildSinglePool(10_000n * SCALE, 5_000n * SCALE));
+    pools.set(2, buildSinglePool(5_000n * SCALE, 200n * SCALE));
+
+    const orders: ClearingOrderMultiPair[] = [{
+      // Maker wants BTC for USDC but limit is extremely tight (0.001 BTC per USDC)
+      side: false, amountIn: 100n * SCALE, limitPrice: SCALE / 1000n,
+      submittedAtBlock: 1, orderNonce: 42n,
+      path: [0x111n, 0x222n, 0x333n], path_len: 3,
+    }];
+    const r = computeClearingMultiPair({ orders, pools, registry: reg });
+    const fills42 = r.fills.filter((f) => f.orderNonce === 42n);
+    assert.equal(fills42.length, 0, "2-hop ineligible -> no legs filled");
   });
 });

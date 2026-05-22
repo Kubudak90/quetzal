@@ -330,6 +330,7 @@ export function computeClearing(pool: PoolSnapshot, orders: ClearingOrder[]): Cl
 // Sub-2: bucket-tracing swap (V3-style concentrated liquidity).
 // ============================================================================
 import type { BucketBounds, BucketState } from "./buckets.js";
+export type { BucketState };
 import {
   SCALE as BUCKET_SCALE,
   nextSqrtPUp,
@@ -596,4 +597,215 @@ export function computeClearingV2(
     bucketStatesBefore: before,
     bucketStatesAfter: after,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sub-4: Multi-pair clearing router
+// ---------------------------------------------------------------------------
+
+import { resolvePoolId, type PoolRegistry } from "./path.js";
+
+/** Sub-4: order shape with explicit path. path[2] = 0n for 1-hop orders. */
+export interface ClearingOrderMultiPair extends ClearingOrder {
+  path: [bigint, bigint, bigint];   // path[2] = 0n for 1-hop
+  path_len: 2 | 3;
+}
+
+/** Sub-4: per-pool state needed by the router (alias of PoolWithBuckets). */
+export type PoolStateForRouting = PoolWithBuckets;
+
+/** Sub-4: one per-hop fill. A 2-hop order produces two of these. */
+export interface HopFill {
+  orderNonce: bigint;
+  hop_index: 0 | 1;
+  amountOut: bigint;
+  pool_id: number;
+}
+
+/** Sub-4: per-pool clearing result. */
+export interface PoolClearingResult {
+  pool_id: number;
+  clearingPrice: bigint;
+  bucketDeltas: BucketDeltaResult[];
+  currentSqrtPriceAfter: bigint;
+  bucketStatesBefore: BucketState[];
+  bucketStatesAfter: BucketState[];
+}
+
+/** Sub-4: multi-pair clearing output. */
+export interface ClearingResultMultiPair {
+  cleared: boolean;
+  activePoolCount: number;
+  perPoolClearings: PoolClearingResult[];
+  fills: HopFill[];
+}
+
+const MULTI_PAIR_MAX_ITERS = 8;
+const HOP_FEE_NUM = 30n;
+const HOP_FEE_DEN = 10_000n;
+
+/**
+ * Sub-4: top-level multi-pair clearing router.
+ *
+ * Each order's path is resolved to per-hop pool_ids via the registry.
+ * Fixed-point iteration drops 2-hop orders whose composite clearing price
+ * (mul_div(P_hop0, P_hop1, SCALE)) doesn't cross their limit_price.
+ * Per-pool computeClearingV2 (Sub-2.5) is the inner kernel.
+ *
+ * Output ClearingResultMultiPair carries:
+ *   - perPoolClearings[]: per-pool clearing state (sorted by pool_id)
+ *   - fills[]: one HopFill per hop per order (2-hop orders emit hop=0 + hop=1)
+ *     with chained amount_in: hop[1].amountIn = hop[0].amountOut
+ */
+export function computeClearingMultiPair(args: {
+  orders: ClearingOrderMultiPair[];
+  pools: Map<number, PoolStateForRouting>;
+  registry: PoolRegistry;
+}): ClearingResultMultiPair {
+  const { orders, pools, registry } = args;
+
+  // Resolve hop pool_ids per order at the start (static; doesn't change across iterations).
+  type Routed = { order: ClearingOrderMultiPair; hops: number[] };
+  const routed: Routed[] = orders.map((o) => {
+    const pathArr: bigint[] = o.path_len === 2
+      ? [o.path[0], o.path[1]]
+      : [o.path[0], o.path[1], o.path[2]];
+    const hops: number[] = [];
+    for (let i = 0; i + 1 < pathArr.length; i++) {
+      const pid = resolvePoolId(registry, pathArr[i]!, pathArr[i + 1]!);
+      if (pid < 0) {
+        throw new Error(
+          `order ${o.orderNonce}: no pool for hop ${i}: ` +
+          `0x${pathArr[i]!.toString(16)}->0x${pathArr[i + 1]!.toString(16)}`
+        );
+      }
+      hops.push(pid);
+    }
+    return { order: o, hops };
+  });
+
+  // Fixed-point iteration: re-run per-pool clearings after dropping ineligible 2-hop orders.
+  let dropped = new Set<bigint>();
+  let prevDroppedSize = -1;
+  let perPool: Map<number, PoolClearingResult> = new Map();
+
+  for (let iter = 0; iter < MULTI_PAIR_MAX_ITERS; iter++) {
+    if (iter > 0 && dropped.size === prevDroppedSize) break;
+    prevDroppedSize = dropped.size;
+
+    // Bucket alive orders into per-pool sub-batches.
+    const perPoolOrders: Map<number, ClearingOrder[]> = new Map();
+    for (const { order, hops } of routed) {
+      if (dropped.has(order.orderNonce)) continue;
+      for (const pid of hops) {
+        const arr = perPoolOrders.get(pid) ?? [];
+        // Strip path fields; per-pool kernel only needs base ClearingOrder.
+        arr.push({
+          side: order.side,
+          amountIn: order.amountIn,
+          limitPrice: order.limitPrice,
+          submittedAtBlock: order.submittedAtBlock,
+          orderNonce: order.orderNonce,
+        });
+        perPoolOrders.set(pid, arr);
+      }
+    }
+
+    // Run per-pool computeClearingV2 (Sub-2.5) independently.
+    perPool = new Map();
+    for (const [pid, subOrders] of perPoolOrders) {
+      const pool = pools.get(pid);
+      if (!pool) continue;
+      const r = computeClearingV2(pool, subOrders);
+      if (!r.cleared) continue;
+      perPool.set(pid, {
+        pool_id: pid,
+        clearingPrice: r.clearingPrice,
+        bucketDeltas: r.bucketDeltas ?? [],
+        currentSqrtPriceAfter: r.currentSqrtPriceAfter ?? pool.currentSqrtPrice,
+        bucketStatesBefore: r.bucketStatesBefore ?? [],
+        bucketStatesAfter: r.bucketStatesAfter ?? [],
+      });
+    }
+
+    // Composite-eligibility pass: drop 2-hop orders that can't execute at composite price.
+    let newDrops = false;
+    for (const { order, hops } of routed) {
+      if (order.path_len !== 3) continue;
+      if (dropped.has(order.orderNonce)) continue;
+      const p0 = perPool.get(hops[0]!);
+      const p1 = perPool.get(hops[1]!);
+      if (!p0 || !p1) {
+        // One or both hop pools didn't clear; 2-hop can't execute.
+        dropped.add(order.orderNonce);
+        newDrops = true;
+        continue;
+      }
+      // Composite price: P_hop0 * P_hop1 / SCALE (both prices are quote-per-base 1e18).
+      const composite = mulDiv(p0.clearingPrice, p1.clearingPrice, SCALE);
+      // Buy (side=false): buyer pays token_a, receives token_b via both hops.
+      //   Eligible if limitPrice (max willing to pay) >= composite (actual cost).
+      // Sell (side=true): seller receives token_a at composite.
+      //   Eligible if limitPrice (min willing to accept) <= composite.
+      const eligible = order.side === false
+        ? order.limitPrice >= composite
+        : order.limitPrice <= composite;
+      if (!eligible) {
+        dropped.add(order.orderNonce);
+        newDrops = true;
+      }
+    }
+    if (!newDrops && iter > 0) break;
+  }
+
+  if (perPool.size === 0) {
+    return { cleared: false, activePoolCount: 0, perPoolClearings: [], fills: [] };
+  }
+
+  // Emit per-order per-hop fills for all non-dropped orders.
+  const fills: HopFill[] = [];
+  for (const { order, hops } of routed) {
+    if (dropped.has(order.orderNonce)) continue;
+    let chainedAmountIn = order.amountIn;
+    for (let h = 0; h < hops.length; h++) {
+      const pid = hops[h]!;
+      const pr = perPool.get(pid);
+      if (!pr) continue; // Pool didn't clear; defensive skip.
+      const amountOut = hopPayout(chainedAmountIn, pr.clearingPrice, order.side);
+      fills.push({
+        orderNonce: order.orderNonce,
+        hop_index: h as 0 | 1,
+        amountOut,
+        pool_id: pid,
+      });
+      // Chain: next hop's input is this hop's output.
+      chainedAmountIn = amountOut;
+    }
+  }
+
+  return {
+    cleared: true,
+    activePoolCount: perPool.size,
+    perPoolClearings: Array.from(perPool.values()).sort((a, b) => a.pool_id - b.pool_id),
+    fills,
+  };
+}
+
+/**
+ * Compute payout for one hop at the uniform clearing price, after the 0.3% LP fee.
+ *
+ * Pricing convention (same as Sub-1 computeClearing):
+ *   price P = token_b per token_a (quote-per-base, 1e18-scaled).
+ *   buy  (side=false): amountIn is token_a => amountOut = amountIn * SCALE / P (in token_b).
+ *   sell (side=true):  amountIn is token_b => amountOut = amountIn * P / SCALE (in token_a).
+ *
+ * Note: The 0.3% fee used here (30/10_000) matches the circuit constant rather
+ * than the 0.997 fee-multiplier used in simulateNet, keeping the payout consistent
+ * with on-chain witness generation.
+ */
+function hopPayout(amountIn: bigint, p: bigint, side: boolean): bigint {
+  const gross = side === false
+    ? mulDiv(amountIn, SCALE, p)   // buy: token_a -> token_b
+    : mulDiv(amountIn, p, SCALE);  // sell: token_b -> token_a
+  return (gross * (HOP_FEE_DEN - HOP_FEE_NUM)) / HOP_FEE_DEN;
 }
