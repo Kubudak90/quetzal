@@ -365,5 +365,6 @@ pub contract LiquidityPool {
         self.storage.positions.at(owner).view_notes(NoteViewerOptions::new())
     }
 
+    pub mod buckets;
     pub mod test;
 }
