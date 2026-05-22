@@ -8,6 +8,7 @@ import { webcrypto } from "node:crypto";
 import type { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { Fr } from "@aztec/aztec.js/fields";
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
@@ -243,10 +244,12 @@ describe("cli smoke (live integration)", () => {
     const sellNonce = randomField();
 
     await orderbook.methods
-      .submit_order(false, BUY_AMOUNT, 2n * PRICE_1, randomField(), buyNonce)
+      .submit_order(false, BUY_AMOUNT, 2n * PRICE_1, randomField(), buyNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: admin });
     await orderbook.methods
-      .submit_order(true, SELL_AMOUNT, PRICE_1 / 2n, randomField(), sellNonce)
+      .submit_order(true, SELL_AMOUNT, PRICE_1 / 2n, randomField(), sellNonce,
+        2n, [tETH.address, tUSDC.address, Fr.ZERO])
       .send({ from: admin });
 
     // Run the off-chain aggregator.

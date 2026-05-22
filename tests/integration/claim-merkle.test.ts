@@ -322,11 +322,13 @@ describe(
         const sellNonce = randomField();
 
         await orderbook.methods
-          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce)
+          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce,
+            2n, [tUSDC.address, tETH.address, Fr.ZERO])
           .send({ from: alice });
 
         await orderbook.methods
-          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce)
+          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce,
+            2n, [tETH.address, tUSDC.address, Fr.ZERO])
           .send({ from: bob });
 
         // ===================================================================

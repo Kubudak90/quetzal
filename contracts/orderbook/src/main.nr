@@ -49,6 +49,10 @@ pub contract Orderbook {
     /// - `limit_price`: quote-per-base price scaled to 18 decimals (Q-format).
     /// - `nonce`: per-order random salt to make every note unique and unlinkable.
     /// - `owner`: address of the order's maker (also nullifier subject).
+    /// - `path_len`: Sub-4 routing path length; must be 2 or 3.
+    ///   path[0] = input token; path[path_len-1] = output token.
+    /// - `path`: Sub-4 routing path as token addresses encoded as Fields (3 slots).
+    ///   For path_len == 2, path[2] = 0 (sentinel for unused 3rd hop).
     #[derive(Deserialize, Eq, Packable, Serialize)]
     #[note]
     pub struct OrderNote {
@@ -58,6 +62,11 @@ pub contract Orderbook {
         pub limit_price: u128,
         pub nonce: Field,
         pub owner: AztecAddress,
+        // Sub-4: routing path. path_len in {2, 3}.
+        // path[0] = input token; path[path_len-1] = output token.
+        // For path_len == 2, path[2] = 0 (sentinel).
+        pub path_len: u8,
+        pub path: [Field; 3],
     }
 
     /// Public state of the current epoch.
@@ -190,14 +199,15 @@ pub contract Orderbook {
     ///
     /// Flow:
     /// 1. Validate inputs (`amount_in > 0`, `limit_price > 0`).
-    /// 2. Read the input token address from public-immutable storage (decided by `side`).
-    /// 3. Escrow the maker's tokens by calling `Token.transfer_private_to_public`, moving
+    /// 2. Validate Sub-4 path: `path_len` in {2, 3}; all hops in the path must be distinct.
+    /// 3. Read the input token address from public-immutable storage (decided by `side`).
+    /// 4. Escrow the maker's tokens by calling `Token.transfer_private_to_public`, moving
     ///    `amount_in` of the input token from the maker's private balance into the orderbook
     ///    contract's PUBLIC balance. This contract becomes the custodian until the order is
     ///    cancelled (Week 3) or cleared (Week 6+).
-    /// 4. Commit an encrypted `OrderNote` to the maker's private set so they can prove ownership
+    /// 5. Commit an encrypted `OrderNote` to the maker's private set so they can prove ownership
     ///    later (for cancellation / clearing).
-    /// 5. Enqueue a public callback to assert the epoch is still OPEN at the time the tx is mined.
+    /// 6. Enqueue a public callback to assert the epoch is still OPEN at the time the tx is mined.
     ///    Epoch state lives in a `PublicMutable`, which is not directly readable from private
     ///    context in Aztec v4.2.0, so the check is deferred to public execution.
     ///
@@ -207,6 +217,10 @@ pub contract Orderbook {
     /// - `limit_price`: quote-per-base price scaled to 18 decimals (must be > 0).
     /// - `nonce`: authwit nonce for the inner `Token.transfer_private_to_public` call.
     /// - `order_nonce`: per-order random salt embedded into the `OrderNote` for uniqueness.
+    /// - `path_len`: Sub-4 routing path length; must be 2 (1-hop) or 3 (2-hop).
+    /// - `path`: Sub-4 routing path as token addresses encoded as Fields (3 slots).
+    ///   path[0] = input token, path[path_len-1] = output token.
+    ///   For path_len == 2, path[2] MUST be 0 (sentinel).
     ///
     /// The `nonce` and `order_nonce` are intentionally distinct so the authwit nonce cannot
     /// collide with the note-identity nonce.
@@ -217,9 +231,21 @@ pub contract Orderbook {
         limit_price: u128,
         nonce: Field,
         order_nonce: Field,
+        // Sub-4 NEW:
+        path_len: u8,
+        path: [Field; 3],
     ) {
         assert(amount_in > 0 as u128, "amount_in must be positive");
         assert(limit_price > 0 as u128, "limit_price must be positive");
+        // Sub-4: path validation
+        assert((path_len == 2) | (path_len == 3), "path_len must be 2 or 3");
+        assert(path[0] != path[1], "path[0] == path[1]");
+        if path_len == 3 {
+            assert(path[1] != path[2], "path[1] == path[2]");
+            assert(path[0] != path[2], "path[0] == path[2]");
+        } else {
+            assert(path[2] == 0 as Field, "path[2] must be 0 sentinel for 1-hop");
+        }
 
         let maker = self.msg_sender();
 
@@ -252,6 +278,8 @@ pub contract Orderbook {
             limit_price,
             nonce: order_nonce,
             owner: maker,
+            path_len,
+            path,
         };
         self.storage.orders.at(maker).insert(order).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
 

@@ -22,6 +22,9 @@ unconstrained fn order_note_serialization_round_trip() {
         limit_price: 2_000_000_000_000_000_000,
         nonce: 0x1234567890abcdef,
         owner: AztecAddress::from_field(0xdeadbeef),
+        // Sub-4: 1-hop path (tUSDC -> tETH), sentinel zero in slot 2.
+        path_len: 2,
+        path: [0x111 as Field, 0x222 as Field, 0 as Field],
     };
 
     let bytes = note.serialize();
@@ -33,6 +36,10 @@ unconstrained fn order_note_serialization_round_trip() {
     assert(back.limit_price == note.limit_price, "limit_price mismatch");
     assert(back.nonce == note.nonce, "nonce mismatch");
     assert(back.owner == note.owner, "owner mismatch");
+    assert(back.path_len == note.path_len, "path_len mismatch");
+    assert(back.path[0] == note.path[0], "path[0] mismatch");
+    assert(back.path[1] == note.path[1], "path[1] mismatch");
+    assert(back.path[2] == note.path[2], "path[2] mismatch");
 }
 
 #[test]
@@ -45,6 +52,8 @@ unconstrained fn order_note_different_nonce_different_hash() {
         limit_price: 1_000_000_000_000_000_000,
         nonce: 0x1,
         owner: AztecAddress::from_field(0xa),
+        path_len: 2,
+        path: [0x100 as Field, 0x200 as Field, 0 as Field],
     };
     let other = OrderNote {
         submitted_at_block: 100,
@@ -53,6 +62,8 @@ unconstrained fn order_note_different_nonce_different_hash() {
         limit_price: 1_000_000_000_000_000_000,
         nonce: 0x2,
         owner: AztecAddress::from_field(0xa),
+        path_len: 2,
+        path: [0x100 as Field, 0x200 as Field, 0 as Field],
     };
 
     // Two notes that differ only in `nonce` must produce distinct note hashes for the same
@@ -149,9 +160,18 @@ unconstrained fn submit_order_rejects_amount_zero() {
     let maker = env.create_light_account();
 
     // side=false (bid token A), amount_in=0 must revert with "amount_in must be positive".
+    // path_len=2 with distinct tokens so the path check passes; the amount_in check fires first.
     env.call_private(
         maker,
-        Orderbook::at(orderbook).submit_order(false, 0 as u128, 1 as u128, 0, 0),
+        Orderbook::at(orderbook).submit_order(
+            false,
+            0 as u128,
+            1 as u128,
+            0,
+            0,
+            2 as u8,
+            [deployer.to_field(), AztecAddress::from_field(1).to_field(), 0 as Field],
+        ),
     );
 }
 
@@ -165,9 +185,18 @@ unconstrained fn submit_order_rejects_limit_price_zero() {
     let maker = env.create_light_account();
 
     // amount_in=100 passes the first assert; limit_price=0 must trigger the second.
+    // path_len=2 with distinct tokens so path check passes; limit_price check fires next.
     env.call_private(
         maker,
-        Orderbook::at(orderbook).submit_order(false, 100 as u128, 0 as u128, 0, 0),
+        Orderbook::at(orderbook).submit_order(
+            false,
+            100 as u128,
+            0 as u128,
+            0,
+            0,
+            2 as u8,
+            [deployer.to_field(), AztecAddress::from_field(1).to_field(), 0 as Field],
+        ),
     );
 }
 
@@ -505,6 +534,61 @@ unconstrained fn t4b_merkle_leaf_and_root_are_consistent() {
 // T9b (cancel-after-fill underflow) similarly requires a real Token+Pool deployment
 // that TXE doesn't easily provide. The spec flags this protection as worth verifying
 // and it is also exercised by Task 12.
+
+// ============================================================================
+// Sub-4 Task A1: path extension negative-validation tests.
+// These tests fire BEFORE any cross-contract call, so placeholder token
+// addresses are sufficient (same pattern as submit_order_rejects_amount_zero).
+
+#[test(should_fail_with = "path_len must be 2 or 3")]
+unconstrained fn submit_order_rejects_invalid_path_len() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
+
+    let maker = env.create_light_account();
+
+    // path_len=1 must revert before any token call.
+    env.call_private(
+        maker,
+        Orderbook::at(orderbook).submit_order(
+            false,
+            100 as u128,
+            1 as u128,
+            0,
+            0,
+            1 as u8,
+            [deployer.to_field(), deployer.to_field(), 0 as Field],
+        ),
+    );
+}
+
+#[test(should_fail_with = "path[0] == path[1]")]
+unconstrained fn submit_order_rejects_duplicate_path_hop() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+
+    let orderbook = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
+
+    let maker = env.create_light_account();
+    let addr_a = env.create_light_account();
+    let addr_b = env.create_light_account();
+
+    // path_len=2 with path[0] == path[1] must revert.
+    env.call_private(
+        maker,
+        Orderbook::at(orderbook).submit_order(
+            false,
+            100 as u128,
+            1 as u128,
+            0,
+            0,
+            2 as u8,
+            [addr_a.to_field(), addr_a.to_field(), 0 as Field],
+        ),
+    );
+}
 
 // ============================================================================
 // Sub-3: Aggregator registration gate (O1) -- deferred to Task 18 e2e.

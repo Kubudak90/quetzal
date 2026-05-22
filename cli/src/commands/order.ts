@@ -33,8 +33,16 @@ export function registerOrder(program: Command): void {
           ctx.wallet,
         );
         const orderNonce = randomField();
+        // Sub-4: default to 1-hop path using the pair's two token addresses from config.
+        // path[0] = input token (tUSDC for buy, tETH for sell), path[1] = output token.
+        const tUSDCAddr = AztecAddress.fromString(config.tUSDC);
+        const tETHAddr  = AztecAddress.fromString(config.tETH);
+        const path: [AztecAddress, AztecAddress, Fr] = sideFlag
+          ? [tETHAddr,  tUSDCAddr, Fr.ZERO]   // sell: deposit tETH, receive tUSDC
+          : [tUSDCAddr, tETHAddr,  Fr.ZERO];   // buy:  deposit tUSDC, receive tETH
         const tx = await orderbook.methods
-          .submit_order(sideFlag, amount, limit, randomField(), orderNonce)
+          .submit_order(sideFlag, amount, limit, randomField(), orderNonce,
+            2n, path)
           .send({ from: ctx.account });
         const receipt: unknown = await (tx as { wait?: () => Promise<unknown> }).wait?.();
 

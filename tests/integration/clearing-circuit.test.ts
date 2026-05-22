@@ -23,6 +23,7 @@ import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import type { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { Fr } from "@aztec/aztec.js/fields";
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
@@ -180,11 +181,13 @@ describe(
         const sellNonce = randomField();
 
         await orderbook.methods
-          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce)
+          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce,
+            2n, [tUSDC.address, tETH.address, Fr.ZERO])
           .send({ from: alice });
 
         await orderbook.methods
-          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce)
+          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce,
+            2n, [tETH.address, tUSDC.address, Fr.ZERO])
           .send({ from: bob });
 
         // ---------------------------------------------------------------
@@ -450,11 +453,13 @@ describe(
         const sellNonce = randomField();
 
         await orderbook.methods
-          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce)
+          .submit_order(false, BUY_USDC, BUY_LIMIT, randomField(), buyNonce,
+            2n, [tUSDC.address, tETH.address, Fr.ZERO])
           .send({ from: alice });
 
         await orderbook.methods
-          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce)
+          .submit_order(true, SELL_ETH, SELL_LIMIT, randomField(), sellNonce,
+            2n, [tETH.address, tUSDC.address, Fr.ZERO])
           .send({ from: bob });
 
         // ---------------------------------------------------------------

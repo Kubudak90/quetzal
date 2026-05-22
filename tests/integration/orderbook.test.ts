@@ -212,7 +212,8 @@ describe("orderbook (live integration)", () => {
     const beforeOrderbook = await readPublicBalance(tUSDC, orderbook.address, admin);
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER1_USDC, PRICE_2, randomField(), randomField())
+      .submit_order(SIDE_A_TO_B, ORDER1_USDC, PRICE_2, randomField(), randomField(),
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     const afterAlice = await readPrivateBalance(tUSDC, alice);
@@ -229,7 +230,8 @@ describe("orderbook (live integration)", () => {
     const beforeOrderbookUSDC = await readPublicBalance(tUSDC, orderbook.address, admin);
 
     await orderbook.methods
-      .submit_order(SIDE_B_TO_A, ORDER2_ETH, PRICE_2, randomField(), randomField())
+      .submit_order(SIDE_B_TO_A, ORDER2_ETH, PRICE_2, randomField(), randomField(),
+        2n, [tETH.address, tUSDC.address, Fr.ZERO])
       .send({ from: alice });
 
     const afterETH = await readPrivateBalance(tETH, alice);
@@ -250,7 +252,8 @@ describe("orderbook (live integration)", () => {
 
     await assert.rejects(
       orderbook.methods
-        .submit_order(SIDE_A_TO_B, ORDER3_USDC_HUGE, PRICE_2, randomField(), randomField())
+        .submit_order(SIDE_A_TO_B, ORDER3_USDC_HUGE, PRICE_2, randomField(), randomField(),
+          2n, [tUSDC.address, tETH.address, Fr.ZERO])
         .send({ from: alice }),
       /balance|notes|insufficient|too low/i,
       "submit_order should revert when private balance is insufficient",
@@ -265,11 +268,13 @@ describe("orderbook (live integration)", () => {
     const beforeAlice = await readPrivateBalance(tUSDC, alice);
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER4A_USDC, PRICE_2, randomField(), randomField())
+      .submit_order(SIDE_A_TO_B, ORDER4A_USDC, PRICE_2, randomField(), randomField(),
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER4B_USDC, PRICE_2, randomField(), randomField())
+      .submit_order(SIDE_A_TO_B, ORDER4B_USDC, PRICE_2, randomField(), randomField(),
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     const afterOrderbook = await readPublicBalance(tUSDC, orderbook.address, admin);
@@ -345,7 +350,8 @@ describe("orderbook cancel_order (live integration)", () => {
     const orderNonce = randomField();
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     assert.equal(await readPrivateBalance(tUSDC, alice), before - ORDER_USDC, "escrowed");
@@ -370,7 +376,8 @@ describe("orderbook cancel_order (live integration)", () => {
     const orderNonce = randomField();
 
     await orderbook.methods
-      .submit_order(SIDE_B_TO_A, ORDER_ETH, PRICE_2, randomField(), orderNonce)
+      .submit_order(SIDE_B_TO_A, ORDER_ETH, PRICE_2, randomField(), orderNonce,
+        2n, [tETH.address, tUSDC.address, Fr.ZERO])
       .send({ from: alice });
     await orderbook.methods
       .cancel_order(orderNonce, 0n)
@@ -385,10 +392,12 @@ describe("orderbook cancel_order (live integration)", () => {
     const dropNonce = randomField();
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), keepNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), keepNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), dropNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), dropNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     const escrowBoth = await readPublicBalance(tUSDC, orderbook.address, admin);
@@ -412,7 +421,8 @@ describe("orderbook cancel_order (live integration)", () => {
   it("double cancel of the same order fails", { timeout: 600_000 }, async () => {
     const orderNonce = randomField();
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
     await orderbook.methods
       .cancel_order(orderNonce, 0n)
@@ -428,7 +438,8 @@ describe("orderbook cancel_order (live integration)", () => {
   it("a non-owner cannot cancel another maker's order", { timeout: 600_000 }, async () => {
     const orderNonce = randomField();
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     await assert.rejects(
@@ -535,7 +546,8 @@ describe("orderbook epoch transitions (live integration)", () => {
     // submit_order must revert while the epoch is expired-but-not-closed.
     await assert.rejects(
       orderbook.methods
-        .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField())
+        .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField(),
+          2n, [tUSDC.address, tETH.address, Fr.ZERO])
         .send({ from: alice }),
       /epoch has expired/i,
       "submit_order must revert once the epoch window has elapsed",
@@ -544,7 +556,8 @@ describe("orderbook epoch transitions (live integration)", () => {
     // Close the epoch, then submit_order works again in the fresh epoch.
     await orderbook.methods.close_epoch().send({ from: admin });
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField())
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), randomField(),
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
   });
 
@@ -552,7 +565,8 @@ describe("orderbook epoch transitions (live integration)", () => {
     // One order rests in the current (fresh) epoch.
     const orderNonce = randomField();
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce)
+      .submit_order(SIDE_A_TO_B, ORDER_USDC, PRICE_2, randomField(), orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     const escrowBefore = await readPublicBalance(tUSDC, orderbook.address, admin);
@@ -625,7 +639,8 @@ describe("orderbook order accumulator (live integration)", () => {
     const orderNonce = randomField();
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     // Read the OrderNote that was just inserted to get the contract's chosen submitted_at_block.
@@ -675,7 +690,11 @@ describe("orderbook order accumulator (live integration)", () => {
       const orderNonce = randomField();
 
       await orderbook.methods
-        .submit_order(s.side, s.amountIn, s.limitPrice, authwitNonce, orderNonce)
+        .submit_order(s.side, s.amountIn, s.limitPrice, authwitNonce, orderNonce,
+          2n,
+          s.side === SIDE_A_TO_B
+            ? [tUSDC.address, tETH.address, Fr.ZERO]
+            : [tETH.address, tUSDC.address, Fr.ZERO])
         .send({ from: alice });
 
       // Read alice's notes and find the one we just inserted (its nonce matches).
@@ -715,7 +734,8 @@ describe("orderbook order accumulator (live integration)", () => {
     const orderNonce = randomField();
 
     await orderbook.methods
-      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce,
+        2n, [tUSDC.address, tETH.address, Fr.ZERO])
       .send({ from: alice });
 
     // Pull the just-submitted note to get its submitted_at_block.
@@ -809,7 +829,8 @@ describe("orderbook order accumulator (live integration)", () => {
     const authwitNonce = randomField();
     const orderNonce = randomField();
     await freshOrderbook.methods
-      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+      .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce,
+        2n, [freshTUSDC.address, freshTETH.address, Fr.ZERO])
       .send({ from: alice });
     await freshOrderbook.methods
       .cancel_order(orderNonce, 0n)
@@ -860,7 +881,8 @@ describe("orderbook order accumulator (live integration)", () => {
       const authwitNonce = randomField();
       const orderNonce = randomField();
       await freshOrderbook6a.methods
-        .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce)
+        .submit_order(SIDE_A_TO_B, 1n * ONE_TUSDC, PRICE_2, authwitNonce, orderNonce,
+          2n, [freshTUSDC6a.address, freshTETH6a.address, Fr.ZERO])
         .send({ from: alice });
     }
 
@@ -940,7 +962,8 @@ describe("orderbook order accumulator (live integration)", () => {
         const authwitNonce = randomField();
         const orderNonce = randomField();
         await freshOrderbook5.methods
-          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce, orderNonce)
+          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce, orderNonce,
+            2n, [freshTUSDC5.address, freshTETH5.address, Fr.ZERO])
           .send({ from: alice });
       }
 
@@ -954,7 +977,8 @@ describe("orderbook order accumulator (live integration)", () => {
       const orderNonce33 = randomField();
       await assert.rejects(
         freshOrderbook5.methods
-          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce33, orderNonce33)
+          .submit_order(SIDE_A_TO_B, 1n, PRICE_2, authwitNonce33, orderNonce33,
+            2n, [freshTUSDC5.address, freshTETH5.address, Fr.ZERO])
           .send({ from: alice }),
         /epoch order capacity reached/i,
         "the 33rd submit must revert with the capacity message",
