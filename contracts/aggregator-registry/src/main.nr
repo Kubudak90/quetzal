@@ -75,6 +75,16 @@ pub contract AggregatorRegistry {
         self.storage.next_id.write(id + 1);
     }
 
+    /// Update only the endpoint hash for the calling aggregator. Bond is untouched.
+    /// Reverts if caller is not currently registered.
+    #[external("public")]
+    fn update_endpoint(new_endpoint_url_hash: Field) {
+        let caller = self.msg_sender();
+        let bonded = self.storage.bonded_amount_by_addr.at(caller).read();
+        assert(bonded > 0 as u128, "not registered");
+        self.storage.endpoint_hash_by_addr.at(caller).write(new_endpoint_url_hash);
+    }
+
     // ============================ UNCONSTRAINED GETTERS ============================
 
     #[external("utility")]

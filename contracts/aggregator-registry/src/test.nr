@@ -61,3 +61,18 @@ unconstrained fn r5_is_registered_false_for_unknown_addr() {
 // src/test.nr's submit_order tests, which only cover input-validation reverts
 // that fire BEFORE any cross-contract Token call). Full happy-path R1/R2
 // coverage lands in the Task 18 e2e (tests/integration/aggregator-race.test.ts).
+
+#[test(should_fail_with = "not registered")]
+unconstrained fn r3_update_endpoint_rejects_unregistered_caller() {
+    // R3 (positive update_endpoint after register) requires the same Token
+    // authwit machinery as R1; deferred to Task 18 e2e. The negative path
+    // (the assert fires before any cross-contract call) IS testable here:
+    // a stranger calling update_endpoint must revert with "not registered".
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let registry =
+        deploy_registry(&mut env, deployer, AztecAddress::from_field(0xCA1), 1_000_000_000);
+
+    let stranger = env.create_light_account();
+    env.call_public(stranger, AggregatorRegistry::at(registry).update_endpoint(0xBB));
+}
