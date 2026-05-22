@@ -195,3 +195,34 @@ describe("traceBucketSwap multi-bucket DOWN (Sub-2.5)", () => {
     );
   });
 });
+
+describe("traceBucketSwap invariants (Sub-2.5)", () => {
+  it("M7: sum of stepIn across deltas equals netB (after fee)", () => {
+    const pool = buildPool(SCALE / 5n, 4);
+    const bucket4 = pool.bucketStates[4]!;
+    const upper4 = pool.bucketBounds[4]!.sqrt_upper;
+    const maxBin = (bucket4.liquidity * (upper4 - pool.currentSqrtPrice)) / SCALE;
+    pool.bucketStates[5] = {
+      reserve_a: 1000n * SCALE, reserve_b: 1000n * SCALE,
+      liquidity: SCALE, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n,
+    };
+    const netB = maxBin * 2n;
+    const out = traceBucketSwap(pool, 0n, netB);
+    const sumBIn = out.bucketDeltas.reduce((acc, d) => acc + d.reserve_b_add, 0n);
+    const FEE_NUM = 30n, FEE_DEN = 10_000n;
+    const afterFee = (netB * (FEE_DEN - FEE_NUM)) / FEE_DEN;
+    assert.equal(sumBIn, afterFee, "sumBIn matches netB after 0.3% fee");
+  });
+
+  it("M8: newReserveA + newReserveB consistent with delta aggregation", () => {
+    const pool = buildPool(SCALE / 5n, 4);
+    const out = traceBucketSwap(pool, 0n, SCALE / 1000n);
+    let aggA = 0n, aggB = 0n;
+    for (const d of out.bucketDeltas) {
+      aggA += d.reserve_a_add - d.reserve_a_sub;
+      aggB += d.reserve_b_add - d.reserve_b_sub;
+    }
+    assert.equal(out.newReserveA, pool.reserveA + aggA);
+    assert.equal(out.newReserveB, pool.reserveB + aggB);
+  });
+});
