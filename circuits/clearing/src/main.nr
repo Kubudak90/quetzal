@@ -6,66 +6,71 @@ mod merkle;
 mod buckets;
 mod test;
 
-use types::{ClearingSwap, FillEntry, OrderPreimage, MAX_ORDERS_PER_EPOCH};
+use types::{
+    BucketDelta, BucketState, ClearingSwap, FillEntry, OrderPreimage,
+    MAX_ACTIVE_BUCKETS_PER_EPOCH, MAX_ORDERS_PER_EPOCH, NUM_BUCKETS,
+};
 
 fn main(
-    // Binding (public)
-    order_acc: pub Field,
-    cancel_acc: pub Field,
-    order_count: pub u32,
+    // ===== Public inputs (42 fields total; matches contracts/orderbook
+    //       flatten_clearing_public + Sub-2.5 design Section 3) =====
+    // [0-3] Binding (Sub-1 carryover)
+    order_acc:    pub Field,
+    cancel_acc:   pub Field,
+    order_count:  pub u32,
     cancel_count: pub u32,
-
-    // Pre-clearing pool snapshot (public)
-    reserve_a: pub u128,
-    reserve_b: pub u128,
-    lp_supply: pub u128,
-
-    // Aggregator's claimed clearing output (public)
-    clearing_price: pub u128,
+    // [4-6] Pre-clearing aggregate pool snapshot
+    reserve_a:        pub u128,
+    reserve_b:        pub u128,
+    clearing_price:   pub u128,
+    // [7] Sub-1 5d-4 Merkle settlement root
     fills_root: pub Field,
-    swap: pub ClearingSwap,
+    // [8-11] Aggregate flows
+    a_to_pool:   pub u128,
+    b_to_pool:   pub u128,
+    a_from_pool: pub u128,
+    b_from_pool: pub u128,
+    // [12-13] Pool sqrt-p chain endpoint + active bucket count
+    current_sqrt_price_after: pub u128,
+    active_bucket_count:      pub u32,
+    // [14-41] Sparse per-bucket deltas
+    active_bucket_deltas: pub [BucketDelta; MAX_ACTIVE_BUCKETS_PER_EPOCH],
 
-    // Witness (private) - fills/fills_len moved here from public in 5d-4;
-    // positional ordering of Prover.toml fields below changed accordingly.
-    orders: [OrderPreimage; MAX_ORDERS_PER_EPOCH],
-    cancelled_indices: [u32; MAX_ORDERS_PER_EPOCH],
-    fills: [FillEntry; MAX_ORDERS_PER_EPOCH],
-    fills_len: u32,
-    fill_to_order_index: [u32; MAX_ORDERS_PER_EPOCH],
+    // ===== Private witnesses =====
+    // Sub-1 carryover
+    orders:              [OrderPreimage; MAX_ORDERS_PER_EPOCH],
+    cancelled_indices:   [u32;            MAX_ORDERS_PER_EPOCH],
+    fills:               [FillEntry;      MAX_ORDERS_PER_EPOCH],
+    fills_len:           u32,
+    fill_to_order_index: [u32;            MAX_ORDERS_PER_EPOCH],
+    // Sub-2.5 NEW
+    bucket_states_before: [BucketState; MAX_ACTIVE_BUCKETS_PER_EPOCH],
+    bucket_states_after:  [BucketState; MAX_ACTIVE_BUCKETS_PER_EPOCH],
+    pool_sqrt_p_before:   u128,
 ) {
+    // ============ Sub-1 carryover: binding + per-fill + DoS + Merkle ============
     assert(order_count <= MAX_ORDERS_PER_EPOCH, "order_count exceeds cap");
     assert(cancel_count <= order_count, "cancel_count > order_count");
     assert(fills_len <= MAX_ORDERS_PER_EPOCH, "fills_len exceeds cap");
 
-    // Binding (sec 6.1): replay both chains.
     let replayed_order_acc = binding::replay_chain(orders, order_count);
     assert(replayed_order_acc == order_acc, "order_acc replay mismatch");
-
     let replayed_cancel_acc =
         binding::replay_cancel_chain(orders, cancelled_indices, cancel_count, order_count);
     assert(replayed_cancel_acc == cancel_acc, "cancel_acc replay mismatch");
-
     let is_cancelled = binding::derive_is_cancelled(cancelled_indices, cancel_count, order_count);
 
-    // Per-fill eligibility + payout (sec 6.2). fill_to_order_index[i] maps fills[i]
-    // to the orders[] slot it pays out.
     for i in 0..MAX_ORDERS_PER_EPOCH {
         if (i as u32) < fills_len {
             let j = fill_to_order_index[i];
             assert(j < order_count, "fill_to_order_index[i] >= order_count");
-            // Scan-and-pick orders[j] (constraint-safe dynamic index pattern).
             let mut order_j = orders[0];
             for k in 0..MAX_ORDERS_PER_EPOCH {
-                if (k as u32) == j {
-                    order_j = orders[k];
-                }
+                if (k as u32) == j { order_j = orders[k]; }
             }
-            // is_cancelled[j] lookup (same pattern).
             let mut j_is_cancelled: bool = false;
             for k in 0..MAX_ORDERS_PER_EPOCH {
-                if (k as u32) == j {
-                    j_is_cancelled = is_cancelled[k];
-                }
+                if (k as u32) == j { j_is_cancelled = is_cancelled[k]; }
             }
             assert(!j_is_cancelled, "filled order was cancelled");
             assert(order_j.order_nonce == fills[i].order_nonce, "fill nonce mismatch");
@@ -75,21 +80,15 @@ fn main(
         }
     }
 
-    // DoS resistance (sec 6.3): every eligible non-cancelled order must be in fills.
-    // Derive is_filled from fill_to_order_index[0..fills_len].
     let mut is_filled: [bool; MAX_ORDERS_PER_EPOCH] = [false; MAX_ORDERS_PER_EPOCH];
     for i in 0..MAX_ORDERS_PER_EPOCH {
         if (i as u32) < fills_len {
             let j = fill_to_order_index[i];
-            // Scan-and-set, mirroring binding::derive_is_cancelled.
             for k in 0..MAX_ORDERS_PER_EPOCH {
-                if (k as u32) == j {
-                    is_filled[k] = true;
-                }
+                if (k as u32) == j { is_filled[k] = true; }
             }
         }
     }
-
     for k in 0..MAX_ORDERS_PER_EPOCH {
         if (k as u32) < order_count {
             if !is_cancelled[k] {
@@ -100,7 +99,7 @@ fn main(
         }
     }
 
-    // Aggregate net-swap derivation (sec 6.4) over filled orders.
+    // Aggregate gross-flow derivation (Sub-1 sec 6.4 + 6.5).
     let mut gross_buy_in_a: u128 = 0 as u128;
     let mut gross_sell_in_b: u128 = 0 as u128;
     let mut buyer_payouts_b: u128 = 0 as u128;
@@ -108,71 +107,67 @@ fn main(
     for i in 0..MAX_ORDERS_PER_EPOCH {
         if (i as u32) < fills_len {
             let j = fill_to_order_index[i];
-            // Scan-and-pick orders[j].
             let mut order_j = orders[0];
             for k in 0..MAX_ORDERS_PER_EPOCH {
-                if (k as u32) == j {
-                    order_j = orders[k];
-                }
+                if (k as u32) == j { order_j = orders[k]; }
             }
             if order_j.side {
-                // sell: amount_in is token B; amount_out is token A
                 gross_sell_in_b = gross_sell_in_b + order_j.amount_in;
                 seller_payouts_a = seller_payouts_a + fills[i].amount_out;
             } else {
-                // buy: amount_in is token A; amount_out is token B
                 gross_buy_in_a = gross_buy_in_a + order_j.amount_in;
                 buyer_payouts_b = buyer_payouts_b + fills[i].amount_out;
             }
         }
     }
+    // Aggregate flows = orderbook net flow vs pool.
+    assert(a_to_pool == pricing::saturating_sub(gross_buy_in_a, seller_payouts_a),
+           "a_to_pool mismatch");
+    assert(a_from_pool == pricing::saturating_sub(seller_payouts_a, gross_buy_in_a),
+           "a_from_pool mismatch");
+    assert(b_to_pool == pricing::saturating_sub(gross_sell_in_b, buyer_payouts_b),
+           "b_to_pool mismatch");
+    assert(b_from_pool == pricing::saturating_sub(buyer_payouts_b, gross_sell_in_b),
+           "b_from_pool mismatch");
 
-    let gross_buy_out_b = pricing::mul_div(gross_buy_in_a, pricing::SCALE, clearing_price);
-    let gross_sell_out_a = pricing::mul_div(gross_sell_in_b, clearing_price, pricing::SCALE);
+    // ============ Sub-2.5 NEW: per-bucket assertions + cross-bucket sum ============
+    let mut total_a_in: u128 = 0 as u128;
+    let mut total_a_out: u128 = 0 as u128;
+    let mut total_b_in: u128 = 0 as u128;
+    let mut total_b_out: u128 = 0 as u128;
+    let mut counted_active: u32 = 0;
+    let mut sqrt_p_chain: u128 = pool_sqrt_p_before;
 
-    // fee_pool_* = gross - net_to_traders (the LP-bound withholding).
-    let fee_pool_a = gross_sell_out_a - seller_payouts_a;
-    let fee_pool_b = gross_buy_out_b - buyer_payouts_b;
+    for k in 0..MAX_ACTIVE_BUCKETS_PER_EPOCH {
+        let delta = active_bucket_deltas[k];
+        // Any bucket_id beyond NUM_BUCKETS is a padding slot to be skipped.
+        if delta.bucket_id < NUM_BUCKETS {
+            sqrt_p_chain = crate::buckets::assert_bucket_step(
+                bucket_states_before[k],
+                bucket_states_after[k],
+                delta,
+                sqrt_p_chain,
+            );
+            total_a_in  = total_a_in  + delta.reserve_a_add;
+            total_a_out = total_a_out + delta.reserve_a_sub;
+            total_b_in  = total_b_in  + delta.reserve_b_add;
+            total_b_out = total_b_out + delta.reserve_b_sub;
+            counted_active = counted_active + 1;
+        }
+    }
+    assert(counted_active == active_bucket_count, "active_bucket_count mismatch with delta scan");
 
-    // ClearingSwap cross-check (sec 6.5).
-    assert(swap.a_to_pool == pricing::saturating_sub(gross_buy_in_a, seller_payouts_a),
-           "swap.a_to_pool mismatch");
-    assert(swap.a_from_pool == pricing::saturating_sub(seller_payouts_a, gross_buy_in_a),
-           "swap.a_from_pool mismatch");
-    assert(swap.b_to_pool == pricing::saturating_sub(gross_sell_in_b, buyer_payouts_b),
-           "swap.b_to_pool mismatch");
-    assert(swap.b_from_pool == pricing::saturating_sub(buyer_payouts_b, gross_sell_in_b),
-           "swap.b_from_pool mismatch");
+    // Cross-bucket flow sum equality.
+    assert(total_a_in + a_from_pool == total_a_out + a_to_pool,
+           "cross-bucket A sum mismatch with orderbook aggregate");
+    assert(total_b_in + b_from_pool == total_b_out + b_to_pool,
+           "cross-bucket B sum mismatch with orderbook aggregate");
 
-    // Reserve-delta identity (all-positive rearrangement; sec 6.5.23/24):
-    //   reserve_a_add + a_from_pool + fee_pool_a == reserve_a_sub + a_to_pool
-    assert(
-        swap.reserve_a_add + swap.a_from_pool + fee_pool_a
-            == swap.reserve_a_sub + swap.a_to_pool,
-        "reserve_a delta identity violated",
-    );
-    // For token B: b_to_pool is gross_sell_in_b - buyer_payouts_b; fee_pool_b is
-    // the LP withholding in B. The reserve-side identity rearranged:
-    //   reserve_b_add + b_from_pool + fee_pool_b == reserve_b_sub + b_to_pool
-    assert(
-        swap.reserve_b_add + swap.b_from_pool + fee_pool_b
-            == swap.reserve_b_sub + swap.b_to_pool,
-        "reserve_b delta identity violated",
-    );
+    // Pool sqrt-p chain endpoint matches public input.
+    assert(sqrt_p_chain == current_sqrt_price_after,
+           "pool sqrt_p chain doesn't end at current_sqrt_price_after");
 
-    // Fee-per-share derivation (floor).
-    assert(swap.fee_a_per_share_increment == pricing::mul_div(fee_pool_a, pricing::SCALE, lp_supply),
-           "fee_a_per_share_increment mismatch");
-    assert(swap.fee_b_per_share_increment == pricing::mul_div(fee_pool_b, pricing::SCALE, lp_supply),
-           "fee_b_per_share_increment mismatch");
-
-    // AMM k-monotonicity (sec 6.6).
-    let new_reserve_a = reserve_a + swap.reserve_a_add - swap.reserve_a_sub;
-    let new_reserve_b = reserve_b + swap.reserve_b_add - swap.reserve_b_sub;
-    amm::assert_k_monotonic(reserve_a, reserve_b, new_reserve_a, new_reserve_b);
-
-    // Build the 32-slot leaf array (padded slots use empty sentinel poseidon2([0,0]))
-    // and assert it hashes to the public-input fills_root.
+    // ============ Sub-1 carryover: Merkle fills_root ============
     let mut leaves: [Field; MAX_ORDERS_PER_EPOCH] = [0; MAX_ORDERS_PER_EPOCH];
     for i in 0..MAX_ORDERS_PER_EPOCH {
         if (i as u32) < fills_len {
