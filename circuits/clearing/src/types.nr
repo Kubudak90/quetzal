@@ -11,19 +11,17 @@ pub struct FillEntry {
     pub amount_out: u128,
 }
 
-/// The net swap the orderbook applies to the LiquidityPool. 10 fields, matching the
-/// contracts/pool/src/main.nr struct exactly.
+/// Sub-2.5: the aggregate flow + sparse per-bucket delta the orderbook applies
+/// to the LiquidityPool. 34 fields: 4 aggregate flows + sqrt_p_after + bucket_count
+/// + 4 BucketDelta (7 fields each = 28).
 pub struct ClearingSwap {
-    pub a_to_pool:                 u128,
-    pub b_to_pool:                 u128,
-    pub a_from_pool:               u128,
-    pub b_from_pool:               u128,
-    pub reserve_a_add:             u128,
-    pub reserve_a_sub:             u128,
-    pub reserve_b_add:             u128,
-    pub reserve_b_sub:             u128,
-    pub fee_a_per_share_increment: u128,
-    pub fee_b_per_share_increment: u128,
+    pub a_to_pool:                u128,
+    pub b_to_pool:                u128,
+    pub a_from_pool:              u128,
+    pub b_from_pool:              u128,
+    pub current_sqrt_price_after: u128,
+    pub active_bucket_count:      u32,
+    pub active_bucket_deltas:     [BucketDelta; MAX_ACTIVE_BUCKETS_PER_EPOCH],
 }
 
 /// One submitted order's preimage; the private witness has [OrderPreimage; 32].
