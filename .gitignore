@@ -41,3 +41,6 @@ testnet-m*-state.json
 testnet-m*-pxe/
 testnet-state.json
 wallet_data_*/
+
+# Sub-6a testnet runner state (contains alice keys + nonces; runtime-only. Do NOT commit.)
+testnet-sub6-state.json
