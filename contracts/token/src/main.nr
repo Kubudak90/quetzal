@@ -10,13 +10,14 @@ use aztec::macros::aztec;
 pub contract Token {
     // aztec library
     use aztec::{
+        hash::compute_secret_hash,
         macros::{
             events::event,
             functions::{authorize_once, external, initializer, internal, only_self, view},
             storage::storage,
         },
         messages::message_delivery::MessageDelivery,
-        protocol::{address::{AztecAddress, EthAddress}, traits::{FromField, ToField}},
+        protocol::{address::{AztecAddress, EthAddress}, hash::poseidon2_hash, traits::{FromField, ToField}},
         state_vars::{Map, Owned, PublicImmutable, PublicMutable, StateVariable},
     };
     // note library
@@ -341,6 +342,128 @@ pub contract Token {
     fn increase_total_supply_internal(amount: u128) {
         self.internal._increase_total_supply(amount);
         self.emit(Transfer { from: AztecAddress::zero(), to: PRIVATE_ADDRESS_MAGIC_VALUE, amount });
+    }
+
+    // =============================== BRIDGE FLOW =========================
+
+    /// Sub-5b: Consume an L1-to-L2 deposit message from the portal and mint
+    /// `amount` to `to` in PUBLIC balance.
+    ///
+    /// The content hash must match what the L1 TokenBridge portal committed in
+    /// `depositToL2Public` via `_depositContent(l2Recipient, amount, secretHash,
+    /// DEPOSIT_PUBLIC_TAG)`.  Task C1 reconciles the exact hash scheme (keccak vs
+    /// poseidon2) between L1 and L2; until then this is a scaffolding placeholder
+    /// using the same DEPOSIT_PUBLIC_TAG as the L1 side.
+    #[external("public")]
+    fn claim_public(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
+        let bridged = self.storage.is_bridged.read();
+        assert(bridged, "non-bridged token: use mint_to_public");
+        assert(amount > 0 as u128, "amount must be positive");
+        let portal = self.storage.portal_addr.read();
+
+        // Reconstruct the content hash committed by the L1 portal at depositToL2Public.
+        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        let secret_hash = compute_secret_hash(secret);
+        let content = poseidon2_hash([
+            to.to_field(),
+            amount as Field,
+            secret_hash,
+            DEPOSIT_PUBLIC_TAG,
+        ]);
+
+        // Consume the L1-to-L2 message. Reverts if message absent, already consumed,
+        // or secret doesn't match the committed secret_hash.
+        self.context.consume_l1_to_l2_message(content, secret, portal, message_leaf_index);
+
+        // Mint via the same internal helpers used by mint_to_public.
+        self.internal._increase_public_balance(to, amount);
+        self.internal._increase_total_supply(amount);
+        self.emit(Transfer { from: AztecAddress::zero(), to, amount });
+    }
+
+    /// Sub-5b: Same as claim_public but mints to PRIVATE balance.
+    ///
+    /// The content hash must match what the L1 TokenBridge portal committed in
+    /// `depositToL2Private` via `_depositContent(bytes32(0), amount, secretHash,
+    /// DEPOSIT_PRIVATE_TAG)`. Task C1 reconciles the exact hash scheme.
+    #[external("private")]
+    fn claim_private(to: AztecAddress, amount: u128, secret: Field, message_leaf_index: Field) {
+        let bridged = self.storage.is_bridged.read();
+        assert(bridged, "non-bridged token: use mint_to_private");
+        assert(amount > 0 as u128, "amount must be positive");
+        let portal = self.storage.portal_addr.read();
+
+        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        let secret_hash = compute_secret_hash(secret);
+        let content = poseidon2_hash([
+            to.to_field(),
+            amount as Field,
+            secret_hash,
+            DEPOSIT_PRIVATE_TAG,
+        ]);
+
+        self.context.consume_l1_to_l2_message(content, secret, portal, message_leaf_index);
+
+        // Mint via the same internal helpers used by mint_to_private.
+        self.internal._increase_private_balance(to, amount);
+        self.enqueue_self.increase_total_supply_internal(amount);
+    }
+
+    /// Sub-5b: Burn `amount` of caller's PUBLIC balance and emit an L2-to-L1
+    /// withdrawal message via the Aztec Outbox.
+    ///
+    /// The content hash committed here must match what the L1 `withdraw` function
+    /// reconstructs via `_withdrawContent(recipient, amount, WITHDRAW_PUBLIC_TAG)`.
+    /// Task C1 reconciles the hash scheme; until then this is a scaffold placeholder.
+    #[external("public")]
+    fn exit_to_l1_public(amount: u128, l1_recipient: EthAddress) {
+        let bridged = self.storage.is_bridged.read();
+        assert(bridged, "non-bridged token: cannot exit_to_l1");
+        assert(amount > 0 as u128, "amount must be positive");
+        assert(l1_recipient != EthAddress::zero(), "l1_recipient must be non-zero");
+
+        let portal = self.storage.portal_addr.read();
+        let caller = self.msg_sender();
+
+        // Burn caller's public balance via the same internal helper used by burn_public.
+        // CEI: state-change (burn) happens BEFORE the L2-to-L1 message emission.
+        self.internal._burn_public(caller, amount);
+
+        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        let content = poseidon2_hash([
+            l1_recipient.to_field(),
+            amount as Field,
+            WITHDRAW_PUBLIC_TAG,
+        ]);
+        self.context.message_portal(portal, content);
+    }
+
+    /// Sub-5b: Nullify private notes worth `amount` from caller's balance and
+    /// emit an L2-to-L1 withdrawal message via the Aztec Outbox.
+    ///
+    /// The content hash committed here must match what the L1 portal reconstructs
+    /// for private exit messages.  Task C1 reconciles the hash scheme.
+    #[external("private")]
+    fn exit_to_l1_private(amount: u128, l1_recipient: EthAddress) {
+        let bridged = self.storage.is_bridged.read();
+        assert(bridged, "non-bridged token: cannot exit_to_l1");
+        assert(amount > 0 as u128, "amount must be positive");
+        assert(l1_recipient != EthAddress::zero(), "l1_recipient must be non-zero");
+
+        let portal = self.storage.portal_addr.read();
+        let caller = self.msg_sender();
+
+        // Burn caller's private notes via the same internal helper used by burn_private.
+        // CEI: state-change (burn) happens BEFORE the L2-to-L1 message emission.
+        self.internal._burn_private(caller, amount);
+
+        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        let content = poseidon2_hash([
+            l1_recipient.to_field(),
+            amount as Field,
+            WITHDRAW_PRIVATE_TAG,
+        ]);
+        self.context.message_portal(portal, content);
     }
 
     // =============================== BURNABLE ============================
