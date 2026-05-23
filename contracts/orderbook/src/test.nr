@@ -130,6 +130,30 @@ unconstrained fn deploy_orderbook(
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
 
+/// Deploy helper for tests that need multiple pre-registered pools (Task D2).
+/// Caller pre-canonicalizes the token arrays (smaller Field first per pool).
+unconstrained fn deploy_orderbook_multi(
+    env: &mut TestEnvironment,
+    deployer: AztecAddress,
+    pool_count: u32,
+    pool_addrs: [AztecAddress; 4],
+    pool_token_a_addrs: [AztecAddress; 4],
+    pool_token_b_addrs: [AztecAddress; 4],
+) -> AztecAddress {
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,   // epoch_length
+        0 as Field,   // clearing_vk_hash stand-in
+        deployer,     // aggregator_registry stand-in
+        0 as u128,    // aggregator_fee stand-in
+        pool_count,
+        pool_addrs,
+        pool_token_a_addrs,
+        pool_token_b_addrs,
+        deployer,     // pool_registry_admin = deployer (= admin)
+    );
+    env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
+}
+
 #[test]
 unconstrained fn constructor_sets_initial_epoch_state() {
     let mut env = TestEnvironment::new();
@@ -897,4 +921,129 @@ unconstrained fn sub5a_claim_fill_double_claim_same_hop_reverts_stub() {
     //   "Duplicate siloed nullifier <hex> emitted by contract <address>"
     // Use /Duplicate siloed nullifier/ regexp in the F1 TS integration test.
     assert(false, "nullifier collision");
+}
+
+// ============================================================================
+// Sub-5a Task D2: TXE tests for add_pool.
+//
+// add_pool is a public function (requires msg_sender check). The three tests
+// cover: (1) happy-path append with canonical lookup verification, (2) revert
+// on duplicate pair (even with swapped arg order, thanks to canonicalization),
+// (3) revert when caller is not pool_registry_admin.
+//
+// Canonical ordering: token with smaller to_field() as Field is token_a (lo).
+// This matches the production implementation in add_pool and
+// resolve_pool_id_by_pair in main.nr.
+// ============================================================================
+
+#[test]
+unconstrained fn sub5a_add_pool_happy_path_appends_4th_pool() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let usdc  = env.create_light_account();
+    let eth   = env.create_light_account();
+    let btc   = env.create_light_account();
+    let doge  = env.create_light_account();
+    let stub_pool_0 = env.create_light_account();
+    let stub_pool_1 = env.create_light_account();
+    let stub_pool_2 = env.create_light_account();
+    let stub_pool_3 = env.create_light_account();
+
+    // Canonicalize pairs for the constructor (smaller Field first, matching
+    // the production invariant asserted inside the constructor).
+    let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
+        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+    };
+    let (usdc_eth_a, usdc_eth_b) = canon(usdc, eth);
+    let (usdc_btc_a, usdc_btc_b) = canon(usdc, btc);
+    let (eth_btc_a,  eth_btc_b)  = canon(eth,  btc);
+
+    // Deploy with 3 pools pre-registered. admin is pool_registry_admin.
+    let orderbook = deploy_orderbook_multi(
+        &mut env,
+        admin,
+        3 as u32,
+        [stub_pool_0, stub_pool_1, stub_pool_2, admin],
+        [usdc_eth_a,  usdc_btc_a,  eth_btc_a,  admin],
+        [usdc_eth_b,  usdc_btc_b,  eth_btc_b,  admin],
+    );
+
+    // Admin appends a 4th pool (DOGE/USDC, unordered -- add_pool canonicalizes).
+    env.call_public(admin, Orderbook::at(orderbook).add_pool(stub_pool_3, doge, usdc));
+
+    // resolve_pool_id_by_pair must return 3 for the newly added pair.
+    let new_pid: u32 = env.call_public(
+        admin,
+        Orderbook::at(orderbook).resolve_pool_id_by_pair(doge, usdc),
+    );
+    assert(new_pid == 3 as u32, "new pool_id should be 3");
+
+    // Reverse arg order must resolve the same pool (canonical lookup).
+    let reversed_pid: u32 = env.call_public(
+        admin,
+        Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, doge),
+    );
+    assert(reversed_pid == 3 as u32, "canonical lookup works in reverse order");
+}
+
+#[test(should_fail_with = "pair already registered")]
+unconstrained fn sub5a_add_pool_rejects_duplicate_pair() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let usdc  = env.create_light_account();
+    let eth   = env.create_light_account();
+    let stub_pool_0 = env.create_light_account();
+    let stub_pool_1 = env.create_light_account();
+
+    let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
+        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+    };
+    let (lo, hi) = canon(usdc, eth);
+
+    // Deploy with USDC/ETH already registered as pool 0.
+    let orderbook = deploy_orderbook_multi(
+        &mut env,
+        admin,
+        1 as u32,
+        [stub_pool_0, admin, admin, admin],
+        [lo, admin, admin, admin],
+        [hi, admin, admin, admin],
+    );
+
+    // Re-adding USDC/ETH with swapped arg order must still revert ("pair already registered")
+    // because add_pool canonicalizes internally before the duplicate check.
+    env.call_public(admin, Orderbook::at(orderbook).add_pool(stub_pool_1, eth, usdc));
+}
+
+#[test(should_fail_with = "only pool_registry_admin")]
+unconstrained fn sub5a_add_pool_rejects_non_admin_caller() {
+    let mut env = TestEnvironment::new();
+    let admin    = env.create_light_account();
+    let stranger = env.create_light_account();
+    let usdc     = env.create_light_account();
+    let eth      = env.create_light_account();
+    let btc      = env.create_light_account();
+    let stub_pool_0 = env.create_light_account();
+    let stub_pool_new = env.create_light_account();
+
+    let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
+        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+    };
+    let (lo, hi) = canon(usdc, eth);
+
+    // Deploy with USDC/ETH as the single registered pool; admin is the registry admin.
+    let orderbook = deploy_orderbook_multi(
+        &mut env,
+        admin,
+        1 as u32,
+        [stub_pool_0, admin, admin, admin],
+        [lo, admin, admin, admin],
+        [hi, admin, admin, admin],
+    );
+
+    // A non-admin caller must revert with "only pool_registry_admin".
+    env.call_public(
+        stranger,
+        Orderbook::at(orderbook).add_pool(stub_pool_new, usdc, btc),
+    );
 }
