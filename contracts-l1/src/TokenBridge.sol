@@ -316,6 +316,33 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         emit RecoveryRequested(msg.sender, secretHash, d.amount);
     }
 
+    /// @notice Sub-5c B2/B3: phase 2 — governance multisig approves a pending
+    ///         recovery after manually verifying the L2 message is still
+    ///         unconsumed. The off-chain check is the trust-minimization
+    ///         boundary (L1 cannot read L2 nullifier state directly).
+    function approveRecovery(bytes32 key) external onlyRole(GOVERNANCE_ROLE) {
+        if (!pendingRecoveries[key]) revert NoSuchRequest();
+        approvedRecoveries[key] = true;
+        emit RecoveryApproved(key);
+    }
+
+    /// @notice Sub-5c B2/B3: phase 3 — original depositor executes the approved
+    ///         recovery. msg.sender match against the deposit's (sender,
+    ///         secretHash) key is the access control: an attacker who knows the
+    ///         secret but is not the original depositor cannot recover. State is
+    ///         fully cleared on success to prevent re-recovery.
+    function executeRecovery(bytes32 secretHash, address l1Recipient) external {
+        if (l1Recipient == address(0)) revert ZeroAddress();
+        bytes32 key = keccak256(abi.encode(msg.sender, secretHash));
+        if (!approvedRecoveries[key]) revert NotApproved();
+        uint128 amount = deposits[key].amount;
+        delete deposits[key];
+        delete pendingRecoveries[key];
+        delete approvedRecoveries[key];
+        l1Token.safeTransfer(l1Recipient, amount);
+        emit RecoveryExecuted(msg.sender, secretHash, l1Recipient, amount);
+    }
+
     // ── Governance ────────────────────────────────────────────────────────────
 
     /// @notice Pause all deposit and withdraw operations. Use this to block deposits

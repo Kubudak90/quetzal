@@ -327,4 +327,87 @@ contract TokenBridgeTest is Test {
         vm.expectRevert();  // AccessControlUnauthorizedAccount: governance lacks EMERGENCY_PAUSER_ROLE admin
         bridge.revokeRole(emergencyRole, emergencyTimelock);
     }
+
+    // ── Sub-5c B2: recoverDeposit 3-phase flow tests ──────────────────────────────
+
+    function test_requestRecovery_revertsBeforeWindow() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        // Try to recover immediately (no 90-day wait)
+        vm.expectRevert(TokenBridge.DepositTooRecent.selector);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    function test_requestRecovery_revertsForUnknownDeposit() public {
+        vm.prank(alice);
+        vm.expectRevert(TokenBridge.NoSuchDeposit.selector);
+        bridge.requestRecovery(bytes32(uint256(0xc0ffee)));
+    }
+
+    function test_recoveryHappyPath_3phase() public {
+        // Phase 0: alice deposits 100 USDC
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+
+        // Skip 91 days
+        vm.warp(block.timestamp + 91 days);
+
+        // Phase 1: alice requests recovery
+        vm.prank(alice);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+
+        // Phase 2: governance multisig approves
+        bytes32 aliceKey = keccak256(abi.encode(alice, bytes32(uint256(0xbeef))));
+        vm.prank(governanceTimelock);
+        bridge.approveRecovery(aliceKey);
+
+        // Phase 3: alice executes recovery to her own address
+        uint256 balanceBefore = token.balanceOf(alice);
+        vm.prank(alice);
+        bridge.executeRecovery(bytes32(uint256(0xbeef)), alice);
+
+        assertEq(token.balanceOf(alice), balanceBefore + 100_000_000, "alice recovered amount");
+        assertEq(token.balanceOf(address(bridge)), 0, "bridge fully debited");
+    }
+
+    function test_recovery_foreignSenderCannotExecute() public {
+        // Alice deposits + waits + requests + governance approves
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+        vm.warp(block.timestamp + 91 days);
+        vm.prank(alice);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+        bytes32 aliceKey = keccak256(abi.encode(alice, bytes32(uint256(0xbeef))));
+        vm.prank(governanceTimelock);
+        bridge.approveRecovery(aliceKey);
+
+        // Bob (knows the secret) attempts to execute — his msg.sender computes a
+        // different key, no approval exists for that key, revert.
+        address bob = address(0xB0B1);
+        vm.prank(bob);
+        vm.expectRevert(TokenBridge.NotApproved.selector);
+        bridge.executeRecovery(bytes32(uint256(0xbeef)), bob);
+    }
+
+    function test_approveRecovery_requiresGovernance() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+        vm.warp(block.timestamp + 91 days);
+        vm.prank(alice);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+
+        // Alice (not governance) tries to approve — should revert
+        bytes32 key = keccak256(abi.encode(alice, bytes32(uint256(0xbeef))));
+        vm.prank(alice);
+        vm.expectRevert();  // OZ AccessControlUnauthorizedAccount(alice, GOVERNANCE_ROLE)
+        bridge.approveRecovery(key);
+    }
 }
