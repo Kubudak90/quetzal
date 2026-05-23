@@ -16,7 +16,7 @@ pub contract Token {
             storage::storage,
         },
         messages::message_delivery::MessageDelivery,
-        protocol::{address::AztecAddress, traits::{FromField, ToField}},
+        protocol::{address::{AztecAddress, EthAddress}, traits::{FromField, ToField}},
         state_vars::{Map, Owned, PublicImmutable, PublicMutable, StateVariable},
     };
     // note library
@@ -28,6 +28,19 @@ pub contract Token {
 
     global INITIAL_TRANSFER_CALL_MAX_NOTES: u32 = 2;
     global RECURSIVE_TRANSFER_CALL_MAX_NOTES: u32 = 8;
+
+    // Sub-5b: domain-separation tags for bridge flow content hashes.
+    // Placeholder Field constants; Task C1 reconciles to canonical Aztec
+    // poseidon2 / sha256_to_field hash values matching the L1 portal's
+    // DataStructures.sol tags.
+    global DEPOSIT_PUBLIC_TAG: Field =
+        0x5a5759415053574152505f4445504f5349545f5055425f5630303100000001;
+    global DEPOSIT_PRIVATE_TAG: Field =
+        0x5a5759415053574152505f4445504f5349545f5052565f5630303100000002;
+    global WITHDRAW_PUBLIC_TAG: Field =
+        0x5a5759415053574152505f57495448445241575f5055425f56303031000003;
+    global WITHDRAW_PRIVATE_TAG: Field =
+        0x5a5759415053574152505f57495448445241575f5052565f56303031000004;
 
     // Sentinel address used in Transfer events to represent the private side of a balance change.
     global PRIVATE_ADDRESS_MAGIC_VALUE: AztecAddress =
@@ -49,6 +62,9 @@ pub contract Token {
         total_supply: PublicMutable<u128, Context>,
         public_balances: Map<AztecAddress, PublicMutable<u128, Context>, Context>,
         minter: PublicImmutable<AztecAddress, Context>,
+        // Sub-5b: bridge configuration. Set once at deploy; immutable.
+        is_bridged: PublicImmutable<bool, Context>,
+        portal_addr: PublicImmutable<EthAddress, Context>,
     }
 
     #[external("public")]
@@ -63,6 +79,8 @@ pub contract Token {
         self.storage.name.initialize(FieldCompressedString::from_string(name));
         self.storage.symbol.initialize(FieldCompressedString::from_string(symbol));
         self.storage.decimals.initialize(decimals);
+        self.storage.is_bridged.initialize(false);
+        self.storage.portal_addr.initialize(EthAddress::zero());
 
         self.internal._mint_to_public(to, initial_supply);
     }
@@ -73,8 +91,29 @@ pub contract Token {
         self.storage.name.initialize(FieldCompressedString::from_string(name));
         self.storage.symbol.initialize(FieldCompressedString::from_string(symbol));
         self.storage.decimals.initialize(decimals);
-
         self.storage.minter.initialize(minter);
+        self.storage.is_bridged.initialize(false);
+        self.storage.portal_addr.initialize(EthAddress::zero());
+    }
+
+    /// Sub-5b: bridge-mode constructor. Sets is_bridged=true + portal_addr.
+    /// Admin mint paths (mint_to_public / mint_to_private) will revert in this mode.
+    #[external("public")]
+    #[initializer]
+    fn constructor_with_minter_bridged(
+        name: str<31>,
+        symbol: str<31>,
+        decimals: u8,
+        minter: AztecAddress,
+        portal_addr: EthAddress,
+    ) {
+        assert(portal_addr != EthAddress::zero(), "bridged token requires non-zero portal_addr");
+        self.storage.name.initialize(FieldCompressedString::from_string(name));
+        self.storage.symbol.initialize(FieldCompressedString::from_string(symbol));
+        self.storage.decimals.initialize(decimals);
+        self.storage.minter.initialize(minter);
+        self.storage.is_bridged.initialize(true);
+        self.storage.portal_addr.initialize(portal_addr);
     }
 
     // ============================== PRIVATE ==============================
@@ -255,12 +294,16 @@ pub contract Token {
 
     #[external("private")]
     fn mint_to_private(to: AztecAddress, amount: u128) {
+        let bridged = self.storage.is_bridged.read();
+        assert(!bridged, "bridged token: use claim_private via portal flow");
         _validate_minter(self.msg_sender(), self.storage.minter.read());
         self.internal._mint_to_private(to, amount);
     }
 
     #[external("public")]
     fn mint_to_public(to: AztecAddress, amount: u128) {
+        let bridged = self.storage.is_bridged.read();
+        assert(!bridged, "bridged token: use claim_public via portal flow");
         _validate_minter(self.msg_sender(), self.storage.minter.read());
         self.internal._mint_to_public(to, amount);
     }
