@@ -283,6 +283,18 @@ pub contract Token {
         self.storage.decimals.read()
     }
 
+    #[external("public")]
+    #[view]
+    fn is_bridged() -> bool {
+        self.storage.is_bridged.read()
+    }
+
+    #[external("public")]
+    #[view]
+    fn portal_addr() -> EthAddress {
+        self.storage.portal_addr.read()
+    }
+
     // ============================ UNCONSTRAINED ==========================
 
     #[external("utility")]
@@ -310,6 +322,8 @@ pub contract Token {
 
     #[external("public")]
     fn mint_to_commitment(commitment: Field, amount: u128) {
+        let bridged = self.storage.is_bridged.read();
+        assert(!bridged, "bridged token: use claim_private via portal flow");
         let completer = self.msg_sender();
         _validate_minter(completer, self.storage.minter.read());
         self.internal._increase_total_supply(amount);
