@@ -31,8 +31,12 @@ pub contract Token {
     global RECURSIVE_TRANSFER_CALL_MAX_NOTES: u32 = 8;
 
     // Sub-5b: domain-separation tags for bridge flow content hashes.
-    // Placeholder Field constants; Task C1 reconciles to canonical Aztec
-    // poseidon2 / sha256_to_field hash values matching the L1 portal's
+    //
+    // Placeholder Field constants chosen to be distinct + nonzero + ASCII-readable
+    // in calldata logs. Byte-alignment is intentionally not uniform: each ASCII
+    // label has a different length, and we use minimal trailing zero-padding
+    // followed by a per-tag discriminant byte. Task C1 reconciles to canonical
+    // Aztec poseidon2 / sha256_to_field hash values matching contracts-l1
     // DataStructures.sol tags.
     global DEPOSIT_PUBLIC_TAG: Field =
         0x5a5759415053574152505f4445504f5349545f5055425f5630303100000001;
@@ -344,6 +348,19 @@ pub contract Token {
         self.emit(Transfer { from: AztecAddress::zero(), to: PRIVATE_ADDRESS_MAGIC_VALUE, amount });
     }
 
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║ ⚠️  SCAFFOLDING — bridge flows are NON-FUNCTIONAL until Task C1 ships    ║
+    // ║                                                                          ║
+    // ║ The four functions below (claim_public/private, exit_to_l1_public/      ║
+    // ║ private) compile and are internally consistent, but the content hash    ║
+    // ║ they reconstruct (poseidon2_hash) does NOT match the L1 portal's        ║
+    // ║ commit (keccak256). Task C1 reconciles both sides — DO NOT use these    ║
+    // ║ flows on any testnet/mainnet before C1 lands.                            ║
+    // ║                                                                          ║
+    // ║ Domain-separator tags (DEPOSIT_PUBLIC/PRIVATE_TAG, WITHDRAW_*)          ║
+    // ║ on L2 use ASCII-readable placeholders; L1 uses 0xdeadbeef* placeholders.║
+    // ║ Task C1 aligns to canonical Aztec values.                                ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
     // =============================== BRIDGE FLOW =========================
 
     /// Sub-5b: Consume an L1-to-L2 deposit message from the portal and mint
@@ -361,8 +378,14 @@ pub contract Token {
         assert(amount > 0 as u128, "amount must be positive");
         let portal = self.storage.portal_addr.read();
 
-        // Reconstruct the content hash committed by the L1 portal at depositToL2Public.
-        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        // SCAFFOLDING: Task C1 will replace this poseidon2_hash() with the canonical
+        // content-hash function expected by the L1 portal's _depositContent (currently
+        // keccak256(abi.encode(...)) on L1; the canonical Aztec L1↔L2 format may be
+        // sha256_to_field — C1 confirms + aligns both sides).
+        //
+        // DO NOT change compute_secret_hash() in C1 — that derivation is protocol-defined
+        // and matches what the user submits to depositToL2{Public,Private} on L1 as
+        // secretHash. Only the content-hash reconstruction below changes.
         let secret_hash = compute_secret_hash(secret);
         let content = poseidon2_hash([
             to.to_field(),
@@ -393,8 +416,25 @@ pub contract Token {
         assert(amount > 0 as u128, "amount must be positive");
         let portal = self.storage.portal_addr.read();
 
-        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        // SCAFFOLDING: Task C1 will replace this poseidon2_hash() with the canonical
+        // content-hash function expected by the L1 portal's _depositContent (currently
+        // keccak256(abi.encode(...)) on L1; the canonical Aztec L1↔L2 format may be
+        // sha256_to_field — C1 confirms + aligns both sides).
+        //
+        // DO NOT change compute_secret_hash() in C1 — that derivation is protocol-defined
+        // and matches what the user submits to depositToL2{Public,Private} on L1 as
+        // secretHash. Only the content-hash reconstruction below changes.
         let secret_hash = compute_secret_hash(secret);
+        // ASYMMETRY: claim_private includes `to.to_field()` in the content hash above,
+        // but the L1 portal's depositToL2Private commits `bytes32(0)` (privacy-by-
+        // design — the L1 caller doesn't know who claims on L2). Task C1 MUST either:
+        //   (a) Remove `to.to_field()` from the content reconstruction and use a
+        //       separate routing mechanism (e.g., the secret preimage encodes the
+        //       recipient via shared-secret derivation), OR
+        //   (b) Change depositToL2Private's L1 API to accept an encrypted recipient
+        //       commitment (breaks the privacy property of the deposit).
+        // (a) is the intended path. As written, claim_private CANNOT succeed against
+        // the current L1 portal even after the hash function is aligned.
         let content = poseidon2_hash([
             to.to_field(),
             amount as Field,
@@ -429,7 +469,14 @@ pub contract Token {
         // CEI: state-change (burn) happens BEFORE the L2-to-L1 message emission.
         self.internal._burn_public(caller, amount);
 
-        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        // SCAFFOLDING: Task C1 will replace this poseidon2_hash() with the canonical
+        // content-hash function expected by the L1 portal's _depositContent (currently
+        // keccak256(abi.encode(...)) on L1; the canonical Aztec L1↔L2 format may be
+        // sha256_to_field — C1 confirms + aligns both sides).
+        //
+        // DO NOT change compute_secret_hash() in C1 — that derivation is protocol-defined
+        // and matches what the user submits to depositToL2{Public,Private} on L1 as
+        // secretHash. Only the content-hash reconstruction below changes.
         let content = poseidon2_hash([
             l1_recipient.to_field(),
             amount as Field,
@@ -445,6 +492,18 @@ pub contract Token {
     /// for private exit messages.  Task C1 reconciles the hash scheme.
     #[external("private")]
     fn exit_to_l1_private(amount: u128, l1_recipient: EthAddress) {
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║ ⚠️  WARNING: NO L1 CONSUMER EXISTS for WITHDRAW_PRIVATE_TAG               ║
+        // ║                                                                          ║
+        // ║ The L1 portal's withdraw() function only handles WITHDRAW_PUBLIC_TAG.    ║
+        // ║ Calling exit_to_l1_private emits an L2→L1 Outbox message that no L1     ║
+        // ║ function can consume — the burn happens on L2 and the recipient cannot  ║
+        // ║ claim on L1 until Sub-5c adds withdrawPrivate() on the L1 portal.       ║
+        // ║                                                                          ║
+        // ║ This function is reserved for the privacy-preserving exit path but is   ║
+        // ║ NOT USABLE in the current Sub-5b cycle. Prefer exit_to_l1_public()      ║
+        // ║ until Sub-5c ships the L1 counterpart.                                   ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
         let bridged = self.storage.is_bridged.read();
         assert(bridged, "non-bridged token: cannot exit_to_l1");
         assert(amount > 0 as u128, "amount must be positive");
@@ -457,7 +516,14 @@ pub contract Token {
         // CEI: state-change (burn) happens BEFORE the L2-to-L1 message emission.
         self.internal._burn_private(caller, amount);
 
-        // NOTE: Task C1 reconciles this to the canonical L1 keccak256(abi.encode(...)) scheme.
+        // SCAFFOLDING: Task C1 will replace this poseidon2_hash() with the canonical
+        // content-hash function expected by the L1 portal's _depositContent (currently
+        // keccak256(abi.encode(...)) on L1; the canonical Aztec L1↔L2 format may be
+        // sha256_to_field — C1 confirms + aligns both sides).
+        //
+        // DO NOT change compute_secret_hash() in C1 — that derivation is protocol-defined
+        // and matches what the user submits to depositToL2{Public,Private} on L1 as
+        // secretHash. Only the content-hash reconstruction below changes.
         let content = poseidon2_hash([
             l1_recipient.to_field(),
             amount as Field,
