@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -52,13 +52,11 @@ contract MockERC20 is IERC20 {
 contract MockInbox is IInbox {
     uint256 public nextIndex;
 
-    function sendL2Message(DataStructures.L2Actor memory recipient, bytes32 content, bytes32 secretHash)
+    function sendL2Message(DataStructures.L2Actor memory /* recipient */, bytes32 content, bytes32 secretHash)
         external
         returns (bytes32, uint256)
     {
         uint256 idx = nextIndex++;
-        // Silence unused-variable warnings while keeping the args visible in traces.
-        recipient;
         return (keccak256(abi.encode(content, secretHash, idx)), idx);
     }
 
@@ -153,10 +151,17 @@ contract TokenBridgeTest is Test {
     function test_depositToL2Private_omitsRecipientFromMessage() public {
         vm.startPrank(alice);
         token.approve(address(bridge), 50_000_000);
+
+        // Expect DepositInitiated(sender=alice, l2Recipient=bytes32(0), amount, secretHash, idx=0, isPrivate=true)
+        // checkTopic1=true (sender indexed), checkTopic2=true (l2Recipient indexed),
+        // checkTopic3=false (no third indexed field), checkData=true (verify non-indexed fields).
+        vm.expectEmit(true, true, false, true, address(bridge));
+        emit TokenBridge.DepositInitiated(alice, bytes32(0), 50_000_000, bytes32(uint256(0xcafe)), 0, true);
+
         (, uint256 idx) = bridge.depositToL2Private(50_000_000, bytes32(uint256(0xcafe)));
         vm.stopPrank();
 
-        assertEq(token.balanceOf(address(bridge)), 50_000_000, "bridge locked private amount");
+        assertEq(token.balanceOf(address(bridge)), 50_000_000, "bridge locked private deposit amount");
         assertEq(idx, 0, "first private deposit index");
     }
 
@@ -167,6 +172,7 @@ contract TokenBridgeTest is Test {
 
         vm.startPrank(alice);
         token.approve(address(bridge), 100);
+        // OZ PausableUpgradeable: EnforcedPause() — selector omitted to keep test concise
         vm.expectRevert();
         bridge.depositToL2Public(100, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
         vm.stopPrank();
@@ -190,7 +196,37 @@ contract TokenBridgeTest is Test {
         vm.stopPrank();
     }
 
-    // 5. Withdraw happy path: outbox.consume succeeds → release to recipient
+    // 5a. Zero-amount deposit reverts
+    function test_deposit_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(TokenBridge.ZeroAmount.selector);
+        bridge.depositToL2Public(0, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+    }
+
+    // 5b. Zero-recipient deposit reverts
+    function test_deposit_revertsOnZeroL2Recipient() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100);
+        vm.expectRevert(TokenBridge.ZeroAddress.selector);
+        bridge.depositToL2Public(100, bytes32(0), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    // 5c. Zero-amount withdraw reverts
+    function test_withdraw_revertsOnZeroAmount() public {
+        bytes32[] memory proof = new bytes32[](6);
+        vm.expectRevert(TokenBridge.ZeroAmount.selector);
+        bridge.withdraw(0, alice, uint256(12345), uint256(7), proof);
+    }
+
+    // 5d. Zero-recipient withdraw reverts
+    function test_withdraw_revertsOnZeroRecipient() public {
+        bytes32[] memory proof = new bytes32[](6);
+        vm.expectRevert(TokenBridge.ZeroAddress.selector);
+        bridge.withdraw(100, address(0), uint256(12345), uint256(7), proof);
+    }
+
+    // 6. Withdraw happy path: outbox.consume succeeds → release to recipient
     function test_withdraw_releasesTokensOnValidProof() public {
         // Pre-fund bridge as if a prior deposit happened.
         token.mint(address(bridge), 100_000_000);
@@ -202,7 +238,21 @@ contract TokenBridgeTest is Test {
         assertEq(token.balanceOf(address(bridge)), 20_000_000, "bridge debited correctly");
     }
 
-    // 6. Withdraw reverts when outbox proof is invalid
+    // 6a. Double-withdrawal replay is rejected by MockOutbox's consumed[] guard
+    function test_withdraw_doubleConsume_reverts() public {
+        token.mint(address(bridge), 200_000_000);
+        bytes32[] memory proof = new bytes32[](6);
+
+        // First withdrawal succeeds
+        bridge.withdraw(80_000_000, alice, uint256(12345), uint256(7), proof);
+        assertEq(token.balanceOf(alice), 1_000_000_000 + 80_000_000, "alice received first withdraw");
+
+        // Second withdrawal with same (l2Epoch, leafIndex) must revert via Outbox replay guard
+        vm.expectRevert(bytes("already consumed"));
+        bridge.withdraw(80_000_000, alice, uint256(12345), uint256(7), proof);
+    }
+
+    // 7. Withdraw reverts when outbox proof is invalid
     function test_withdraw_revertsOnInvalidProof() public {
         token.mint(address(bridge), 100_000_000);
         outbox.setShouldRevert(true);
@@ -218,6 +268,7 @@ contract TokenBridgeTest is Test {
         bridge.pause();
 
         bytes32[] memory proof = new bytes32[](6);
+        // OZ PausableUpgradeable: EnforcedPause() — selector omitted to keep test concise
         vm.expectRevert();
         bridge.withdraw(50_000_000, alice, uint256(12345), uint256(7), proof);
     }
@@ -225,12 +276,14 @@ contract TokenBridgeTest is Test {
     // 8. pause() requires ownership
     function test_pause_onlyOwner() public {
         // Called from address(this) which is NOT the owner.
+        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(address) — selector omitted
         vm.expectRevert();
         bridge.pause();
     }
 
     // 9. setMaxTvl() requires ownership
     function test_setMaxTvl_onlyOwner() public {
+        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(address) — selector omitted
         vm.expectRevert();
         bridge.setMaxTvl(123);
     }
