@@ -16,6 +16,14 @@ Witness builder (`buildClearingWitnessMultiPair`) now fully self-consistent with
 7 documented carry-forward limitations (2-hop double-claim, 1-hop DoS gap, token-pair truncation,
 Sub-3 circular-dep, statistical privacy leak, fixed pool count, naive composite pricing).
 
+**Sub-5a in progress:** Sub-3 4-deploy circular-dep wart retired (3-deploy
+fallback ceremony with Orderbook.treasury PublicMutable + one-shot set_treasury
+A1+A2+A3). Sub-4 #1 (2-hop double-claim) closed via per-hop nullifier scheme
+B1+B2+B3 — claim_fill + cancel_order use get_notes + Z_HOP_CLAIM_TAG /
+Z_CANCEL_TAG domain-separated nullifiers. Sub-4 #2 (1-hop DoS) closed via
+circuit block B' insertion C1+C2. New vk_hash after C2: `2aae33dd4ea01690`.
+Gate count: 281,594 (ACIR opcodes: 158,701). Bridge constants 500/115 HOLD.
+
 ## Quickstart
 
 Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `4.2.1`, Foundry (anvil).
