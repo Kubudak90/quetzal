@@ -16,7 +16,7 @@ importers:
         version: 4.2.1(typescript@5.9.3)
       '@aztec/wallets':
         specifier: 4.2.1
-        version: 4.2.1(typescript@5.9.3)
+        version: 4.2.1(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       tsx:
         specifier: ^4.19.0
@@ -60,10 +60,13 @@ importers:
         version: 4.2.1
       '@aztec/wallets':
         specifier: 4.2.1
-        version: 4.2.1(typescript@5.9.3)
+        version: 4.2.1(typescript@5.9.3)(zod@3.25.76)
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      viem:
+        specifier: ^2.21.0
+        version: 2.50.4(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^22.7.0
@@ -85,7 +88,7 @@ importers:
         version: 4.2.1(typescript@5.9.3)
       '@aztec/wallets':
         specifier: 4.2.1
-        version: 4.2.1(typescript@5.9.3)
+        version: 4.2.1(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^22.7.0
@@ -2931,7 +2934,7 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@aztec/bb-prover@4.2.1(typescript@5.9.3)':
+  '@aztec/bb-prover@4.2.1(typescript@5.9.3)(zod@3.25.76)':
     dependencies:
       '@aztec/bb.js': 4.2.1
       '@aztec/constants': 4.2.1
@@ -2939,7 +2942,7 @@ snapshots:
       '@aztec/noir-noirc_abi': 4.2.1
       '@aztec/noir-protocol-circuits-types': 4.2.1(typescript@5.9.3)
       '@aztec/noir-types': 4.2.1
-      '@aztec/simulator': 4.2.1(typescript@5.9.3)
+      '@aztec/simulator': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/stdlib': 4.2.1(typescript@5.9.3)
       '@aztec/telemetry-client': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/world-state': 4.2.1(typescript@5.9.3)
@@ -3193,9 +3196,9 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@aztec/pxe@4.2.1(typescript@5.9.3)':
+  '@aztec/pxe@4.2.1(typescript@5.9.3)(zod@3.25.76)':
     dependencies:
-      '@aztec/bb-prover': 4.2.1(typescript@5.9.3)
+      '@aztec/bb-prover': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/bb.js': 4.2.1
       '@aztec/builder': 4.2.1(typescript@5.9.3)
       '@aztec/constants': 4.2.1
@@ -3206,7 +3209,7 @@ snapshots:
       '@aztec/noir-protocol-circuits-types': 4.2.1(typescript@5.9.3)
       '@aztec/noir-types': 4.2.1
       '@aztec/protocol-contracts': 4.2.1(typescript@5.9.3)
-      '@aztec/simulator': 4.2.1(typescript@5.9.3)
+      '@aztec/simulator': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/stdlib': 4.2.1(typescript@5.9.3)
       koa: 2.16.4
       koa-router: 13.1.1
@@ -3226,7 +3229,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@aztec/simulator@4.2.1(typescript@5.9.3)':
+  '@aztec/simulator@4.2.1(typescript@5.9.3)(zod@3.25.76)':
     dependencies:
       '@aztec/constants': 4.2.1
       '@aztec/foundation': 4.2.1
@@ -3354,13 +3357,13 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@aztec/wallet-sdk@4.2.1(typescript@5.9.3)':
+  '@aztec/wallet-sdk@4.2.1(typescript@5.9.3)(zod@3.25.76)':
     dependencies:
       '@aztec/aztec.js': 4.2.1(typescript@5.9.3)
       '@aztec/constants': 4.2.1
       '@aztec/entrypoints': 4.2.1(typescript@5.9.3)
       '@aztec/foundation': 4.2.1
-      '@aztec/pxe': 4.2.1(typescript@5.9.3)
+      '@aztec/pxe': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/stdlib': 4.2.1(typescript@5.9.3)
     transitivePeerDependencies:
       - '@types/pg'
@@ -3374,7 +3377,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@aztec/wallets@4.2.1(typescript@5.9.3)':
+  '@aztec/wallets@4.2.1(typescript@5.9.3)(zod@3.25.76)':
     dependencies:
       '@aztec/accounts': 4.2.1(typescript@5.9.3)
       '@aztec/aztec.js': 4.2.1(typescript@5.9.3)
@@ -3382,9 +3385,9 @@ snapshots:
       '@aztec/foundation': 4.2.1
       '@aztec/kv-store': 4.2.1(typescript@5.9.3)
       '@aztec/protocol-contracts': 4.2.1(typescript@5.9.3)
-      '@aztec/pxe': 4.2.1(typescript@5.9.3)
+      '@aztec/pxe': 4.2.1(typescript@5.9.3)(zod@3.25.76)
       '@aztec/stdlib': 4.2.1(typescript@5.9.3)
-      '@aztec/wallet-sdk': 4.2.1(typescript@5.9.3)
+      '@aztec/wallet-sdk': 4.2.1(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@types/pg'
       - aws-crt
