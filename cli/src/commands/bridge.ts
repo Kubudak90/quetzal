@@ -5,6 +5,7 @@ import { TokenContract } from "../../../tests/integration/generated/Token.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { parseField } from "../field.js";
+import { queryRecentDeposits, isRoundTripRisk } from "../bridge/bridge-history.js";
 
 function resolveTokenAddress(config: ReturnType<typeof loadConfig>, alias: string): string {
   // Accept both legacy (tUSDC/tETH/tBTC) and bridged (aUSDC/aWETH/aWBTC) names.
@@ -108,6 +109,10 @@ export function registerBridge(program: Command): void {
       "can submit the L1 withdraw on your behalf (saves you the L1 cast send step).",
       "0",
     )
+    .option(
+      "--ack-delay",
+      "acknowledge round-trip risk warning + proceed with exit",
+    )
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);
@@ -124,6 +129,61 @@ export function registerBridge(program: Command): void {
           "(or use --relayer-fee here to delegate the L1 step to a bonded aggregator).",
         );
       }
+
+      // ── Sub-6a C2: round-trip risk pre-check ─────────────────────────────
+      const ackDelay = opts.ackDelay === true;
+      const l1RpcUrl = (config as unknown as Record<string, unknown>).l1
+        ? ((config as unknown as { l1: Record<string, string> }).l1.rpcUrl ?? "")
+        : "";
+      const l1Cfg = (config as unknown as { l1?: { usdcBridge?: string; wethBridge?: string; wbtcBridge?: string } }).l1;
+      const bridgeAddrs = [
+        l1Cfg?.usdcBridge,
+        l1Cfg?.wethBridge,
+        l1Cfg?.wbtcBridge,
+      ].filter(Boolean) as `0x${string}`[];
+
+      if (l1RpcUrl && bridgeAddrs.length > 0) {
+        const l1MakerAddr = (process.env.L1_MAKER_ADDR ?? "") as `0x${string}`;
+        if (!l1MakerAddr) {
+          console.warn(
+            "Skipping round-trip pre-check: L1_MAKER_ADDR not set. " +
+            "Set env L1_MAKER_ADDR=0x... (your L1 deposit address) to enable.",
+          );
+        } else {
+          let records: Awaited<ReturnType<typeof queryRecentDeposits>>;
+          try {
+            records = await queryRecentDeposits(l1RpcUrl, bridgeAddrs, l1MakerAddr, 7);
+          } catch (e) {
+            console.warn(
+              `Round-trip pre-check failed (L1 query error): ${e instanceof Error ? e.message : String(e)}. ` +
+              `Proceeding with exit; set --ack-delay to suppress this warning explicitly.`,
+            );
+            records = [];
+          }
+          const { risk, matched } = isRoundTripRisk(amount, records, 5);
+          if (risk && matched && !ackDelay) {
+            const daysAgo = Math.floor((Date.now() / 1000 - matched.timestamp) / 86400);
+            console.error("");
+            console.error("Round-trip detection risk");
+            console.error("");
+            console.error(`You deposited ${matched.amount} on ${new Date(matched.timestamp * 1000).toISOString()} (${daysAgo} days ago).`);
+            console.error(`You're now exiting ${amount} -- within +/-5% of that deposit's amount.`);
+            console.error("");
+            console.error(`Observers on Etherscan can correlate L1 deposit + L1 withdraw timing + amount`);
+            console.error(`and infer this is the same wallet round-tripping through Quetzal's L2 privacy.`);
+            console.error(`L2 privacy stays intact; the L1 boundary becomes traceable.`);
+            console.error("");
+            console.error("Mitigations:");
+            console.error("  - Wait >=7 days from last matching-size deposit (recommended: 14 days)");
+            console.error("  - Use --split-into N to break exit into smaller staggered withdrawals (Sub-6a C3)");
+            console.error("  - Use --ack-delay if you've considered the trade-off");
+            console.error("");
+            console.error("Aborting. Re-run with --ack-delay to proceed.");
+            process.exit(1);
+          }
+        }
+      }
+      // ── end round-trip pre-check ──────────────────────────────────────────
 
       // EthAddress on L2: zero-padded into 32-byte Field slot, left-padded with 12 zero bytes.
       const l1RecipientFr = new Fr(BigInt(l1RecipientHex));
