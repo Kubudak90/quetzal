@@ -111,7 +111,7 @@ pub contract Orderbook {
 
     /// Sub-4: cap on pools touched per clearing.
     pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;
-    /// Sub-5a D1: total pool-registry capacity (≠ MAX_ACTIVE_POOLS_PER_EPOCH=3
+    /// Sub-5a D1: total pool-registry capacity (!= MAX_ACTIVE_POOLS_PER_EPOCH=3
     /// which caps per-epoch active pools). add_pool refuses to extend past this.
     pub global MAX_NUM_POOLS: u32 = 8;
     /// Sub-4: padding sentinel for unused pool slots in ClearingPublic.
@@ -134,7 +134,7 @@ pub contract Orderbook {
 
     /// Sub-4: per-pool clearing payload. 36 fields total = (pool_id + clearing_price)
     /// prefix + LiquidityPool::ClearingSwap (34 fields: 4 aggregate flows +
-    /// current_sqrt_price_after + active_bucket_count + 4 BucketDelta × 7 = 28).
+    /// current_sqrt_price_after + active_bucket_count + 4 BucketDelta x 7 = 28).
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct PoolClearing {
         pub pool_id: u32,
@@ -142,7 +142,7 @@ pub contract Orderbook {
         pub swap: LiquidityPool::ClearingSwap,
     }
 
-    /// Sub-4: top-level clearing public input. ~6 scalars + 3 PoolClearing × 36 = 114 fields.
+    /// Sub-4: top-level clearing public input. ~6 scalars + 3 PoolClearing x 36 = 114 fields.
     #[derive(Deserialize, Eq, Packable, Serialize)]
     pub struct ClearingPublic {
         pub order_acc:         Field,
@@ -628,7 +628,7 @@ pub contract Orderbook {
     ///             [2-5]  a_to_pool / b_to_pool / a_from_pool / b_from_pool
     ///             [6]    current_sqrt_price_after
     ///             [7]    active_bucket_count
-    ///             [8-35] active_bucket_deltas[4] × 7 fields each
+    ///             [8-35] active_bucket_deltas[4] x 7 fields each
 
     /// Sub-5a B1: derive a per-hop claim nullifier from note_hash + secret + hop_index.
     /// The hop_index makes hop=0 and hop=1 produce DIFFERENT nullifiers from the
@@ -819,7 +819,7 @@ pub contract Orderbook {
     ///   3. Derive a per-hop nullifier: poseidon2([note_hash, nhk_app, hop_index, TAG]).
     ///   4. Push the nullifier. A second call for the same hop reverts (duplicate).
     ///   5. Derive the output token from the note's path + hop_index + side.
-    ///   6. Transfer the payout from orderbook public balance → maker private balance.
+    ///   6. Transfer the payout from orderbook public balance -> maker private balance.
     #[external("private")]
     fn claim_fill(
         epoch_id: u32,
@@ -890,24 +890,24 @@ pub contract Orderbook {
         //    For path_len == 2 (1-hop):  path = [token_in, token_out, 0_sentinel]
         //    For path_len == 3 (2-hop):  path = [token_in, token_mid, token_out]
         //
-        //    Bid (side=false): maker sends path[0], receives along the path left→right.
+        //    Bid (side=false): maker sends path[0], receives along the path left->right.
         //      hop=0 output = path[1]  (always the next token in the forward direction)
         //      hop=1 output = path[2]  (only valid for path_len == 3)
         //
-        //    Ask (side=true): maker sends path[path_len-1], receives along the path right→left.
+        //    Ask (side=true): maker sends path[path_len-1], receives along the path right->left.
         //      hop=0 output = path[path_len - 2]
         //        1-hop (path_len=2): path[0]
         //        2-hop (path_len=3): path[1]  (intermediate)
         //      hop=1 output = path[0]          (only valid for path_len == 3)
         let output_token: Field = if !order.side {
-            // bid: traverse path left→right; hop N outputs path[N+1]
+            // bid: traverse path left->right; hop N outputs path[N+1]
             if hop_index == 0 as u8 {
                 order.path[1]
             } else {
                 order.path[2]  // path_len must be 3 for hop=1
             }
         } else {
-            // ask: traverse path right→left; hop N outputs path[path_len-2-N]
+            // ask: traverse path right->left; hop N outputs path[path_len-2-N]
             if hop_index == 0 as u8 {
                 if order.path_len == 2 as u8 {
                     order.path[0]  // 1-hop ask: receive path[0]
@@ -1035,8 +1035,8 @@ pub contract Orderbook {
         self.context.push_nullifier(cancel_nullifier);
 
         // 3. Derive the escrowed token from the order's stored path (Sub-4 B2).
-        //    side == false (bid): maker escrowed path[0]  (input paid left→right)
-        //    side == true  (ask): maker escrowed path[path_len-1] (input paid right→left)
+        //    side == false (bid): maker escrowed path[0]  (input paid left->right)
+        //    side == true  (ask): maker escrowed path[path_len-1] (input paid right->left)
         //    This must match submit_order's escrow direction exactly.
         let cancel_input_token: Field = if !order.side {
             order.path[0]

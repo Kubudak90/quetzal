@@ -107,7 +107,7 @@ unconstrained fn seed_public_increments_tracked_balance_for_deployer() {
     assert(tracked2 == 124_456, "tracked_balance accumulates across seeds");
 }
 
-// ── Sub-5c D1: relayer claim queue tests ──────────────────────────────────────
+// -- Sub-5c D1: relayer claim queue tests --------------------------------------
 
 #[test]
 unconstrained fn sub5c_queue_relayer_claim_appends() {

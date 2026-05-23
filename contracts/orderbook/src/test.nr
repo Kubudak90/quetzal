@@ -756,8 +756,8 @@ unconstrained fn submit_order_rejects_duplicate_path_hop() {
 // Sub-5a Task A3: set_treasury one-shot setter TXE tests.
 //
 // set_treasury is a #[external("public")] function added in A2. It gates on:
-//   (1) caller == pool_registry_admin  → reverts with "only pool_registry_admin"
-//   (2) stored treasury == ZERO        → reverts with "treasury already set"
+//   (1) caller == pool_registry_admin  -> reverts with "only pool_registry_admin"
+//   (2) stored treasury == ZERO        -> reverts with "treasury already set"
 //
 // All three tests deploy with the new A2 constructor signature (no treasury arg).
 // The `get_treasury()` utility getter is used in the happy-path to confirm the
@@ -869,7 +869,7 @@ unconstrained fn sub5a_set_treasury_rejects_non_admin_caller() {
     );
     let orderbook = env.deploy("Orderbook").with_public_initializer(admin, initializer_call);
 
-    // Stranger (not admin) tries to set treasury → must revert: "only pool_registry_admin".
+    // Stranger (not admin) tries to set treasury -> must revert: "only pool_registry_admin".
     env.call_public(stranger, Orderbook::at(orderbook).set_treasury(stub_treasury));
 }
 
@@ -892,7 +892,7 @@ unconstrained fn sub5a_set_treasury_rejects_non_admin_caller() {
 // ============================================================================
 // Sub-5a Task B2: per-hop nullifier double-claim guard stub.
 //
-// The full integration test (real submit_order → clearing → two claim_fill
+// The full integration test (real submit_order -> clearing -> two claim_fill
 // calls for the same hop) runs in F1's testnet runner, since it requires
 // ClientIVC proofs and a live Aztec node.
 //

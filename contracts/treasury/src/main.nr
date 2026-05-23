@@ -146,9 +146,9 @@ pub contract Treasury {
         self.storage.tracked_balance.read()
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------------------
     // Sub-5c D1: opt-in relayer claim queue
-    // ──────────────────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------------------
 
     /// Sub-5c D1: maker queues an opt-in relayer claim alongside their L2 exit.
     /// The relayer will submit the L1 withdraw in exchange for `fee` (paid out

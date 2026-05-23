@@ -347,14 +347,14 @@ pub contract Token {
         self.emit(Transfer { from: AztecAddress::zero(), to: PRIVATE_ADDRESS_MAGIC_VALUE, amount });
     }
 
-    // ── Sub-5b: BRIDGE FLOW ───────────────────────────────────────────────────────
-    // L1↔L2 deposit + withdraw functions for bridged tokens (is_bridged=true).
-    // Each function consumes / emits an Aztec L1↔L2 message via the portal at
+    // -- Sub-5b: BRIDGE FLOW -------------------------------------------------------
+    // L1<->L2 deposit + withdraw functions for bridged tokens (is_bridged=true).
+    // Each function consumes / emits an Aztec L1<->L2 message via the portal at
     // portal_addr (set at deploy via constructor_with_minter_bridged).
     //
     // Content-hash format: sha256_to_field over abi.encode-style 32-byte field
     // serialization. Both deposit + withdraw flows use the canonical Aztec
-    // L1↔L2 message format (matching contracts-l1/src/TokenBridge.sol's
+    // L1<->L2 message format (matching contracts-l1/src/TokenBridge.sol's
     // _sha256ToField helper).
     //
     // Domain-separator tags (DEPOSIT_PUBLIC/PRIVATE_TAG, WITHDRAW_PUBLIC/PRIVATE_TAG)
