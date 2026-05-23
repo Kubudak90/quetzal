@@ -617,7 +617,7 @@ unconstrained fn submit_order_rejects_path_with_no_matching_pool() {
 
     let maker = env.create_light_account();
 
-    // Submit a bid with path[0]=usdc, path[1]=btc — no usdc/btc pool exists.
+    // Submit a bid with path[0]=usdc, path[1]=btc -- no usdc/btc pool exists.
     // The pool-lookup assert must fire: "pool not found for path[0..2]".
     env.call_private(
         maker,

@@ -192,7 +192,7 @@ pub contract Treasury {
     /// the queue by moving the last entry into the consumed slot.
     ///
     /// MVP permissionless (anyone can call). Since the L1 tx already happened
-    /// before consumption, consuming a claim just pays the fee — no harm if a
+    /// before consumption, consuming a claim just pays the fee -- no harm if a
     /// non-relayer triggers it (they pay gas for nothing). Sub-5d may add
     /// AggregatorRegistry bond check.
     #[external("public")]

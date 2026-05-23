@@ -193,7 +193,7 @@ unconstrained fn sub5c_consume_relayer_claim_decrements_tracked_balance() {
     // We seed first so the fee deduction is exercised in the accounting path.
     // Note: consume_relayer_claim calls Token.transfer_public_to_public only if
     // to_pay > 0; in TXE without a real Token deployment that call would
-    // revert.  So we test the zero-fee-cap branch by NOT seeding — meaning
+    // revert.  So we test the zero-fee-cap branch by NOT seeding -- meaning
     // tracked_balance stays at 0, to_pay = min(fee, 0) = 0, and the Token call
     // is skipped entirely.  The test verifies the queue is compacted and count
     // decrements.

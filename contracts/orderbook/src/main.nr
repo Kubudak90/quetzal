@@ -161,7 +161,7 @@ pub contract Orderbook {
         epoch_length: PublicImmutable<u32, Context>,
         // Sub-4 NEW: multi-pool registry.
         // Sub-5a D1: PublicMutable so add_pool can append at runtime.
-        // Existing slots are never overwritten — only appended at index pool_count.
+        // Existing slots are never overwritten -- only appended at index pool_count.
         // pool_id -> Pool contract address
         pools: Map<u32, PublicMutable<AztecAddress, Context>, Context>,
         // pool_id -> canonical (token_a, token_b) where token_a < token_b as Field
@@ -258,7 +258,7 @@ pub contract Orderbook {
 
     /// Sub-5a A2: one-shot setter for the Treasury address. Caller must be the
     /// deploy-time pool_registry_admin (typically admin). Reverts after the first
-    /// non-ZERO write — preserving Sub-3's pay_aggregator gating integrity once set.
+    /// non-ZERO write -- preserving Sub-3's pay_aggregator gating integrity once set.
     #[external("public")]
     fn set_treasury(treasury_addr: AztecAddress) {
         let caller = self.msg_sender();
@@ -815,7 +815,7 @@ pub contract Orderbook {
     ///
     /// Flow:
     ///   1. Verify the Merkle inclusion proof against the stored fills_root.
-    ///   2. Read (NOT pop) the maker's OrderNote via `get_notes` — note is preserved.
+    ///   2. Read (NOT pop) the maker's OrderNote via `get_notes` -- note is preserved.
     ///   3. Derive a per-hop nullifier: poseidon2([note_hash, nhk_app, hop_index, TAG]).
     ///   4. Push the nullifier. A second call for the same hop reverts (duplicate).
     ///   5. Derive the output token from the note's path + hop_index + side.
@@ -847,7 +847,7 @@ pub contract Orderbook {
         self.enqueue_self._assert_fill_root(epoch_id, computed_root);
 
         // 3. READ (not pop) the maker's OrderNote. get_notes returns ConfirmedNote
-        //    wrappers; the note itself is NOT nullified here — that is done explicitly
+        //    wrappers; the note itself is NOT nullified here -- that is done explicitly
         //    below with a per-hop nullifier. This lets hop=1 find the note after
         //    hop=0 has already claimed.
         let maker = self.msg_sender();
@@ -997,7 +997,7 @@ pub contract Orderbook {
         // 1. READ (not pop) the maker's OrderNote matching `order_nonce`.
         //    We use get_notes (like claim_fill) rather than pop_notes, because
         //    double-cancellation is blocked by the domain-separated cancel nullifier
-        //    we push below — not by removing the note from the PrivateSet.
+        //    we push below -- not by removing the note from the PrivateSet.
         //    Using get_notes also keeps the API surface consistent with B2 (claim_fill).
         let options = NoteGetterOptions::new().select(
             OrderNote::properties().nonce,
@@ -1020,8 +1020,8 @@ pub contract Orderbook {
         //    Z_HOP_CLAIM_TAG and include hop_index). A second cancel attempt on the same
         //    OrderNote will push the same nullifier and revert at the kernel level.
         //
-        //    The OrderNote itself remains in the PrivateSet — claim_fill's get_notes call
-        //    would still find it — but once cancelled the escrow (public balance) has been
+        //    The OrderNote itself remains in the PrivateSet -- claim_fill's get_notes call
+        //    would still find it -- but once cancelled the escrow (public balance) has been
         //    refunded, so any subsequent fill-claim will underflow the token transfer and
         //    atomically revert.
         let note_hash = order.compute_note_hash(
@@ -1062,7 +1062,7 @@ pub contract Orderbook {
 
         // 5. Gate cancellation to OPEN, fold into cancel_acc, BEFORE the escrow return.
         //    The 5c _assert_not_filled guard is dropped in 5d-4: cancel-after-fill is
-        //    blocked at the token-contract level — _apply_verified_clearing moves filled
+        //    blocked at the token-contract level -- _apply_verified_clearing moves filled
         //    amount_in to the pool, leaving the orderbook public balance short, so
         //    transfer_public_to_private underflows and the whole tx atomically reverts.
         self.enqueue_self._assert_epoch_open();

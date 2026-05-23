@@ -362,10 +362,10 @@ pub contract Token {
     //
     // PRIVATE FLOWS:
     //   - claim_private: recipient is NOT bound in content hash (mirrors L1's
-    //     bytes32(0) recipient — privacy by design). The `to` param drives the
+    //     bytes32(0) recipient -- privacy by design). The `to` param drives the
     //     L2 mint only.
     //   - exit_to_l1_private: emits WITHDRAW_PRIVATE_TAG content; NO L1 CONSUMER
-    //     EXISTS yet — keep the warning on the function until Sub-5c adds the
+    //     EXISTS yet -- keep the warning on the function until Sub-5c adds the
     //     L1 withdrawPrivate path.
 
     /// Sub-5b: Consume an L1-to-L2 deposit message from the portal and mint
@@ -380,7 +380,7 @@ pub contract Token {
         assert(amount > 0 as u128, "amount must be positive");
         let portal = self.storage.portal_addr.read();
 
-        // DO NOT change compute_secret_hash() — that derivation is protocol-defined
+        // DO NOT change compute_secret_hash() -- that derivation is protocol-defined
         // and matches what the user submits to depositToL2Public on L1 as secretHash.
         let secret_hash = compute_secret_hash(secret);
 
@@ -424,13 +424,13 @@ pub contract Token {
         assert(amount > 0 as u128, "amount must be positive");
         let portal = self.storage.portal_addr.read();
 
-        // DO NOT change compute_secret_hash() — that derivation is protocol-defined
+        // DO NOT change compute_secret_hash() -- that derivation is protocol-defined
         // and matches what the user submits to depositToL2Private on L1 as secretHash.
         let secret_hash = compute_secret_hash(secret);
 
-        // Sub-5b C1: claim_private's content hash does NOT bind `to` — it mirrors L1's
+        // Sub-5b C1: claim_private's content hash does NOT bind `to` -- it mirrors L1's
         // depositToL2Private which commits bytes32(0) as the recipient placeholder
-        // (privacy by design — L1 doesn't know who claims on L2). The `to` parameter
+        // (privacy by design -- L1 doesn't know who claims on L2). The `to` parameter
         // directs the mint at L2; anyone with the secret can call claim_private and
         // route the mint to any L2 address.
         //
