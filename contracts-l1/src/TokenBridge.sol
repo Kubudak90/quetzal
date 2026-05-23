@@ -60,6 +60,9 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     ///         delay-0 emergency TimelockController fronted by a separate
     ///         emergency multisig (2-of-3) so security incidents bypass the
     ///         7-day governance window.
+    ///         The role is its OWN admin (set in initialize via _setRoleAdmin):
+    ///         governance cannot revoke it. Only existing emergency-role holders
+    ///         may rotate emergency-role membership.
     bytes32 public constant EMERGENCY_PAUSER_ROLE = keccak256("EMERGENCY_PAUSER_ROLE");
 
     event DepositInitiated(
@@ -128,6 +131,11 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         _grantRole(DEFAULT_ADMIN_ROLE,    _governanceTimelock);
         _grantRole(GOVERNANCE_ROLE,        _governanceTimelock);
         _grantRole(EMERGENCY_PAUSER_ROLE,  _emergencyTimelock);
+        // I-2 trust-model hardening: EMERGENCY_PAUSER_ROLE is self-admin so the
+        // governance timelock cannot silently revoke the emergency multisig's
+        // pause authority. Only existing emergency-role holders can grant or
+        // revoke the role on others.
+        _setRoleAdmin(EMERGENCY_PAUSER_ROLE, EMERGENCY_PAUSER_ROLE);
 
         l1Token = _l1Token;
         l2TokenAddress = _l2TokenAddress;
@@ -269,6 +277,9 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         token.safeTransfer(to, amount);
     }
 
+    /// @dev UUPS upgrade gate. Callable only via the 7-day governance
+    ///      TimelockController; cannot be bypassed even by the emergency
+    ///      multisig (which holds EMERGENCY_PAUSER_ROLE only, not GOVERNANCE_ROLE).
     function _authorizeUpgrade(address) internal override onlyRole(GOVERNANCE_ROLE) {}
 
     // ── Internal ──────────────────────────────────────────────────────────────
