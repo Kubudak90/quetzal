@@ -113,6 +113,8 @@ export function registerBridge(program: Command): void {
       "--ack-delay",
       "acknowledge round-trip risk warning + proceed with exit",
     )
+    .option("--split-into <n>", "split into N partial withdrawals staggered over time (default 1 = no split)", "1")
+    .option("--interval-days <d>", "days between split exits (used with --split-into > 1; default 3)", "3")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);
@@ -184,6 +186,35 @@ export function registerBridge(program: Command): void {
         }
       }
       // ── end round-trip pre-check ──────────────────────────────────────────
+
+      // ── Sub-6a C3: multi-hop split path ───────────────────────────────────
+      const splitInto = Number(opts.splitInto);
+      const intervalDays = Number(opts.intervalDays);
+
+      if (splitInto > 1) {
+        const { buildSplitSchedule, loadBridgeState, saveBridgeState } = await import("../bridge/bridge-schedule.js");
+        const newExits = buildSplitSchedule(
+          String(opts.token),
+          amount,
+          l1RecipientHex,
+          splitInto,
+          intervalDays,
+        );
+        const state = loadBridgeState();
+        state.scheduledExits.push(...newExits);
+        saveBridgeState(state);
+
+        console.log(`Scheduled ${splitInto} partial exits:`);
+        for (const e of newExits) {
+          const when = new Date(e.submitAfterUnix * 1000).toISOString();
+          console.log(`  ${e.id}  ${e.amount} ${e.token}  -> ${e.l1Recipient}  submit after ${when}`);
+        }
+        console.log("");
+        console.log("Run 'quetzal bridge tick' periodically to submit pending exits.");
+        console.log("Run 'quetzal bridge status' to see schedule progress.");
+        return;
+      }
+      // ── end split path (splitInto === 1: fall through to single-exit) ─────
 
       // EthAddress on L2: zero-padded into 32-byte Field slot, left-padded with 12 zero bytes.
       const l1RecipientFr = new Fr(BigInt(l1RecipientHex));
