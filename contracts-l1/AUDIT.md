@@ -1,7 +1,7 @@
 # ZSwap-on-Aztec L1 Bridge — Audit Brief
 
-**Audit target commit:** _(populated by E3 after the `sub5c-audit-snapshot` git tag is created)_
-**Audit window opens:** _(date TBD)_
+**Audit target commit:** `2747700e48fc0eb8d84a489afdd4c4468d5918a9` (git tag `sub5c-audit-snapshot`)
+**Audit window opens:** 2026-05-23 (Sub-5c code-complete)
 **Scope owner:** ZSwap-on-Aztec core team
 **Audit scope:** L1 portal contracts (`contracts-l1/`)
 
