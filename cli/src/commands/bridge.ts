@@ -102,6 +102,13 @@ export function registerBridge(program: Command): void {
       "use exit_to_l1_public (default is exit_to_l1_private — privacy-maximalist; " +
       "WARNING: exit_to_l1_private has NO L1 consumer until Sub-5c, funds will be locked)",
     )
+    .option(
+      "--relayer-fee <amount>",
+      "opt-in relayer fee in token's smallest unit (0 = no relayer; default 0). " +
+      "When > 0, queues a Treasury claim alongside the L2 exit so a bonded aggregator " +
+      "can submit the L1 withdraw on your behalf (saves you the L1 cast send step).",
+      "0",
+    )
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);
@@ -131,17 +138,57 @@ export function registerBridge(program: Command): void {
           methods: {
             exit_to_l1_public: (
               amount: bigint, l1Recipient: Fr,
-            ) => { send: (args: { from: AztecAddress }) => Promise<unknown> };
+            ) => { send: (args: { from: AztecAddress }) => { wait: () => Promise<{ txHash: { toString: () => string } }> } };
             exit_to_l1_private: (
               amount: bigint, l1Recipient: Fr,
-            ) => { send: (args: { from: AztecAddress }) => Promise<unknown> };
+            ) => { send: (args: { from: AztecAddress }) => { wait: () => Promise<{ txHash: { toString: () => string } }> } };
           };
         };
         const fn = usePrivate ? "exit_to_l1_private" : "exit_to_l1_public";
-        await tokenDyn.methods[fn](amount, l1RecipientFr).send({ from: ctx.account });
+        const tx = tokenDyn.methods[fn](amount, l1RecipientFr).send({ from: ctx.account });
+        const receipt = await tx.wait();
+        const l2TxHash = receipt.txHash.toString();
         console.log(
           `${fn} submitted; query Outbox proof + claim on L1 via 'zswap bridge claim-l1'`,
         );
+
+        // Sub-5c D3: optionally queue a Treasury relayer claim so a bonded
+        // aggregator can submit the L1 withdraw on the maker's behalf.
+        const relayerFee = BigInt(opts.relayerFee);
+        if (relayerFee > 0n) {
+          if (!config.treasury) {
+            console.error(
+              "WARNING: --relayer-fee > 0 but config.treasury is not set. Skipping relayer queue. " +
+              "Either set config.treasury or omit --relayer-fee for the manual L1 cast send path.",
+            );
+          } else {
+            // Compute expectedContent: sha256_to_field(abi.encode(recipient, amount, tag))
+            // Matches L1 TokenBridge._withdrawContent and L2 exit_to_l1_* emitted content.
+            const { computeWithdrawContent } = await import("../sha256-content.js");
+            const expectedContent = computeWithdrawContent(l1RecipientHex, amount, usePrivate);
+
+            console.log(`Relayer fee ${relayerFee} → queueing Treasury claim`);
+
+            const { TreasuryContract } = await import("../../../tests/integration/generated/Treasury.js");
+            const treasury = await TreasuryContract.at(AztecAddress.fromString(config.treasury), ctx.wallet);
+            const treasuryDyn = treasury as unknown as {
+              methods: {
+                queue_relayer_claim: (
+                  l2TxHash: Fr, expectedContent: Fr, l1Recipient: Fr, amount: bigint, fee: bigint,
+                ) => { send: (args: { from: AztecAddress }) => Promise<unknown> };
+              };
+            };
+            await treasuryDyn.methods.queue_relayer_claim(
+              Fr.fromString(l2TxHash),
+              Fr.fromString(expectedContent),
+              l1RecipientFr,
+              amount,
+              relayerFee,
+            ).send({ from: ctx.account });
+
+            console.log(`  queued. A bonded relayer should pick this up within ~60s + submit L1 withdraw.`);
+          }
+        }
       } finally {
         await ctx.stop();
       }
