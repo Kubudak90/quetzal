@@ -105,6 +105,9 @@ pub contract Orderbook {
 
     /// Sub-4: cap on pools touched per clearing.
     pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;
+    /// Sub-5a D1: total pool-registry capacity (≠ MAX_ACTIVE_POOLS_PER_EPOCH=3
+    /// which caps per-epoch active pools). add_pool refuses to extend past this.
+    pub global MAX_NUM_POOLS: u32 = 8;
     /// Sub-4: padding sentinel for unused pool slots in ClearingPublic.
     pub global INVALID_POOL_ID: u32 = 0xFFFFFFFF;
 
@@ -151,13 +154,15 @@ pub contract Orderbook {
         current_epoch: PublicMutable<EpochState, Context>,
         epoch_length: PublicImmutable<u32, Context>,
         // Sub-4 NEW: multi-pool registry.
+        // Sub-5a D1: PublicMutable so add_pool can append at runtime.
+        // Existing slots are never overwritten — only appended at index pool_count.
         // pool_id -> Pool contract address
-        pools: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
+        pools: Map<u32, PublicMutable<AztecAddress, Context>, Context>,
         // pool_id -> canonical (token_a, token_b) where token_a < token_b as Field
-        pool_token_a: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
-        pool_token_b: Map<u32, PublicImmutable<AztecAddress, Context>, Context>,
-        // How many pools were registered at deploy (so we can iterate 0..pool_count).
-        pool_count: PublicImmutable<u32, Context>,
+        pool_token_a: Map<u32, PublicMutable<AztecAddress, Context>, Context>,
+        pool_token_b: Map<u32, PublicMutable<AztecAddress, Context>, Context>,
+        // How many pools are registered (grows at runtime via add_pool).
+        pool_count: PublicMutable<u32, Context>,
         /// Hash of the clearing-circuit VK. Initialised at deploy and immutable.
         /// The full VK is provided as calldata to close_epoch_and_clear_verified.
         clearing_vk_hash: PublicImmutable<Field, Context>,
@@ -220,15 +225,15 @@ pub contract Orderbook {
         self.storage.treasury.write(AztecAddress::from_field(0));
         self.storage.aggregator_fee.initialize(aggregator_fee);
         self.storage.pool_registry_admin.initialize(pool_registry_admin);
-        // Sub-4 NEW
-        assert((pool_count > 0 as u32) & (pool_count <= 4 as u32), "pool_count in [1, 4]");
-        self.storage.pool_count.initialize(pool_count);
+        // Sub-4 NEW; Sub-5a D1: .initialize() -> .write() (PublicMutable)
+        assert((pool_count > 0 as u32) & (pool_count <= MAX_NUM_POOLS as u32), "pool_count in [1, MAX_NUM_POOLS]");
+        self.storage.pool_count.write(pool_count);
         for i in 0..4 {
             if (i as u32) < pool_count {
-                self.storage.pools.at(i as u32).initialize(pool_addrs[i]);
+                self.storage.pools.at(i as u32).write(pool_addrs[i]);
                 // Caller responsibility: token_a < token_b as Field
-                self.storage.pool_token_a.at(i as u32).initialize(pool_token_a_addrs[i]);
-                self.storage.pool_token_b.at(i as u32).initialize(pool_token_b_addrs[i]);
+                self.storage.pool_token_a.at(i as u32).write(pool_token_a_addrs[i]);
+                self.storage.pool_token_b.at(i as u32).write(pool_token_b_addrs[i]);
             }
         }
 
@@ -258,6 +263,43 @@ pub contract Orderbook {
         self.storage.treasury.write(treasury_addr);
     }
 
+    /// Sub-5a D1: append a new pool to the registry. Caller must be pool_registry_admin.
+    /// Existing pool slots are untouched; only the next free slot is written.
+    /// Refuses duplicate pair registration (canonical lookup) + refuses extension
+    /// past MAX_NUM_POOLS.
+    #[external("public")]
+    fn add_pool(pool_addr: AztecAddress, token_a: AztecAddress, token_b: AztecAddress) {
+        let caller = self.msg_sender();
+        let admin = self.storage.pool_registry_admin.read();
+        assert(caller == admin, "only pool_registry_admin");
+
+        let count = self.storage.pool_count.read();
+        assert(count < MAX_NUM_POOLS as u32, "pool registry full");
+
+        // Canonicalize: smaller-as-Field first (matches resolve_pool_id_by_pair's convention).
+        let (lo, hi) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+            (token_a, token_b)
+        } else {
+            (token_b, token_a)
+        };
+
+        // Refuse duplicate registration of an existing pair.
+        let mut existing: u32 = 0xFFFFFFFF as u32;
+        for i in 0..MAX_NUM_POOLS {
+            if (i as u32) < count {
+                let pa = self.storage.pool_token_a.at(i as u32).read();
+                let pb = self.storage.pool_token_b.at(i as u32).read();
+                if (pa == lo) & (pb == hi) { existing = i as u32; }
+            }
+        }
+        assert(existing == 0xFFFFFFFF as u32, "pair already registered");
+
+        self.storage.pools.at(count).write(pool_addr);
+        self.storage.pool_token_a.at(count).write(lo);
+        self.storage.pool_token_b.at(count).write(hi);
+        self.storage.pool_count.write(count + 1);
+    }
+
     /// Sub-4: resolve which pool_id matches an unordered (token_a, token_b) pair.
     /// Canonicalises internally (smaller Field first) so the caller can pass either order.
     /// Returns 0xFFFFFFFF if no registered pool matches the pair.
@@ -272,7 +314,7 @@ pub contract Orderbook {
             (token_b, token_a)
         };
         let mut found: u32 = 0xFFFFFFFF;
-        for i in 0..4 {
+        for i in 0..MAX_NUM_POOLS {
             if (i as u32) < count {
                 let pa = self.storage.pool_token_a.at(i as u32).read();
                 let pb = self.storage.pool_token_b.at(i as u32).read();
@@ -341,12 +383,12 @@ pub contract Orderbook {
         let maker = self.msg_sender();
 
         // Sub-4 (B2): validate each hop's pool exists in the registry.
-        // PublicImmutable is readable from private context (fixed at deploy time).
+        // Sub-5a D1: pool_count is now PublicMutable; still readable from private context.
         let pool_count = self.storage.pool_count.read();
         // Hop 0: path[0] -> path[1]
         let (lo0, hi0) = if path[0] < path[1] { (path[0], path[1]) } else { (path[1], path[0]) };
         let mut found0: u32 = 0xFFFFFFFF as u32;
-        for i in 0..4 {
+        for i in 0..MAX_NUM_POOLS {
             if (i as u32) < pool_count {
                 let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
                 let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
@@ -360,7 +402,7 @@ pub contract Orderbook {
         if path_len == 3 {
             let (lo1, hi1) = if path[1] < path[2] { (path[1], path[2]) } else { (path[2], path[1]) };
             let mut found1: u32 = 0xFFFFFFFF as u32;
-            for i in 0..4 {
+            for i in 0..MAX_NUM_POOLS {
                 if (i as u32) < pool_count {
                     let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
                     let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
