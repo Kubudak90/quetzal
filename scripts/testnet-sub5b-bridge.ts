@@ -39,6 +39,7 @@
 // the claim/exit/claim-l1 surface.
 
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { bootstrapAztecWallet } from "./lib/aztec-wallet-bootstrap.js";
 
 // ── Safety checks ─────────────────────────────────────────────────────────────
 
@@ -94,9 +95,12 @@ async function step2VerifyDeploys(state: State) {
 
 async function step3MakerWallet(state: State) {
   if (state.step >= 3) return;
-  // Implementer: port the testnet-m1-hello.ts faucet+claim+deploy flow.
-  // Capture the deployed Aztec account address in state.notes.maker.
-  console.log("step3: maker wallet bootstrap (stub — see testnet-m1-hello.ts)");
+  const { account } = await bootstrapAztecWallet(
+    process.env.AZTEC_NODE_URL!,
+    "testnet-sub5b-maker-wallet.json",
+    "https://aztec-faucet.dev-nethermind.xyz/api/drip",
+  );
+  state.notes.maker = account.toString();
   state.step = 3;
   saveState(state);
 }

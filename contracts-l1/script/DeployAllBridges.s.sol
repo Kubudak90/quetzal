@@ -10,65 +10,71 @@ import {TokenBridge} from "../src/TokenBridge.sol";
 import {IInbox} from "../src/interfaces/IInbox.sol";
 import {IOutbox} from "../src/interfaces/IOutbox.sol";
 
-/// @notice Deploys (TimelockController, USDCBridge proxy, WETHBridge proxy)
-///         in a single broadcast. l2TokenAddress is set to bytes32(0) — the
-///         TS orchestrator (deploy-bridge.ts) deploys the L2 aUSDC/aWETH
-///         contracts AFTER and then schedules+executes setL2TokenAddress
-///         via the TimelockController.
+/// @notice Deploys (governance TimelockController, emergency TimelockController,
+///         USDCBridge proxy, WETHBridge proxy, wBTCBridge proxy) in one broadcast.
+///         All 3 portals are owned by both timelocks (GOVERNANCE_ROLE +
+///         EMERGENCY_PAUSER_ROLE).
 contract DeployAllBridges is Script {
     function run(
         address l1Usdc,
         address l1Weth,
+        address l1Wbtc,
         address l1Inbox,
         address l1Outbox,
-        address l1Multisig,
-        uint256 timelockDelaySec,
+        address l1GovernanceMultisig,
+        address l1EmergencyMultisig,
+        uint256 governanceDelaySec,
         uint256 maxTvl
-    ) external returns (address timelock, address usdcBridge, address wethBridge) {
+    ) external returns (
+        address governanceTimelock,
+        address emergencyTimelock,
+        address usdcBridge,
+        address wethBridge,
+        address wbtcBridge
+    ) {
         vm.startBroadcast();
 
-        // 1. TimelockController. Proposers = multisig. Executors = anyone (0x0)
-        //    so any proposer-signed batch can self-execute after delay.
-        address[] memory proposers = new address[](1);
-        proposers[0] = l1Multisig;
-        address[] memory executors = new address[](1);
-        executors[0] = address(0);
-        TimelockController tlc = new TimelockController(
-            timelockDelaySec, proposers, executors, l1Multisig
-        );
-        timelock = address(tlc);
+        // 1. Governance timelock (typically 7d on mainnet, 0d on testnet)
+        address[] memory govProposers = new address[](1); govProposers[0] = l1GovernanceMultisig;
+        address[] memory govExecutors = new address[](1); govExecutors[0] = address(0);
+        governanceTimelock = address(new TimelockController(
+            governanceDelaySec, govProposers, govExecutors, l1GovernanceMultisig
+        ));
 
-        // 2. USDC + WETH portal proxies. l2TokenAddress = bytes32(0) placeholder.
-        // Transitional: both governanceTl + emergencyTl set to same timelock.
-        // A4 will properly separate them with a dedicated emergency TimelockController.
-        usdcBridge = _deployBridgeProxy(
-            IERC20(l1Usdc), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, timelock, maxTvl
-        );
-        wethBridge = _deployBridgeProxy(
-            IERC20(l1Weth), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, timelock, maxTvl
-        );
+        // 2. Emergency timelock (always 0d — security incidents bypass governance window)
+        address[] memory emProposers = new address[](1); emProposers[0] = l1EmergencyMultisig;
+        address[] memory emExecutors = new address[](1); emExecutors[0] = address(0);
+        emergencyTimelock = address(new TimelockController(
+            0, emProposers, emExecutors, l1EmergencyMultisig
+        ));
+
+        // 3. Three TokenBridge proxies (l2TokenAddress=bytes32(0) placeholder;
+        //    the TS orchestrator wires real L2 addresses post-deploy via wirePortalL2Token)
+        usdcBridge = _deployBridgeProxy(IERC20(l1Usdc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
+        wethBridge = _deployBridgeProxy(IERC20(l1Weth), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
+        wbtcBridge = _deployBridgeProxy(IERC20(l1Wbtc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
 
         vm.stopBroadcast();
 
-        console.log("TimelockController:", timelock);
+        console.log("GovernanceTimelock:", governanceTimelock);
+        console.log("EmergencyTimelock: ", emergencyTimelock);
         console.log("USDCBridge:        ", usdcBridge);
         console.log("WETHBridge:        ", wethBridge);
+        console.log("wBTCBridge:        ", wbtcBridge);
     }
 
     function _deployBridgeProxy(
         IERC20 token,
-        bytes32 l2Token,
-        uint256 l2Version,
-        IInbox inbox,
-        IOutbox outbox,
         address governanceTl,
         address emergencyTl,
+        IInbox inbox,
+        IOutbox outbox,
         uint256 maxTvl
     ) internal returns (address) {
         TokenBridge impl = new TokenBridge();
         bytes memory init = abi.encodeWithSelector(
             TokenBridge.initialize.selector,
-            token, l2Token, l2Version, inbox, outbox,
+            token, bytes32(0), uint256(1), inbox, outbox,
             governanceTl, emergencyTl, maxTvl
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
