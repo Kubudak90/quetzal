@@ -16,13 +16,17 @@ Witness builder (`buildClearingWitnessMultiPair`) now fully self-consistent with
 7 documented carry-forward limitations (2-hop double-claim, 1-hop DoS gap, token-pair truncation,
 Sub-3 circular-dep, statistical privacy leak, fixed pool count, naive composite pricing).
 
-**Sub-5a in progress:** Sub-3 4-deploy circular-dep wart retired (3-deploy
-fallback ceremony with Orderbook.treasury PublicMutable + one-shot set_treasury
-A1+A2+A3). Sub-4 #1 (2-hop double-claim) closed via per-hop nullifier scheme
-B1+B2+B3 — claim_fill + cancel_order use get_notes + Z_HOP_CLAIM_TAG /
-Z_CANCEL_TAG domain-separated nullifiers. Sub-4 #2 (1-hop DoS) closed via
-circuit block B' insertion C1+C2. New vk_hash after C2: `2aae33dd4ea01690`.
-Gate count: 281,594 (ACIR opcodes: 158,701). Bridge constants 500/115 HOLD.
+**Sub-5a CODE-COMPLETE (2026-05-23):** Sub-3 4-deploy circular-dep wart retired
+(3-deploy fallback with `Orderbook.treasury` PublicMutable + one-shot
+`set_treasury`). Sub-4 #1 (2-hop double-claim) closed via per-hop nullifier
+scheme — `claim_fill` + `cancel_order` use `get_notes` + `Z_HOP_CLAIM_TAG` /
+`Z_CANCEL_TAG` domain-separated nullifiers. Sub-4 #2 (1-hop DoS) closed via
+circuit block B' (276K → 281K gates, +5,344). Sub-4 #6 (MAX_POOLS fixed at
+deploy) closed via mutable pool registry + `add_pool` (MAX_NUM_POOLS = 8).
+New vk_hash `2aae33dd4ea01690`; bridge constants 500/115 HOLD. Testnet runner
+scaffold at `scripts/testnet-sub5a.ts`; full step-body wire-up + live run
+deferred (same shape as Sub-2.5). Sub-5b (L1 Bridge) and Sub-5c (Production
+Infra) remain.
 
 ## Quickstart
 
@@ -108,6 +112,9 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Sub-project 2.5: Implementation Plan](docs/superpowers/plans/2026-05-22-zswap-aztec-subproject-02-5-circuit-integration.md)
 - [Sub-project 4: Multi-Pair Routing Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-04-multi-pair-routing-design.md)
 - [Sub-project 4: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-04-multi-pair-routing.md)
+- [Sub-project 5a: Deterministic Addresses Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses-design.md)
+- [Sub-project 5a: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses.md)
+- [Sub-project 5a: A1 outcome (args-dependent → FALLBACK 3-deploy)](docs/superpowers/specs/sub5a-A1-outcome.md)
 
 ## Operator Runbook (Sub-3)
 
