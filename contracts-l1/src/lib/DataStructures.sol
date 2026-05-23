@@ -45,10 +45,10 @@ library DataStructures {
     bytes32 internal constant DEPOSIT_PUBLIC_TAG   = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f44505f01));
     bytes32 internal constant DEPOSIT_PRIVATE_TAG  = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f44505f02));
     bytes32 internal constant WITHDRAW_PUBLIC_TAG  = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f57445f03));
-    /// @dev Reserved for a possible Sub-5c private-withdraw variant. TokenBridge's
-    ///      `_withdrawContent` currently only consumes WITHDRAW_PUBLIC_TAG because the
-    ///      L1 portal cannot distinguish private vs public L2 exits — each path binds
-    ///      to whichever tag the L2 side emitted. A parallel `_withdrawContentPrivate`
-    ///      and opt-in withdraw function would be needed to support this tag.
+    /// @notice WITHDRAW_PRIVATE_TAG — used by L2 exit_to_l1_private and consumed by
+    ///         L1 TokenBridge.withdrawPrivate. Distinct from WITHDRAW_PUBLIC_TAG so
+    ///         the two flows produce non-colliding content hashes; an exit emitted
+    ///         with the private tag CANNOT be replayed against the public withdraw
+    ///         function (different content hash).
     bytes32 internal constant WITHDRAW_PRIVATE_TAG = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f57445f04));
 }

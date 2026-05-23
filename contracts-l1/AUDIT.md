@@ -74,12 +74,9 @@ The following threats were considered during design. Each lists the mitigation i
 
 Post-Sub-5c numbers (run from `contracts-l1/`):
 
-- **Foundry tests: 33 pass** (`forge test`):
-  - 18 TokenBridge unit tests (deposit, withdraw, withdrawPrivate, pause, TVL cap, recovery flow, role separation)
-  - 6 BridgeFlow integration tests (governance + emergency timelock flows)
-  - 5 recoverDeposit tests (request/approve/execute + foreign-sender + role gates)
-  - 2 withdrawPrivate tests (happy + paused)
-  - 2 governance-cannot-revoke-emergency invariant tests
+- **Foundry tests: 31 pass** (`forge test`):
+  - 25 TokenBridgeTest unit tests in `contracts-l1/test/TokenBridge.t.sol` (covering deposit + withdraw + withdrawPrivate + pause + TVL cap + recoverDeposit 3-phase + role-separation + EMERGENCY_PAUSER_ROLE self-admin invariant)
+  - 6 BridgeFlowTest integration tests in `contracts-l1/test/BridgeFlow.t.sol` (covering multisig→timelock→bridge governance flow + governanceTimelockCannotPause)
 - **Noir TXE tests: 5 bridge-mode tests** in `contracts/token/src/test.nr` (Docker-blocked local execution; CI runs).
 - **Forge coverage:** run `forge coverage --report lcov` for line/branch coverage; commit the LCOV.
 

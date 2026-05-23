@@ -73,7 +73,7 @@ Slack + PagerDuty. Opt-in relayer extends Sub-3 aggregator daemon
 SEV1-4 + escalation tree + quarterly pause-drill. `docs/superpowers/specs/sub5c-runbook.md`
 extends Sub-5b runbook with EmergencyPauser usage, 3-phase recovery walkthrough,
 withdrawPrivate UX, monitoring setup, relayer setup, 3-asset cap-ramp policy.
-L1 test scoreboard: **33 Foundry tests pass**. L2 TXE: 8 tests (5 Token bridge-mode
+L1 test scoreboard: **31 Foundry tests pass**. L2 TXE: 8 tests (5 Token bridge-mode
 + 3 Treasury queue). **ZSwap is now mainnet-ready in $10k cap mode pending only
 the external audit.** Sub-5d (post-audit remediation) + Sub-6 (privacy mitigations)
 remain.

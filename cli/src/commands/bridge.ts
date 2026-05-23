@@ -99,8 +99,7 @@ export function registerBridge(program: Command): void {
     .requiredOption("--l1-recipient <addr>", "0x-prefixed L1 recipient address (20 bytes)")
     .option(
       "--no-private",
-      "use exit_to_l1_public (default is exit_to_l1_private — privacy-maximalist; " +
-      "WARNING: exit_to_l1_private has NO L1 consumer until Sub-5c, funds will be locked)",
+      "use exit_to_l1_public (default is exit_to_l1_private — privacy-maximalist)",
     )
     .option(
       "--relayer-fee <amount>",
@@ -119,12 +118,10 @@ export function registerBridge(program: Command): void {
       const usePrivate = opts.private !== false;
 
       if (usePrivate) {
-        console.error(
-          "WARNING: exit_to_l1_private has NO L1 consumer in Sub-5b. " +
-          "The L1 portal's withdraw() only handles WITHDRAW_PUBLIC_TAG content. " +
-          "Calling this will burn your L2 balance and emit an Outbox message " +
-          "that cannot be claimed on L1 until Sub-5c ships the withdrawPrivate path. " +
-          "Use --no-private (exit_to_l1_public) instead unless you understand the implications.",
+        console.log(
+          "INFO: exit_to_l1_private uses WITHDRAW_PRIVATE_TAG content. After this L2 tx " +
+          "settles to L1, claim via:  pnpm zswap bridge claim-l1 --private --l2-tx <hash> ... " +
+          "(or use --relayer-fee here to delegate the L1 step to a bonded aggregator).",
         );
       }
 

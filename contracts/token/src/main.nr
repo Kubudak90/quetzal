@@ -494,18 +494,12 @@ pub contract Token {
     /// via sha256_to_field with WITHDRAW_PRIVATE_TAG.
     #[external("private")]
     fn exit_to_l1_private(amount: u128, l1_recipient: EthAddress) {
-        // ╔══════════════════════════════════════════════════════════════════════════╗
-        // ║ ⚠️  WARNING: NO L1 CONSUMER EXISTS for WITHDRAW_PRIVATE_TAG               ║
-        // ║                                                                          ║
-        // ║ The L1 portal's withdraw() function only handles WITHDRAW_PUBLIC_TAG.    ║
-        // ║ Calling exit_to_l1_private emits an L2→L1 Outbox message that no L1     ║
-        // ║ function can consume — the burn happens on L2 and the recipient cannot  ║
-        // ║ claim on L1 until Sub-5c adds withdrawPrivate() on the L1 portal.       ║
-        // ║                                                                          ║
-        // ║ This function is reserved for the privacy-preserving exit path but is   ║
-        // ║ NOT USABLE in the current Sub-5b cycle. Prefer exit_to_l1_public()      ║
-        // ║ until Sub-5c ships the L1 counterpart.                                   ║
-        // ╚══════════════════════════════════════════════════════════════════════════╝
+        // Sub-5c B3: WITHDRAW_PRIVATE_TAG content is consumed by L1's withdrawPrivate
+        // function (separate from withdraw, which consumes WITHDRAW_PUBLIC_TAG). The
+        // L1 portal validates the proof + releases the canonical token to recipient,
+        // just like the public path. The privacy benefit is that the L2 emit doesn't
+        // reveal the public-tag content shape (off-chain analysis cannot batch-link
+        // public + private exits via tag).
         let bridged = self.storage.is_bridged.read();
         assert(bridged, "non-bridged token: cannot exit_to_l1");
         assert(amount > 0 as u128, "amount must be positive");
