@@ -22,9 +22,32 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
 
     IERC20 public l1Token;
     bytes32 public l2TokenAddress;
+
+    /// @dev Set once at `initialize`; intentionally has no governance setter.
+    ///      If Aztec changes the rollup version deploy a new TokenBridge instance
+    ///      rather than mutating this value.
     uint256 public l2Version;
+
+    /// @dev Set once at `initialize`; intentionally has no governance setter.
+    ///      If Aztec relocates the Inbox, deploy a new TokenBridge instance
+    ///      rather than mutating this value.
     IInbox public inbox;
+
+    /// @dev Set once at `initialize`; intentionally has no governance setter.
+    ///      If Aztec relocates the Outbox, deploy a new TokenBridge instance
+    ///      rather than mutating this value.
     IOutbox public outbox;
+
+    /// @dev Maximum total ERC20 tokens (by `l1Token.balanceOf(address(this))`) that
+    ///      may be held by this bridge at any one time. A value of 0 means UNLIMITED
+    ///      (no cap enforcement). To block all deposits use `pause()` instead; do NOT
+    ///      use `setMaxTvl(0)` expecting it to block deposits — it will not.
+    ///
+    ///      IMPORTANT: `_enforceTvlCap` reads `l1Token.balanceOf(address(this))` and
+    ///      projects the post-deposit total assuming the token transfers `amount`
+    ///      exactly. Not safe with fee-on-transfer / deflationary tokens. ZSwap
+    ///      launches with USDC + WETH which are standard ERC20s. Adding any
+    ///      non-standard token requires reviewing this assumption.
     uint256 public maxTvl;
 
     event DepositInitiated(
@@ -44,9 +67,13 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
     event MaxTvlUpdated(uint256 oldCap, uint256 newCap);
     event L2TokenAddressUpdated(bytes32 oldAddr, bytes32 newAddr);
 
+    /// @notice Deposit would push the bridge's token balance above `maxTvl`.
     error TvlCapExceeded(uint256 attempted, uint256 cap);
+    /// @notice Caller passed a zero token amount where a non-zero value is required.
     error ZeroAmount();
+    /// @notice Caller passed a zero address/bytes32 where a non-zero value is required.
     error ZeroAddress();
+    /// @notice The bridge's primary `l1Token` cannot be swept via `withdrawTreasuryDust`.
     error CannotSweepL1Token();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -54,6 +81,15 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         _disableInitializers();
     }
 
+    /// @notice One-shot initializer called by the proxy factory immediately after deployment.
+    ///         Cannot be called again once the proxy is initialized (OpenZeppelin Initializable guard).
+    /// @param _l1Token       The L1 ERC20 token this bridge accepts.
+    /// @param _l2TokenAddress Aztec L2 token contract address (as bytes32 Aztec AztecAddress).
+    /// @param _l2Version     Aztec rollup version; used when addressing L2 actors.
+    /// @param _inbox         Aztec Inbox contract for L1→L2 messages.
+    /// @param _outbox        Aztec Outbox contract for L2→L1 messages.
+    /// @param _owner         Owner (typically a TimelockController wrapping a multisig).
+    /// @param _maxTvl        Initial TVL cap; 0 = unlimited. See `maxTvl` for full semantics.
     function initialize(
         IERC20 _l1Token,
         bytes32 _l2TokenAddress,
@@ -82,6 +118,15 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
 
     // ── Deposit flow (L1 → L2) ────────────────────────────────────────────────
 
+    /// @notice Deposit `amount` tokens to a public L2 recipient. The L2 recipient's
+    ///         address is visible on-chain. Funds are escrowed on L1 until the L2
+    ///         contract mints the corresponding L2 tokens.
+    /// @param amount      Token amount to deposit; must be > 0.
+    /// @param l2Recipient Aztec L2 recipient address (as bytes32); must be non-zero.
+    /// @param secretHash  Secret hash for the L1→L2 message; used by the L2 side to
+    ///                    claim the message privately.
+    /// @return messageHash  Hash of the L1→L2 message published to the Inbox.
+    /// @return messageIndex Index of the message within the Inbox tree.
     function depositToL2Public(uint256 amount, bytes32 l2Recipient, bytes32 secretHash)
         external
         whenNotPaused
@@ -103,6 +148,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         emit DepositInitiated(msg.sender, l2Recipient, amount, secretHash, messageIndex, false);
     }
 
+    /// @notice Deposit `amount` tokens to a hidden (private) L2 recipient. The recipient
+    ///         is determined on L2 by whoever knows the preimage of `secretHash`. No
+    ///         l2Recipient argument is passed; privacy is achieved via the secret.
+    /// @param amount     Token amount to deposit; must be > 0.
+    /// @param secretHash Secret hash for the L1→L2 message; the holder of the preimage
+    ///                   claims the private L2 tokens.
+    /// @return messageHash  Hash of the L1→L2 message published to the Inbox.
+    /// @return messageIndex Index of the message within the Inbox tree.
     function depositToL2Private(uint256 amount, bytes32 secretHash)
         external
         whenNotPaused
@@ -125,6 +178,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
 
     // ── Withdraw flow (L2 → L1) ───────────────────────────────────────────────
 
+    /// @notice Consume a finalised L2→L1 exit message from the Outbox and transfer
+    ///         `amount` tokens to `recipient`. The caller must supply a valid Merkle
+    ///         proof (siblingPath + leafIndex) against the Outbox root for `l2Epoch`.
+    /// @param amount       Token amount to withdraw; must be > 0.
+    /// @param recipient    L1 address to receive the tokens; must be non-zero.
+    /// @param l2Epoch      L2 epoch in which the exit message was included.
+    /// @param leafIndex    Leaf position of the exit message in the Outbox Merkle tree.
+    /// @param siblingPath  Merkle sibling hashes for proof verification.
     function withdraw(
         uint256 amount,
         address recipient,
@@ -148,26 +209,39 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         emit WithdrawCompleted(recipient, amount, l2Epoch, leafIndex);
     }
 
+    /// @return The current L1 token balance held in escrow by this bridge contract.
     function totalLocked() external view returns (uint256) {
         return l1Token.balanceOf(address(this));
     }
 
     // ── Governance (owner = TimelockController) ───────────────────────────────
 
+    /// @notice Pause all deposit and withdraw operations. Use this to block deposits
+    ///         rather than `setMaxTvl(0)` — see `maxTvl` for why.
     function pause() external onlyOwner { _pause(); }
+
+    /// @notice Resume deposit and withdraw operations after a pause.
     function unpause() external onlyOwner { _unpause(); }
 
+    /// @notice Update the TVL cap. A value of 0 means UNLIMITED (no cap enforcement).
+    ///         To block all new deposits use `pause()` instead; setting this to 0 does
+    ///         NOT block deposits.
     function setMaxTvl(uint256 newCap) external onlyOwner {
         emit MaxTvlUpdated(maxTvl, newCap);
         maxTvl = newCap;
     }
 
+    /// @notice Update the L2 token address. Allows governance to point the bridge to
+    ///         a new L2 token deployment (e.g. after a token migration).
+    /// @param newAddr New Aztec L2 token address (as bytes32); must be non-zero.
     function setL2TokenAddress(bytes32 newAddr) external onlyOwner {
-        require(newAddr != bytes32(0), "zero l2 addr");
+        if (newAddr == bytes32(0)) revert ZeroAddress();
         emit L2TokenAddressUpdated(l2TokenAddress, newAddr);
         l2TokenAddress = newAddr;
     }
 
+    /// @notice Rescue accidentally sent ERC20 tokens (other than the bridged `l1Token`).
+    ///         Cannot be used to drain the bridge's escrowed `l1Token` balance.
     function withdrawTreasuryDust(IERC20 token, uint256 amount, address to) external onlyOwner {
         if (address(token) == address(l1Token)) revert CannotSweepL1Token();
         if (to == address(0)) revert ZeroAddress();
@@ -193,6 +267,12 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         return keccak256(abi.encode(l2Recipient, amount, secretHash, tag));
     }
 
+    // NOTE: only WITHDRAW_PUBLIC_TAG is consumed here. exit_to_l1_private on L2
+    //       emits WITHDRAW_PRIVATE_TAG, but the resulting Outbox content hash
+    //       is bound to whichever tag the L2 side used. This portal accepts the
+    //       public-tagged path; supporting private-tagged exits would require
+    //       a parallel _withdrawContentPrivate + an opt-in withdraw variant.
+    //       Sub-5c follow-up if needed.
     function _withdrawContent(address recipient, uint256 amount, bytes32 tag)
         internal pure returns (bytes32)
     {
