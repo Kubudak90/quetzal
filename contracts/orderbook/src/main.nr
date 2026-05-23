@@ -19,7 +19,7 @@ pub contract Orderbook {
         },
         protocol::{
             address::AztecAddress,
-            traits::{Deserialize, Packable, Serialize},
+            traits::{Deserialize, Serialize},
         },
         state_vars::{Map, Owned, PrivateSet, PublicImmutable, PublicMutable},
         utils::comparison::Comparator,
@@ -29,7 +29,7 @@ pub contract Orderbook {
     use pool::LiquidityPool;
     use aggregator_registry::AggregatorRegistry;
     use treasury::Treasury;
-    use aztec::protocol::{hash::poseidon2_hash, traits::{FromField, Hash, ToField}};
+    use aztec::protocol::{hash::poseidon2_hash, traits::{FromField, Hash, Packable, ToField}};
 
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
     /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
@@ -55,7 +55,7 @@ pub contract Orderbook {
     ///   path[0] = input token; path[path_len-1] = output token.
     /// - `path`: Sub-4 routing path as token addresses encoded as Fields (3 slots).
     ///   For path_len == 2, path[2] = 0 (sentinel for unused 3rd hop).
-    #[derive(Deserialize, Eq, Packable, Serialize)]
+    #[derive(Deserialize, Eq, Serialize)]
     #[note]
     pub struct OrderNote {
         pub submitted_at_block: u32,
@@ -69,6 +69,71 @@ pub contract Orderbook {
         // For path_len == 2, path[2] = 0 (sentinel).
         pub path_len: u8,
         pub path: [Field; 3],
+    }
+
+    /// Manual `Packable` impl for OrderNote (replaces `#[derive(Packable)]`).
+    ///
+    /// Aztec v4.2.0 caps per-note packed length at MAX_NOTE_PACKED_LEN = 8 fields.
+    /// The derived layout would consume 10 fields (1 each for submitted_at_block,
+    /// side, amount_in, limit_price, nonce, owner, path_len + 3 for path), which
+    /// exceeds the cap. We pack `(submitted_at_block, side, path_len)` into a
+    /// single Field (each component is much smaller than 2^32, so they fit
+    /// without overlap in low 64 bits) to bring the total down to 8 fields:
+    ///
+    ///   slot 0: amount_in
+    ///   slot 1: limit_price
+    ///   slot 2: nonce
+    ///   slot 3: owner
+    ///   slot 4: path[0]
+    ///   slot 5: path[1]
+    ///   slot 6: path[2]
+    ///   slot 7: packed = submitted_at_block | (side << 32) | (path_len << 33)
+    impl Packable for OrderNote {
+        let N: u32 = 8;
+
+        fn pack(self) -> [Field; 8] {
+            let packed_meta: Field =
+                (self.submitted_at_block as Field)
+                + ((self.side as Field) * 0x100000000)            // bit 32
+                + ((self.path_len as Field) * 0x200000000);       // bits 33..40
+            [
+                self.amount_in as Field,
+                self.limit_price as Field,
+                self.nonce,
+                self.owner.to_field(),
+                self.path[0],
+                self.path[1],
+                self.path[2],
+                packed_meta,
+            ]
+        }
+
+        fn unpack(packed: [Field; 8]) -> Self {
+            let amount_in: u128 = packed[0] as u128;
+            let limit_price: u128 = packed[1] as u128;
+            let nonce: Field = packed[2];
+            let owner: AztecAddress = AztecAddress::from_field(packed[3]);
+            let path: [Field; 3] = [packed[4], packed[5], packed[6]];
+            // Unpack the meta Field via little-endian bit decomposition.
+            // bits[0..32] = submitted_at_block; bits[32] = side; bits[33..41] = path_len.
+            let meta_bits: [bool; 41] = packed[7].to_le_bits();
+            let mut block_acc: u32 = 0;
+            let mut pow: u32 = 1;
+            for i in 0..32 {
+                block_acc = block_acc + ((meta_bits[i] as u32) * pow);
+                pow = pow * 2;
+            }
+            let submitted_at_block: u32 = block_acc;
+            let side: bool = meta_bits[32];
+            let mut plen_acc: u8 = 0;
+            let mut p8: u8 = 1;
+            for i in 0..8 {
+                plen_acc = plen_acc + ((meta_bits[33 + i] as u8) * p8);
+                p8 = p8 * 2;
+            }
+            let path_len: u8 = plen_acc;
+            Self { submitted_at_block, side, amount_in, limit_price, nonce, owner, path_len, path }
+        }
     }
 
     /// Public state of the current epoch.

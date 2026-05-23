@@ -8,7 +8,7 @@ use aztec::{
     protocol::{
         address::AztecAddress,
         hash::poseidon2_hash,
-        traits::{Deserialize, FromField, Hash, Serialize, ToField},
+        traits::{Deserialize, FromField, Serialize, ToField},
     },
     test::helpers::test_environment::TestEnvironment,
 };
