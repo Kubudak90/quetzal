@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import {Test, console} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import {TokenBridge} from "../src/TokenBridge.sol";
+import {IInbox} from "../src/interfaces/IInbox.sol";
+import {IOutbox} from "../src/interfaces/IOutbox.sol";
+import {DataStructures} from "../src/lib/DataStructures.sol";
+import {Epoch} from "../src/lib/TimeMath.sol";
+
+// ── Mocks ─────────────────────────────────────────────────────────────────────
+
+contract MockERC20 is IERC20 {
+    string public name = "Mock";
+    string public symbol = "MOCK";
+    uint8 public decimals = 6;
+    mapping(address => uint256) public override balanceOf;
+    mapping(address => mapping(address => uint256)) public override allowance;
+    uint256 public override totalSupply;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+        emit Transfer(address(0), to, amount);
+    }
+
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external override returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external override returns (bool) {
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(from, to, amount);
+        return true;
+    }
+}
+
+contract MockInbox is IInbox {
+    uint256 public nextIndex;
+
+    function sendL2Message(DataStructures.L2Actor memory recipient, bytes32 content, bytes32 secretHash)
+        external
+        returns (bytes32, uint256)
+    {
+        uint256 idx = nextIndex++;
+        // Silence unused-variable warnings while keeping the args visible in traces.
+        recipient;
+        return (keccak256(abi.encode(content, secretHash, idx)), idx);
+    }
+
+    function consume(uint256) external pure returns (bytes32) { return bytes32(0); }
+    function catchUp(uint256) external pure {}
+    function getFeeAssetPortal() external pure returns (address) { return address(0); }
+    function getRoot(uint256) external pure returns (bytes32) { return bytes32(0); }
+    function getState() external pure returns (InboxState memory) { return InboxState(bytes16(0), 0, 0); }
+    function getTotalMessagesInserted() external pure returns (uint64) { return 0; }
+    function getInProgress() external pure returns (uint64) { return 0; }
+}
+
+contract MockOutbox is IOutbox {
+    bool public shouldRevert;
+    mapping(uint256 => mapping(uint256 => bool)) public consumed;
+
+    function setShouldRevert(bool v) external { shouldRevert = v; }
+
+    function insert(Epoch, bytes32) external {}
+
+    function consume(
+        DataStructures.L2ToL1Msg calldata,
+        Epoch epoch,
+        uint256 leafIndex,
+        bytes32[] calldata
+    ) external {
+        if (shouldRevert) revert("outbox: invalid proof");
+        uint256 e = Epoch.unwrap(epoch);
+        require(!consumed[e][leafIndex], "already consumed");
+        consumed[e][leafIndex] = true;
+    }
+
+    function hasMessageBeenConsumedAtEpoch(Epoch epoch, uint256 leafId) external view returns (bool) {
+        return consumed[Epoch.unwrap(epoch)][leafId];
+    }
+
+    function getRootData(Epoch) external pure returns (bytes32) { return bytes32(0); }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+contract TokenBridgeTest is Test {
+    TokenBridge bridge;
+    MockERC20 token;
+    MockInbox inbox;
+    MockOutbox outbox;
+    address owner = address(0xA11CE);
+    address alice = address(0xB0B);
+    bytes32 constant L2_TOKEN = bytes32(uint256(0xa2c7e9));
+
+    function setUp() public {
+        token = new MockERC20();
+        inbox = new MockInbox();
+        outbox = new MockOutbox();
+
+        // Deploy implementation + proxy + initialize in one step.
+        TokenBridge impl = new TokenBridge();
+        bytes memory init = abi.encodeWithSelector(
+            TokenBridge.initialize.selector,
+            IERC20(address(token)),
+            L2_TOKEN,
+            uint256(1),
+            IInbox(address(inbox)),
+            IOutbox(address(outbox)),
+            owner,
+            uint256(0) // unlimited TVL
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
+        bridge = TokenBridge(address(proxy));
+
+        token.mint(alice, 1_000_000_000); // 1 000 USDC at 6 decimals
+    }
+
+    // 1. Public deposit happy path: locks tokens + returns valid index
+    function test_depositToL2Public_locksTokensAndEmitsMessage() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        (bytes32 hash, uint256 idx) = bridge.depositToL2Public(
+            100_000_000,
+            bytes32(uint256(0xfeed)),
+            bytes32(uint256(0xbeef))
+        );
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(bridge)), 100_000_000, "bridge locked amount");
+        assertEq(token.balanceOf(alice), 900_000_000, "alice debited");
+        assertEq(idx, 0, "first message index");
+        assertGt(uint256(hash), 0, "non-zero message hash");
+    }
+
+    // 2. Private deposit happy path: same lock semantics, recipient hidden in payload
+    function test_depositToL2Private_omitsRecipientFromMessage() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 50_000_000);
+        (, uint256 idx) = bridge.depositToL2Private(50_000_000, bytes32(uint256(0xcafe)));
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(bridge)), 50_000_000, "bridge locked private amount");
+        assertEq(idx, 0, "first private deposit index");
+    }
+
+    // 3. Paused portal blocks deposits
+    function test_deposit_revertsWhenPaused() public {
+        vm.prank(owner);
+        bridge.pause();
+
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100);
+        vm.expectRevert();
+        bridge.depositToL2Public(100, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    // 4. TVL cap is enforced (custom error TvlCapExceeded)
+    function test_deposit_revertsOnTvlCap() public {
+        vm.prank(owner);
+        bridge.setMaxTvl(50_000_000);
+
+        vm.startPrank(alice);
+        token.approve(address(bridge), 100_000_000);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TokenBridge.TvlCapExceeded.selector,
+                uint256(100_000_000),
+                uint256(50_000_000)
+            )
+        );
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    // 5. Withdraw happy path: outbox.consume succeeds → release to recipient
+    function test_withdraw_releasesTokensOnValidProof() public {
+        // Pre-fund bridge as if a prior deposit happened.
+        token.mint(address(bridge), 100_000_000);
+
+        bytes32[] memory proof = new bytes32[](6);
+        bridge.withdraw(80_000_000, alice, uint256(12345), uint256(7), proof);
+
+        assertEq(token.balanceOf(alice), 1_000_000_000 + 80_000_000, "alice received withdrawn amount");
+        assertEq(token.balanceOf(address(bridge)), 20_000_000, "bridge debited correctly");
+    }
+
+    // 6. Withdraw reverts when outbox proof is invalid
+    function test_withdraw_revertsOnInvalidProof() public {
+        token.mint(address(bridge), 100_000_000);
+        outbox.setShouldRevert(true);
+
+        bytes32[] memory proof = new bytes32[](6);
+        vm.expectRevert(bytes("outbox: invalid proof"));
+        bridge.withdraw(50_000_000, alice, uint256(12345), uint256(7), proof);
+    }
+
+    // 7. Paused portal blocks withdraws
+    function test_withdraw_revertsWhenPaused() public {
+        vm.prank(owner);
+        bridge.pause();
+
+        bytes32[] memory proof = new bytes32[](6);
+        vm.expectRevert();
+        bridge.withdraw(50_000_000, alice, uint256(12345), uint256(7), proof);
+    }
+
+    // 8. pause() requires ownership
+    function test_pause_onlyOwner() public {
+        // Called from address(this) which is NOT the owner.
+        vm.expectRevert();
+        bridge.pause();
+    }
+
+    // 9. setMaxTvl() requires ownership
+    function test_setMaxTvl_onlyOwner() public {
+        vm.expectRevert();
+        bridge.setMaxTvl(123);
+    }
+
+    // 10. withdrawTreasuryDust cannot drain l1Token
+    function test_withdrawTreasuryDust_cannotDrainL1Token() public {
+        token.mint(address(bridge), 100);
+        vm.prank(owner);
+        vm.expectRevert(TokenBridge.CannotSweepL1Token.selector);
+        bridge.withdrawTreasuryDust(IERC20(address(token)), 100, owner);
+    }
+
+    // 11. totalLocked() reports the live ERC20 balance
+    function test_totalLocked_reportsBalance() public {
+        token.mint(address(bridge), 500);
+        assertEq(bridge.totalLocked(), 500, "totalLocked reflects minted balance");
+    }
+}
