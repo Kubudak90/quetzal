@@ -6,6 +6,7 @@ import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { parseField } from "../field.js";
 import { findEpochForNonce } from "../../../aggregator/src/snapshot.js";
+import { isDecoy } from "../orders/decoy-registry.js";
 
 const DEFAULT_SNAPSHOT_DIR = process.env.ZSWAP_SNAPSHOT_DIR ?? "aggregator/snapshots";
 
@@ -163,6 +164,10 @@ export function registerClaim(program: Command): void {
       "directory containing aggregator/snapshots/epoch-<N>.json (default: aggregator/snapshots; override via $ZSWAP_SNAPSHOT_DIR)",
       DEFAULT_SNAPSHOT_DIR,
     )
+    .option(
+      "--no-filter-decoys",
+      "force claim-fill even on known decoy nonces (default: skip via maker-local registry; saves gas)",
+    )
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       // parseField returns bigint; wrap in Fr so .toString() yields the 0x-hex
@@ -191,6 +196,19 @@ export function registerClaim(program: Command): void {
 
       const config = loadConfig(opts.config);
       const ctx = await openCli(config, Number(opts.account));
+
+      // Decoy-filter guard: skip (default ON) unless --no-filter-decoys is passed.
+      // Commander sets opts.filterDecoys = false when --no-filter-decoys is present;
+      // opts.filterDecoys = true (default) when absent.
+      const filterDecoys = opts.filterDecoys !== false;
+      if (filterDecoys && isDecoy(ctx.account.toString(), nonceHex)) {
+        console.log(
+          `Skipping claim-fill for nonce ${nonceHex}: known decoy (amount_out=0). ` +
+          `Use --no-filter-decoys to force a (wasted) tx.`,
+        );
+        await ctx.stop();
+        return;
+      }
       try {
         if (hopOpt === "all") {
           // Claim hop 0 then hop 1 in sequence (two separate txs).
