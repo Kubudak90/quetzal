@@ -115,6 +115,10 @@ export function registerBridge(program: Command): void {
       "--ack-delay",
       "acknowledge round-trip risk warning + proceed with exit",
     )
+    .option(
+      "--ack-round",
+      "acknowledge round-amount fingerprint warning + proceed with exit",
+    )
     .option("--split-into <n>", "split into N partial withdrawals staggered over time (default 1 = no split)", "1")
     .option("--interval-days <d>", "days between split exits (used with --split-into > 1; default 3)", "3")
     .action(async (_opts, cmd: Command) => {
@@ -133,6 +137,22 @@ export function registerBridge(program: Command): void {
           "(or use --relayer-fee here to delegate the L1 step to a bonded aggregator).",
         );
       }
+
+      // ── Sub-6a D2: amount-pattern fingerprint advisory ────────────────────
+      {
+        const { classifyAmount, formatAdvisory, resolveTokenDecimals } = await import("../amount-heuristic.js");
+        const decimals = resolveTokenDecimals(String(opts.token));
+        const heuristic = classifyAmount(amount, decimals);
+        if (heuristic.classification !== "natural") {
+          const advisory = formatAdvisory(heuristic, decimals, String(opts.token).toUpperCase());
+          console.warn(advisory);
+          if (opts.ackRound !== true) {
+            console.warn("Pass --ack-round to acknowledge + proceed, or rerun with a perturbed amount.");
+            process.exit(1);
+          }
+        }
+      }
+      // ── end amount-pattern check ──────────────────────────────────────────
 
       // ── Sub-6a C2: round-trip risk pre-check ─────────────────────────────
       const ackDelay = opts.ackDelay === true;

@@ -113,6 +113,31 @@ function perturb(amount: bigint, tolerancePct: number): bigint {
 }
 
 /**
+ * Resolve the number of decimals for a token alias.
+ * Accepts both legacy (tUSDC/tETH/tBTC) and bridged (aUSDC/aWETH/aWBTC) names.
+ * Throws on unknown tokens so callers get an explicit error rather than a silent 0.
+ */
+export function resolveTokenDecimals(alias: string): number {
+  // Normalise: strip leading "t" or "a" prefix and lower-case for matching.
+  const canonical = alias.replace(/^[ta]/i, "").toLowerCase();
+  switch (canonical) {
+    case "usdc":
+      return 6;
+    case "weth":
+    case "eth":
+      return 18;
+    case "wbtc":
+    case "btc":
+      return 8;
+    default:
+      throw new Error(
+        `resolveTokenDecimals: unknown token alias '${alias}'. ` +
+        `Known: tUSDC/aUSDC, tETH/aWETH, tBTC/aWBTC.`,
+      );
+  }
+}
+
+/**
  * Format a heuristic result as a human-readable advisory line.
  * Returns empty string for "natural" (caller can skip the print).
  */

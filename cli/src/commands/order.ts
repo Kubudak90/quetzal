@@ -18,6 +18,7 @@ export function registerOrder(program: Command): void {
     .requiredOption("--amount <n>", "input amount in the token's smallest unit")
     .requiredOption("--limit <price>", "limit price, Q-format scaled to 1e18")
     .option("--path <comma-list>", "Token path, e.g. 'tUSDC,tETH' or 'tUSDC,tETH,tBTC'", "tUSDC,tETH")
+    .option("--ack-round", "acknowledge round-amount fingerprint warning + proceed with order")
     .option(
       "--decoys <n>",
       "number of decoy orders to submit alongside the real order (0-8; default 0 = no privacy padding). " +
@@ -34,6 +35,27 @@ export function registerOrder(program: Command): void {
       const realSide = side === "sell"; // false = bid (tUSDC), true = ask (tETH)
       const realAmount = BigInt(opts.amount);
       const realLimitPrice = BigInt(opts.limit);
+
+      // D2: amount-pattern fingerprint advisory
+      // Determine the input-side token alias from the path spec:
+      //   sell (ask, realSide=true):  maker deposits the LAST token in path (e.g. tETH)
+      //   buy  (bid, realSide=false): maker deposits the FIRST token in path (e.g. tUSDC)
+      {
+        const { classifyAmount, formatAdvisory, resolveTokenDecimals } = await import("../amount-heuristic.js");
+        const pathParts = (opts.path as string).split(",").map((p: string) => p.trim()).filter(Boolean);
+        const inputTokenAlias = realSide ? pathParts[pathParts.length - 1]! : pathParts[0]!;
+        const decimals = resolveTokenDecimals(inputTokenAlias);
+        const heuristic = classifyAmount(realAmount, decimals);
+        if (heuristic.classification !== "natural") {
+          const advisory = formatAdvisory(heuristic, decimals, inputTokenAlias.toUpperCase());
+          console.warn(advisory);
+          if (opts.ackRound !== true) {
+            console.warn("Pass --ack-round to acknowledge + proceed, or rerun with a perturbed amount.");
+            process.exit(1);
+          }
+        }
+      }
+      // end D2
 
       const config = loadConfig(opts.config);
       const ctx = await openCli(config, Number(opts.account));
