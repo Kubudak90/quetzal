@@ -3,3 +3,4 @@ packages:
   - 'aggregator'
   - 'cli'
   - 'tools/outbox-proof'
+  - 'tools/exporters'
