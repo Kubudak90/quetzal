@@ -527,3 +527,10 @@ fn sub4_m4b_ineligible_two_hop_with_fill_stub() {
     // Mirror assertion from main.nr block C's else-branch.
     assert(false, "ineligible 2-hop has a fill");
 }
+
+#[test(should_fail_with = "eligible 1-hop order missing from fills (DoS)")]
+fn sub5a_dos_eligible_1hop_missing_stub() {
+    // Tripping the exact assertion string from block B'. A real fixture-driven
+    // test (tampered witness omits an eligible 1-hop fill) lives in Task F1.
+    assert(false, "eligible 1-hop order missing from fills (DoS)");
+}

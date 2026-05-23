@@ -143,6 +143,55 @@ fn main(
     }
 
     // ========================================================================
+    // B'. Sub-5a: 1-hop DoS resistance check.
+    // Every eligible non-cancelled 1-hop order MUST appear in fills[].
+    // 2-hop orders are handled by block C atomicity below; this restores
+    // the Sub-1 sec 6.3 DoS guarantee that was inadvertently dropped in
+    // Sub-4 D2's multi-pool generalization.
+    // ========================================================================
+    let mut is_filled: [bool; MAX_ORDERS_PER_EPOCH] = [false; MAX_ORDERS_PER_EPOCH];
+    for f in 0..64 {
+        if (f as u32) < fills_len {
+            let oi = fill_to_order_index[f];
+            for k in 0..MAX_ORDERS_PER_EPOCH {
+                if (k as u32) == oi { is_filled[k] = true; }
+            }
+        }
+    }
+
+    for k in 0..MAX_ORDERS_PER_EPOCH {
+        if (k as u32) < order_count {
+            let order_k = orders[k];
+            if (order_k.path_len == 2) & (!is_cancelled[k]) {
+                let (lo, hi) = if (order_k.path[0] as u128) < (order_k.path[1] as u128) {
+                    (order_k.path[0], order_k.path[1])
+                } else {
+                    (order_k.path[1], order_k.path[0])
+                };
+                let mut p_slot: u32 = INVALID_POOL_ID;
+                for p in 0..MAX_ACTIVE_POOLS_PER_EPOCH {
+                    if (p as u32) < active_pool_count {
+                        let pair = pool_token_pairs[p];
+                        if (pair[0] == lo) & (pair[1] == hi) { p_slot = p as u32; }
+                    }
+                }
+                if p_slot != INVALID_POOL_ID {
+                    let mut p_star: u128 = 0 as u128;
+                    for p in 0..MAX_ACTIVE_POOLS_PER_EPOCH {
+                        if (p as u32) == p_slot {
+                            p_star = active_pool_clearings[p].clearing_price;
+                        }
+                    }
+                    if pricing::eligible_with_p(order_k.side, order_k.limit_price, p_star) {
+                        assert(is_filled[k], "eligible 1-hop order missing from fills (DoS)");
+                    }
+                }
+                // If pool is inactive this epoch, the 1-hop order carries forward.
+            }
+        }
+    }
+
+    // ========================================================================
     // C. 2-hop composite eligibility + atomicity.
     // ========================================================================
     let mut hop_count_per_order: [u8; MAX_ORDERS_PER_EPOCH] = [0; MAX_ORDERS_PER_EPOCH];
