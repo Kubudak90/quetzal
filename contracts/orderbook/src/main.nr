@@ -106,6 +106,21 @@ pub contract Orderbook {
     /// Sub-4: padding sentinel for unused pool slots in ClearingPublic.
     pub global INVALID_POOL_ID: u32 = 0xFFFFFFFF;
 
+    /// Sub-5a B1: domain separation tag for per-hop claim nullifiers.
+    /// Combined with (note_hash, secret, hop_index) in derive_per_hop_nullifier
+    /// so per-hop nullifiers cannot collide with default note nullifiers or
+    /// with the cancel nullifier.
+    /// Value: poseidon2_hash(["ZSWAP_HOP_CLAIM" as Field]) = 0x29190425...
+    /// Computed off-chain via @aztec/foundation poseidon2Hash.
+    global Z_HOP_CLAIM_TAG: Field = 0x29190425a33e9929a8db7d2c2f8e05ee6118afa95b7acfc338d7a96a8a36e01e as Field;
+
+    /// Sub-5a B1: domain separation tag for cancel-order nullifiers.
+    /// Combined with (note_hash, secret) so cancel nullifiers can never collide
+    /// with any per-hop claim nullifier.
+    /// Value: poseidon2_hash(["ZSWAP_CANCEL" as Field]) = 0x1611cd82...
+    /// Computed off-chain via @aztec/foundation poseidon2Hash.
+    global Z_CANCEL_TAG: Field = 0x1611cd824d83775a3d18f375bdc4b992562994c11e4298e82e47e4a284760401 as Field;
+
     /// Sub-4: per-pool clearing payload. 36 fields total = (pool_id + clearing_price)
     /// prefix + LiquidityPool::ClearingSwap (34 fields: 4 aggregate flows +
     /// current_sqrt_price_after + active_bucket_count + 4 BucketDelta × 7 = 28).
@@ -511,6 +526,21 @@ pub contract Orderbook {
     ///             [6]    current_sqrt_price_after
     ///             [7]    active_bucket_count
     ///             [8-35] active_bucket_deltas[4] × 7 fields each
+
+    /// Sub-5a B1: derive a per-hop claim nullifier from note_hash + secret + hop_index.
+    /// The hop_index makes hop=0 and hop=1 produce DIFFERENT nullifiers from the
+    /// same note, so 2-hop orders can claim_fill each leg independently.
+    #[contract_library_method]
+    fn derive_per_hop_nullifier(note_hash: Field, secret: Field, hop_index: u8) -> Field {
+        poseidon2_hash([note_hash, secret, hop_index as Field, Z_HOP_CLAIM_TAG])
+    }
+
+    /// Sub-5a B1: derive the cancel-order nullifier (distinct from any per-hop nullifier).
+    #[contract_library_method]
+    fn derive_cancel_nullifier(note_hash: Field, secret: Field) -> Field {
+        poseidon2_hash([note_hash, secret, Z_CANCEL_TAG])
+    }
+
     #[contract_library_method]
     fn flatten_clearing_public(p: ClearingPublic) -> [Field; 114] {
         let mut out: [Field; 114] = [0 as Field; 114];
