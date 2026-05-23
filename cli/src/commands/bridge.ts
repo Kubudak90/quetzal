@@ -158,8 +158,36 @@ export function registerBridge(program: Command): void {
     .requiredOption("--content <hex>", "expected 0x-prefixed bytes32 content hash committed by L2")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
-      const { buildOutboxProof, formatProofForCastSend } = await import("../bridge-helpers.js");
-      const proof = await buildOutboxProof(String(opts.l2Tx), String(opts.content));
+      const config = loadConfig(opts.config);
+      const { buildOutboxProof, formatProofForCastSend, lookupOutboxMessage } = await import("../bridge-helpers.js");
+      let proof;
+      try {
+        proof = await buildOutboxProof(config.nodeUrl, String(opts.l2Tx), String(opts.content));
+      } catch (e) {
+        // D2 lookup succeeds but siblingPath is a known follow-up. Print the lookup
+        // values so the operator can complete the proof manually.
+        console.error(String(e instanceof Error ? e.message : e));
+        console.error("");
+        console.error("Running lookup-only path...");
+        const lookup = await lookupOutboxMessage(config.nodeUrl, String(opts.l2Tx), String(opts.content));
+        console.error(`L2 epoch:     ${lookup.l2Epoch}`);
+        console.error(`Leaf index:   ${lookup.leafIndex}`);
+        console.error(`Content hash: ${lookup.content}`);
+        console.error("");
+        console.error(
+          "Construct siblingPath via Aztec's L1 portal manager helper " +
+          "(see @aztec/aztec.js/dest/ethereum/portal_manager.js withdrawFunds signature), " +
+          "then paste into the cast send template below replacing <SIBLING_PATH>:",
+        );
+        // Print a template with placeholder for the siblingPath
+        const template = [
+          `cast send ${String(opts.bridge)} \\`,
+          `  "withdraw(uint256,address,uint256,uint256,bytes32[])" \\`,
+          `  ${BigInt(opts.amount)} ${String(opts.l1Recipient)} ${lookup.l2Epoch} ${lookup.leafIndex} <SIBLING_PATH>`,
+        ].join("\n");
+        console.log(template);
+        return;
+      }
       const cmdLine = formatProofForCastSend(
         proof,
         String(opts.bridge),
