@@ -103,6 +103,12 @@ pub contract Orderbook {
         pub amount_out: u128,
     }
 
+    /// Sub-6a A2: maximum orders per bulk-submit call (1 real + up to 8 decoys).
+    /// Sized to fit within Aztec's PXE tagging window (~20 unfinalised submits)
+    /// when a maker has 2+ trades in flight. May be downsized to 5 in A5 if A3
+    /// gate-count measurement exceeds 350K (+25% over Sub-5a clearing baseline).
+    pub global MAX_ORDERS_PER_BULK: u32 = 9;
+
     /// Sub-4: cap on pools touched per clearing.
     pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;
     /// Sub-5a D1: total pool-registry capacity (≠ MAX_ACTIVE_POOLS_PER_EPOCH=3
@@ -496,6 +502,35 @@ pub contract Orderbook {
         path: [Field; 3],
     ) {
         self.call_self._submit_one_order_internal(side, amount_in, limit_price, nonce, order_nonce, path_len, path);
+    }
+
+    /// Sub-6a A2: K-batch order submission. Maker submits 1 real + up to 8 decoys
+    /// in a single private tx to fit within Aztec's PXE tagging window.
+    ///
+    /// Slots with amount_in[i] = 0 are skipped -- allows maker to send fewer than
+    /// MAX_ORDERS_PER_BULK without padding all 9 slots with real amounts.
+    ///
+    /// Each used slot is processed identically to a standalone submit_order call.
+    /// Real vs decoy distinction is the maker's PXE-local state (see CLI's
+    /// decoy-registry.ts); the contract treats all slots uniformly.
+    #[external("private")]
+    fn submit_order_bulk(
+        side: [bool; MAX_ORDERS_PER_BULK],
+        amount_in: [u128; MAX_ORDERS_PER_BULK],
+        limit_price: [u128; MAX_ORDERS_PER_BULK],
+        nonce: [Field; MAX_ORDERS_PER_BULK],
+        order_nonce: [Field; MAX_ORDERS_PER_BULK],
+        path_len: [u8; MAX_ORDERS_PER_BULK],
+        path: [[Field; 3]; MAX_ORDERS_PER_BULK],
+    ) {
+        for i in 0..MAX_ORDERS_PER_BULK {
+            if amount_in[i] > 0 as u128 {
+                self.call_self._submit_one_order_internal(
+                    side[i], amount_in[i], limit_price[i],
+                    nonce[i], order_nonce[i], path_len[i], path[i],
+                );
+            }
+        }
     }
 
     /// Public callback used by `submit_order` / `cancel_order` to enforce that the
