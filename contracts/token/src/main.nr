@@ -19,7 +19,7 @@ pub contract Token {
         messages::message_delivery::MessageDelivery,
         protocol::{
             address::{AztecAddress, EthAddress},
-            hash::{poseidon2_hash, sha256_to_field},
+            hash::sha256_to_field,
             traits::{FromField, ToField},
         },
         state_vars::{Map, Owned, PublicImmutable, PublicMutable, StateVariable},
