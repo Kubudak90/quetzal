@@ -258,13 +258,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         if (newTotal > maxTvl) revert TvlCapExceeded(newTotal, maxTvl);
     }
 
+    // L1↔L2 content hash uses sha256 truncated to 31 bytes + a zero
+    // prefix byte (matching the Aztec L1↔L2 protocol convention from
+    // Hash.sha256ToField). The L2 Noir side reconstructs the same hash
+    // via aztec::protocol::hash::sha256_to_field over the same field serialization.
     function _depositContent(bytes32 l2Recipient, uint256 amount, bytes32 secretHash, bytes32 tag)
         internal pure returns (bytes32)
     {
-        // NOTE: scaffolding hash. Task C1 reconciles to the canonical Aztec L1↔L2
-        //       content-hash format (sha256_to_field or poseidon2) and updates both
-        //       this function and the matching Noir-side reconstruction.
-        return keccak256(abi.encode(l2Recipient, amount, secretHash, tag));
+        return _sha256ToField(abi.encode(l2Recipient, amount, secretHash, tag));
     }
 
     // NOTE: only WITHDRAW_PUBLIC_TAG is consumed here. exit_to_l1_private on L2
@@ -276,6 +277,12 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
     function _withdrawContent(address recipient, uint256 amount, bytes32 tag)
         internal pure returns (bytes32)
     {
-        return keccak256(abi.encode(bytes32(uint256(uint160(recipient))), amount, tag));
+        return _sha256ToField(abi.encode(bytes32(uint256(uint160(recipient))), amount, tag));
+    }
+
+    /// @notice sha256 truncated to 31 bytes + zero-prefixed to 32, matching
+    ///         Aztec's L1↔L2 content-hash convention (Hash.sha256ToField).
+    function _sha256ToField(bytes memory data) internal pure returns (bytes32) {
+        return bytes32(bytes.concat(new bytes(1), bytes31(sha256(data))));
     }
 }

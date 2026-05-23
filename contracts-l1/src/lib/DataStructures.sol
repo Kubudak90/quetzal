@@ -31,16 +31,24 @@ library DataStructures {
         bytes32 content;
     }
 
-    /// @notice ZSwap-Sub-5b domain-separation tags. Placeholder hex literals;
-    ///         Task C1 replaces them with real poseidon2 hash values computed
-    ///         at Task B1 in contracts/token/src/main.nr.
-    bytes32 internal constant DEPOSIT_PUBLIC_TAG   = bytes32(uint256(0xdeadbeef01));
-    bytes32 internal constant DEPOSIT_PRIVATE_TAG  = bytes32(uint256(0xdeadbeef02));
-    bytes32 internal constant WITHDRAW_PUBLIC_TAG  = bytes32(uint256(0xdeadbeef03));
+    /// @notice ZSwap-Sub-5b domain-separation tags for the four bridge flow
+    ///         content hashes. MUST be kept in sync byte-for-byte with
+    ///         contracts/token/src/main.nr globals DEPOSIT_PUBLIC_TAG /
+    ///         DEPOSIT_PRIVATE_TAG / WITHDRAW_PUBLIC_TAG / WITHDRAW_PRIVATE_TAG.
+    ///         The L1 portal commits these values + the L2 Token reconstructs
+    ///         the matching content hash via sha256_to_field.
+    ///
+    ///         Values are ASCII-padded labels ("ZSWAP_DP_" / "ZSWAP_WD_") with a
+    ///         1-byte discriminant packed into the low 10 bytes, zero-prefixed so
+    ///         all values fit in BN254 field. The leading zero bytes guarantee
+    ///         field-element fit (value < BN254 modulus).
+    bytes32 internal constant DEPOSIT_PUBLIC_TAG   = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f44505f01));
+    bytes32 internal constant DEPOSIT_PRIVATE_TAG  = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f44505f02));
+    bytes32 internal constant WITHDRAW_PUBLIC_TAG  = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f57445f03));
     /// @dev Reserved for a possible Sub-5c private-withdraw variant. TokenBridge's
     ///      `_withdrawContent` currently only consumes WITHDRAW_PUBLIC_TAG because the
     ///      L1 portal cannot distinguish private vs public L2 exits — each path binds
     ///      to whichever tag the L2 side emitted. A parallel `_withdrawContentPrivate`
     ///      and opt-in withdraw function would be needed to support this tag.
-    bytes32 internal constant WITHDRAW_PRIVATE_TAG = bytes32(uint256(0xdeadbeef04));
+    bytes32 internal constant WITHDRAW_PRIVATE_TAG = bytes32(uint256(0x000000000000000000000000000000000000000000005a535741505f57445f04));
 }
