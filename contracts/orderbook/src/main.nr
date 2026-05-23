@@ -5,7 +5,7 @@ pub contract Orderbook {
     use aztec::{
         keys::getters::get_public_keys,
         macros::{
-            functions::{external, initializer, only_self},
+            functions::{external, initializer, internal, only_self, view},
             notes::note,
             storage::storage,
         },
@@ -14,7 +14,7 @@ pub contract Orderbook {
             ConfirmedNote,
             constants::MAX_NOTES_PER_PAGE,
             note_getter_options::NoteGetterOptions,
-            note_interface::NoteProperties,
+            note_interface::{NoteHash, NoteProperties},
             note_viewer_options::NoteViewerOptions,
         },
         protocol::{
@@ -29,7 +29,7 @@ pub contract Orderbook {
     use pool::LiquidityPool;
     use aggregator_registry::AggregatorRegistry;
     use treasury::Treasury;
-    use aztec::protocol::{hash::poseidon2_hash, traits::ToField};
+    use aztec::protocol::{hash::poseidon2_hash, traits::{FromField, Hash, ToField}};
 
     /// Maximum number of input notes for note-sweeping flows. Unused by `cancel_order`
     /// (which selects a single note by nonce via `set_limit(1)`); reserved for the
@@ -283,7 +283,7 @@ pub contract Orderbook {
         assert(count < MAX_NUM_POOLS as u32, "pool registry full");
 
         // Canonicalize: smaller-as-Field first (matches resolve_pool_id_by_pair's convention).
-        let (lo, hi) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+        let (lo, hi) = if (token_a.to_field() as u128) < (token_b.to_field() as u128) {
             (token_a, token_b)
         } else {
             (token_b, token_a)
@@ -314,7 +314,7 @@ pub contract Orderbook {
     fn resolve_pool_id_by_pair(token_a: AztecAddress, token_b: AztecAddress) -> u32 {
         let count = self.storage.pool_count.read();
         // Canonical: smaller-as-Field first
-        let (lo, hi) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+        let (lo, hi) = if (token_a.to_field() as u128) < (token_b.to_field() as u128) {
             (token_a, token_b)
         } else {
             (token_b, token_a)
@@ -370,36 +370,10 @@ pub contract Orderbook {
         let maker = self.msg_sender();
 
         // Sub-4 (B2): validate each hop's pool exists in the registry.
-        // Sub-5a D1: pool_count is now PublicMutable; still readable from private context.
-        let pool_count = self.storage.pool_count.read();
-        // Hop 0: path[0] -> path[1]
-        let (lo0, hi0) = if path[0] < path[1] { (path[0], path[1]) } else { (path[1], path[0]) };
-        let mut found0: u32 = 0xFFFFFFFF as u32;
-        for i in 0..MAX_NUM_POOLS {
-            if (i as u32) < pool_count {
-                let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
-                let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
-                if (pa == lo0) & (pb == hi0) {
-                    found0 = i as u32;
-                }
-            }
-        }
-        assert(found0 != 0xFFFFFFFF as u32, "pool not found for path[0..2]");
-        // Hop 1 (only for 2-hop paths): path[1] -> path[2]
-        if path_len == 3 {
-            let (lo1, hi1) = if path[1] < path[2] { (path[1], path[2]) } else { (path[2], path[1]) };
-            let mut found1: u32 = 0xFFFFFFFF as u32;
-            for i in 0..MAX_NUM_POOLS {
-                if (i as u32) < pool_count {
-                    let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
-                    let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
-                    if (pa == lo1) & (pb == hi1) {
-                        found1 = i as u32;
-                    }
-                }
-            }
-            assert(found1 != 0xFFFFFFFF as u32, "pool not found for path[1..3]");
-        }
+        // Sub-5a D1: pool registry is PublicMutable; in aztec-nr v4.2.0 PublicMutable
+        // cannot be read from a private context. Defer the validation to a public
+        // callback (atomic with the rest of this private body via enqueue_self).
+        self.enqueue_self._assert_path_pools_registered(path_len, path);
 
         // Determine which token the maker is escrowing.
         // side == false (bid): input = path[0]
@@ -501,7 +475,7 @@ pub contract Orderbook {
         path_len: u8,
         path: [Field; 3],
     ) {
-        self.call_self._submit_one_order_internal(side, amount_in, limit_price, nonce, order_nonce, path_len, path);
+        self.internal._submit_one_order_internal(side, amount_in, limit_price, nonce, order_nonce, path_len, path);
     }
 
     /// Sub-6a A2: K-batch order submission. Maker submits 1 real + up to 8 decoys
@@ -525,7 +499,7 @@ pub contract Orderbook {
     ) {
         for i in 0..MAX_ORDERS_PER_BULK {
             if amount_in[i] > 0 as u128 {
-                self.call_self._submit_one_order_internal(
+                self.internal._submit_one_order_internal(
                     side[i], amount_in[i], limit_price[i],
                     nonce[i], order_nonce[i], path_len[i], path[i],
                 );
@@ -543,6 +517,44 @@ pub contract Orderbook {
         assert(epoch.state == EPOCH_STATE_OPEN, "epoch is not OPEN");
         let block: u32 = self.context.block_number();
         assert(block < epoch.closes_at_block, "epoch has expired; awaiting close_epoch");
+    }
+
+    /// Public callback used by `_submit_one_order_internal` to validate that each
+    /// hop in the routing path corresponds to a registered pool in the registry.
+    /// Reverts otherwise; atomic with the rest of the private body via `enqueue_self`.
+    /// `only_self` ensures the callback can only be invoked by this contract.
+    #[external("public")]
+    #[only_self]
+    fn _assert_path_pools_registered(path_len: u8, path: [Field; 3]) {
+        let pool_count = self.storage.pool_count.read();
+        // Hop 0: path[0] -> path[1]
+        let (lo0, hi0) = if (path[0] as u128) < (path[1] as u128) { (path[0], path[1]) } else { (path[1], path[0]) };
+        let mut found0: u32 = 0xFFFFFFFF as u32;
+        for i in 0..MAX_NUM_POOLS {
+            if (i as u32) < pool_count {
+                let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
+                let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
+                if (pa == lo0) & (pb == hi0) {
+                    found0 = i as u32;
+                }
+            }
+        }
+        assert(found0 != 0xFFFFFFFF as u32, "pool not found for path[0..2]");
+        // Hop 1 (only for 2-hop paths): path[1] -> path[2]
+        if path_len == 3 {
+            let (lo1, hi1) = if (path[1] as u128) < (path[2] as u128) { (path[1], path[2]) } else { (path[2], path[1]) };
+            let mut found1: u32 = 0xFFFFFFFF as u32;
+            for i in 0..MAX_NUM_POOLS {
+                if (i as u32) < pool_count {
+                    let pa = self.storage.pool_token_a.at(i as u32).read().to_field();
+                    let pb = self.storage.pool_token_b.at(i as u32).read().to_field();
+                    if (pa == lo1) & (pb == hi1) {
+                        found1 = i as u32;
+                    }
+                }
+            }
+            assert(found1 != 0xFFFFFFFF as u32, "pool not found for path[1..3]");
+        }
     }
 
     /// Public callback used by `submit_order` to fold an order commitment into the

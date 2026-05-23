@@ -8,7 +8,7 @@ use aztec::{
     protocol::{
         address::AztecAddress,
         hash::poseidon2_hash,
-        traits::{Deserialize, FromField, Serialize},
+        traits::{Deserialize, FromField, Hash, Serialize, ToField},
     },
     test::helpers::test_environment::TestEnvironment,
 };
@@ -109,7 +109,7 @@ unconstrained fn deploy_orderbook(
     clearing_vk_hash: Field,
 ) -> AztecAddress {
     // Canonicalize: smaller-as-Field first (required by constructor invariant).
-    let (canon_a, canon_b) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+    let (canon_a, canon_b) = if (token_a.to_field() as u128) < (token_b.to_field() as u128) {
         (token_a, token_b)
     } else {
         (token_b, token_a)
@@ -253,7 +253,7 @@ unconstrained fn constructor_records_token_addrs_and_epoch_length() {
 
     // Sub-4: getters now take pool_id=0 for the single-pool deploy.
     // The helper canonicalizes token_a/b, so we canonicalize here too before asserting.
-    let (canon_a, canon_b) = if (token_a.to_field() as Field) < (token_b.to_field() as Field) {
+    let (canon_a, canon_b) = if (token_a.to_field() as u128) < (token_b.to_field() as u128) {
         (token_a, token_b)
     } else {
         (token_b, token_a)
@@ -369,15 +369,23 @@ unconstrained fn flatten_clearing_public_slot_order() {
         cum_fee_a_per_share_increment: 105 as u128,
         cum_fee_b_per_share_increment: 106 as u128,
     };
-    let p = Orderbook::ClearingPublic {
-        order_acc:      11,
-        cancel_acc:     22,
-        order_count:    33,
-        cancel_count:   44,
-        reserve_a:      55 as u128,
-        reserve_b:      66 as u128,
+    // Sub-4: ClearingPublic now nests per-pool swaps under active_pools.
+    // Use a single-pool clearing to mirror the original single-swap test.
+    let zero_swap = pool::LiquidityPool::ClearingSwap {
+        a_to_pool: 0 as u128, b_to_pool: 0 as u128,
+        a_from_pool: 0 as u128, b_from_pool: 0 as u128,
+        active_bucket_deltas: [zero_delta, zero_delta, zero_delta, zero_delta],
+        active_bucket_count: 0,
+        current_sqrt_price_after: 0 as u128,
+    };
+    let zero_pool_clearing = Orderbook::PoolClearing {
+        pool_id: 0,
+        clearing_price: 0 as u128,
+        swap: zero_swap,
+    };
+    let pool0 = Orderbook::PoolClearing {
+        pool_id: 9,
         clearing_price: 77 as u128,
-        fills_root:     88,
         swap: pool::LiquidityPool::ClearingSwap {
             a_to_pool: 1001 as u128, b_to_pool: 1002 as u128,
             a_from_pool: 1003 as u128, b_from_pool: 1004 as u128,
@@ -386,16 +394,32 @@ unconstrained fn flatten_clearing_public_slot_order() {
             current_sqrt_price_after: 1005 as u128,
         },
     };
+    let p = Orderbook::ClearingPublic {
+        order_acc:         11,
+        cancel_acc:        22,
+        order_count:       33,
+        cancel_count:      44,
+        fills_root:        88,
+        active_pool_count: 1,
+        active_pools:      [pool0, zero_pool_clearing, zero_pool_clearing],
+    };
 
     let flat = Orderbook::flatten_clearing_public(p);
+    // Sub-4 slot layout (see main.nr `flatten_clearing_public`):
+    //   [0..3] order_acc, cancel_acc, order_count, cancel_count
+    //   [4]    fills_root
+    //   [5]    active_pool_count
+    //   [6..]  active_pools[k] (PoolClearing = 36 fields each)
     assert(flat[0] == 11, "slot 0 order_acc");
     assert(flat[1] == 22, "slot 1 cancel_acc");
     assert(flat[2] == 33, "slot 2 order_count");
     assert(flat[3] == 44, "slot 3 cancel_count");
-    assert(flat[4] == 55, "slot 4 reserve_a");
-    assert(flat[5] == 66, "slot 5 reserve_b");
-    assert(flat[6] == 77, "slot 6 clearing_price");
-    assert(flat[7] == 88, "slot 7 fills_root");
+    assert(flat[4] == 88, "slot 4 fills_root");
+    assert(flat[5] == 1, "slot 5 active_pool_count");
+    // PoolClearing 0 (slots 6..41): pool_id, clearing_price, 4 aggregate flows,
+    // current_sqrt_price_after, active_bucket_count, 4 BucketDeltas x 7
+    assert(flat[6] == 9, "slot 6 pool0.pool_id");
+    assert(flat[7] == 77, "slot 7 pool0.clearing_price");
     assert(flat[8] == 1001, "slot 8 swap.a_to_pool");
     assert(flat[9] == 1002, "slot 9 swap.b_to_pool");
     assert(flat[10] == 1003, "slot 10 swap.a_from_pool");
@@ -434,12 +458,14 @@ unconstrained fn apply_verified_clearing_rejects_external_call() {
         active_bucket_count: 0,
         current_sqrt_price_after: 0 as u128,
     };
+    let zero_pool_clearing = Orderbook::PoolClearing {
+        pool_id: 0, clearing_price: 0 as u128, swap: zero_swap,
+    };
     let pi = Orderbook::ClearingPublic {
         order_acc: 0, cancel_acc: 0, order_count: 0, cancel_count: 0,
-        reserve_a: 0 as u128, reserve_b: 0 as u128,
-        clearing_price: 0 as u128,
         fills_root: 0,
-        swap: zero_swap,
+        active_pool_count: 0,
+        active_pools: [zero_pool_clearing, zero_pool_clearing, zero_pool_clearing],
     };
 
     let stranger = env.create_light_account();
@@ -594,7 +620,7 @@ unconstrained fn submit_order_rejects_path_with_no_matching_pool() {
     let pool_p0 = env.create_light_account();
 
     // Canonicalize usdc/eth pair (smaller Field first).
-    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+    let (lo, hi) = if (usdc.to_field() as u128) < (eth.to_field() as u128) {
         (usdc, eth)
     } else {
         (eth, usdc)
@@ -653,7 +679,7 @@ unconstrained fn pool_tokens_canonical_ordering_finds_pool() {
 
     // Canonicalize each pair: smaller-as-Field first.
     let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
-        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+        if (a.to_field() as u128) < (b.to_field() as u128) { (a, b) } else { (b, a) }
     };
     let (usdc_eth_a, usdc_eth_b) = canon(usdc, eth);
     let (usdc_btc_a, usdc_btc_b) = canon(usdc, btc);
@@ -675,22 +701,22 @@ unconstrained fn pool_tokens_canonical_ordering_finds_pool() {
     let orderbook = env.deploy("Orderbook").with_public_initializer(deployer, initializer_call);
 
     // Pool 0 should match (usdc, eth) in either order.
-    let pid_ab: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, eth));
+    let pid_ab: u32 = env.view_public(Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, eth));
     assert(pid_ab == 0 as u32, "usdc,eth must resolve to pool 0");
     // Reverse order: canonical normalisation must yield the same pool_id.
-    let pid_ba: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, usdc));
+    let pid_ba: u32 = env.view_public(Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, usdc));
     assert(pid_ba == 0 as u32, "eth,usdc (reversed) must resolve to pool 0");
 
     // Pool 1: usdc/btc pair.
-    let pid_p1: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, btc));
+    let pid_p1: u32 = env.view_public(Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, btc));
     assert(pid_p1 == 1 as u32, "usdc,btc must resolve to pool 1");
 
     // Pool 2: eth/btc pair.
-    let pid_p2: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, btc));
+    let pid_p2: u32 = env.view_public(Orderbook::at(orderbook).resolve_pool_id_by_pair(eth, btc));
     assert(pid_p2 == 2 as u32, "eth,btc must resolve to pool 2");
 
     // Unknown pair must return 0xFFFFFFFF.
-    let pid_unknown: u32 = env.call_public(deployer, Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, deployer));
+    let pid_unknown: u32 = env.view_public(Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, deployer));
     assert(pid_unknown == 0xFFFFFFFF as u32, "unknown pair must return 0xFFFFFFFF");
 }
 
@@ -773,7 +799,7 @@ unconstrained fn sub5a_set_treasury_first_call_writes_address() {
     let eth = env.create_light_account();
     let stub_pool = env.create_light_account();
 
-    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+    let (lo, hi) = if (usdc.to_field() as u128) < (eth.to_field() as u128) {
         (usdc, eth)
     } else {
         (eth, usdc)
@@ -814,7 +840,7 @@ unconstrained fn sub5a_set_treasury_second_call_reverts() {
     let eth = env.create_light_account();
     let stub_pool = env.create_light_account();
 
-    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+    let (lo, hi) = if (usdc.to_field() as u128) < (eth.to_field() as u128) {
         (usdc, eth)
     } else {
         (eth, usdc)
@@ -850,7 +876,7 @@ unconstrained fn sub5a_set_treasury_rejects_non_admin_caller() {
     let eth = env.create_light_account();
     let stub_pool = env.create_light_account();
 
-    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+    let (lo, hi) = if (usdc.to_field() as u128) < (eth.to_field() as u128) {
         (usdc, eth)
     } else {
         (eth, usdc)
@@ -952,7 +978,7 @@ unconstrained fn sub5a_add_pool_happy_path_appends_4th_pool() {
     // Canonicalize pairs for the constructor (smaller Field first, matching
     // the production invariant asserted inside the constructor).
     let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
-        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+        if (a.to_field() as u128) < (b.to_field() as u128) { (a, b) } else { (b, a) }
     };
     let (usdc_eth_a, usdc_eth_b) = canon(usdc, eth);
     let (usdc_btc_a, usdc_btc_b) = canon(usdc, btc);
@@ -972,15 +998,13 @@ unconstrained fn sub5a_add_pool_happy_path_appends_4th_pool() {
     env.call_public(admin, Orderbook::at(orderbook).add_pool(stub_pool_3, doge, usdc));
 
     // resolve_pool_id_by_pair must return 3 for the newly added pair.
-    let new_pid: u32 = env.call_public(
-        admin,
+    let new_pid: u32 = env.view_public(
         Orderbook::at(orderbook).resolve_pool_id_by_pair(doge, usdc),
     );
     assert(new_pid == 3 as u32, "new pool_id should be 3");
 
     // Reverse arg order must resolve the same pool (canonical lookup).
-    let reversed_pid: u32 = env.call_public(
-        admin,
+    let reversed_pid: u32 = env.view_public(
         Orderbook::at(orderbook).resolve_pool_id_by_pair(usdc, doge),
     );
     assert(reversed_pid == 3 as u32, "canonical lookup works in reverse order");
@@ -996,7 +1020,7 @@ unconstrained fn sub5a_add_pool_rejects_duplicate_pair() {
     let stub_pool_1 = env.create_light_account();
 
     let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
-        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+        if (a.to_field() as u128) < (b.to_field() as u128) { (a, b) } else { (b, a) }
     };
     let (lo, hi) = canon(usdc, eth);
 
@@ -1027,7 +1051,7 @@ unconstrained fn sub5a_add_pool_rejects_non_admin_caller() {
     let stub_pool_new = env.create_light_account();
 
     let canon = |a: AztecAddress, b: AztecAddress| -> (AztecAddress, AztecAddress) {
-        if (a.to_field() as Field) < (b.to_field() as Field) { (a, b) } else { (b, a) }
+        if (a.to_field() as u128) < (b.to_field() as u128) { (a, b) } else { (b, a) }
     };
     let (lo, hi) = canon(usdc, eth);
 
