@@ -1,9 +1,10 @@
+import { spawn } from "node:child_process";
 import { Fr } from "@aztec/aztec.js/fields";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { TxHash } from "@aztec/aztec.js/tx";
 
 /**
- * Sub-5b: L2→L1 Outbox proof retrieval interface.
+ * Sub-5b / Sub-5c A3: L2→L1 Outbox proof retrieval interface.
  *
  * After a maker calls aUSDC.exit_to_l1_*, they need three values to
  * call USDCBridge.withdraw on L1:
@@ -11,11 +12,12 @@ import { TxHash } from "@aztec/aztec.js/tx";
  *   - leafIndex: the leaf position in that epoch's Outbox tree
  *   - siblingPath: Merkle proof from leaf to Outbox root
  *
- * D2 status: the lookup half (find epoch + leafIndex) is wired against
- * aztec.js's getL2ToL1Messages + getTxEffect APIs. The siblingPath
- * construction needs Aztec's internal merkle-tree-builder; we surface
- * the partial result and instruct the operator to invoke the testnet
- * runner (which vendors the helper) for the full proof.
+ * Sub-5c A3: buildOutboxProof is now a thin spawn wrapper around the
+ * audit-isolated subprocess binary tools/outbox-proof/dist/zswap-outbox-proof.mjs.
+ * The binary delegates to computeL2ToL1MembershipWitness from @aztec/stdlib/messaging,
+ * which builds the full 4-level combined sibling path internally.
+ *
+ * Override the binary path via ZSWAP_OUTBOX_PROOF_BIN env var.
  */
 
 export interface OutboxLookup {
@@ -134,31 +136,64 @@ export async function lookupOutboxMessage(
 /**
  * Full proof builder. Returns { l2Epoch, leafIndex, siblingPath, content }.
  *
- * As of Sub-5b D2, the siblingPath construction requires Aztec's internal
- * merkle-tree-builder which is not exposed through aztec.js's public API.
- * This function performs the lookup (returns the OutboxLookup) and then
- * throws with explicit instructions for completing the proof manually via
- * the testnet runner.
+ * Sub-5c A3: delegates to the audit-isolated subprocess binary
+ * tools/outbox-proof/dist/zswap-outbox-proof.mjs, which calls
+ * computeL2ToL1MembershipWitness from @aztec/stdlib/messaging for the
+ * full 4-level combined sibling path.
+ *
+ * Override binary path via ZSWAP_OUTBOX_PROOF_BIN env var.
  *
  * @param nodeUrl          Aztec node RPC URL
  * @param l2TxHash         L2 tx hash of the exit_to_l1_* call
  * @param expectedContent  0x-prefixed bytes32 content hash
- * @returns OutboxProof (when siblingPath path is implemented in a future task)
+ * @returns OutboxProof with complete siblingPath
  */
 export async function buildOutboxProof(
   nodeUrl: string,
   l2TxHash: string,
   expectedContent: string,
 ): Promise<OutboxProof> {
-  const lookup = await lookupOutboxMessage(nodeUrl, l2TxHash, expectedContent);
-  throw new Error(
-    `buildOutboxProof: lookup succeeded (l2Epoch=${lookup.l2Epoch} leafIndex=${lookup.leafIndex}) ` +
-    `but siblingPath construction is not yet implemented in cli/src/bridge-helpers.ts. ` +
-    `Aztec's outbox merkle-tree builder is not exposed via the public aztec.js API at v4.2.1; ` +
-    `vendoring the helper is a follow-up. ` +
-    `For now: use 'zswap bridge claim-l1-partial' to get the lookup values, then construct the ` +
-    `siblingPath via Aztec's L1 portal manager helper (see node_modules/@aztec/aztec.js/dest/ethereum/portal_manager.js).`,
-  );
+  const binPath =
+    process.env.ZSWAP_OUTBOX_PROOF_BIN ??
+    `${process.cwd()}/tools/outbox-proof/dist/zswap-outbox-proof.mjs`;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", [
+      binPath,
+      "--node-url", nodeUrl,
+      "--l2-tx-hash", l2TxHash,
+      "--expected-content", expectedContent,
+    ]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => (stdout += d));
+    child.stderr.on("data", (d: Buffer) => (stderr += d));
+    child.on("exit", (code: number | null) => {
+      if (code !== 0) {
+        return reject(new Error(`zswap-outbox-proof exited ${code}: ${stderr.trim()}`));
+      }
+      try {
+        const raw = JSON.parse(stdout) as {
+          l2Epoch: string;
+          leafIndex: string;
+          siblingPath: string[];
+          content: string;
+        };
+        resolve({
+          l2Epoch: BigInt(raw.l2Epoch),
+          leafIndex: BigInt(raw.leafIndex),
+          siblingPath: raw.siblingPath,
+          content: raw.content,
+        });
+      } catch (e) {
+        reject(
+          new Error(
+            `zswap-outbox-proof returned non-JSON stdout: ${stdout}; stderr: ${stderr}`,
+          ),
+        );
+      }
+    });
+  });
 }
 
 /**
