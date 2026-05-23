@@ -5,7 +5,7 @@
 // Walks the full L1<>L2 bridge round trip:
 //
 //   1.  Verify env (AZTEC_NODE_URL contains 'testnet', L1_RPC_URL contains 'sepolia')
-//   2.  Verify deploy state (zswap.config.json has l1.{usdcBridge, wethBridge,
+//   2.  Verify deploy state (quetzal.config.json has l1.{usdcBridge, wethBridge,
 //       timelock} + tUSDC + tETH)
 //   3.  Maker wallet bootstrap (Aztec faucet drip + claim, Sepolia ETH from L1
 //       faucet for gas)
@@ -14,13 +14,13 @@
 //       (message_hash, message_index)
 //   6.  Wait 4-15 min for the L1->L2 message to land on Aztec's pending tree
 //   7.  L2: aUSDC.claim_private(maker, amount, secret, message_index) via
-//       'zswap bridge claim'
-//   8.  L2: 1-hop ZSwap trade (aUSDC -> aWETH); wait epoch_length blocks;
+//       'quetzal bridge claim'
+//   8.  L2: 1-hop Quetzal trade (aUSDC -> aWETH); wait epoch_length blocks;
 //       close_epoch_and_clear_verified
-//   9.  L2: aWETH.exit_to_l1_public(amount, l1_recipient) via 'zswap bridge exit'
+//   9.  L2: aWETH.exit_to_l1_public(amount, l1_recipient) via 'quetzal bridge exit'
 //   10. Wait 30 min - 2 hr for the L2->L1 rollup proof to land on L1
 //   11. L1: WETHBridge.withdraw(amount, l1_recipient, l2_epoch, leaf_index,
-//       sibling_path) via 'zswap bridge claim-l1' + cast send
+//       sibling_path) via 'quetzal bridge claim-l1' + cast send
 //   12. Verify L1 USDC + WETH balance changes are consistent with the round trip
 //
 // State persists in testnet-sub5b-state.json. Resume-safe: each step short-circuits
@@ -85,10 +85,10 @@ async function step1VerifyEnv(state: State) {
 
 async function step2VerifyDeploys(state: State) {
   if (state.step >= 2) return;
-  // Implementer: read zswap.config.json; assert l1.usdcBridge + l1.wethBridge +
+  // Implementer: read quetzal.config.json; assert l1.usdcBridge + l1.wethBridge +
   // l1.timelock + tUSDC + tETH are non-empty addresses. Throw with a clear
   // message if any are missing — operator runs scripts/deploy-bridge.ts first.
-  console.log("step2: verify zswap.config.json has bridge addresses (stub)");
+  console.log("step2: verify quetzal.config.json has bridge addresses (stub)");
   state.step = 2;
   saveState(state);
 }
@@ -141,19 +141,19 @@ async function step6BridgeWait(state: State) {
 async function step7L2Claim(state: State) {
   if (state.step >= 7) return;
   // Implementer:
-  //   pnpm zswap bridge claim --token aUSDC --amount <N> --secret <hex> \
+  //   pnpm quetzal bridge claim --token aUSDC --amount <N> --secret <hex> \
   //     --message-index <N>
   // Or invoke the same code path directly (registerBridge's claim action).
-  console.log("step7: aUSDC.claim_private via zswap bridge claim (stub)");
+  console.log("step7: aUSDC.claim_private via quetzal bridge claim (stub)");
   state.step = 7;
   saveState(state);
 }
 
 async function step8L2Trade(state: State) {
   if (state.step >= 8) return;
-  // Implementer: submit a 1-hop ZSwap order aUSDC -> aWETH; wait epoch_length
+  // Implementer: submit a 1-hop Quetzal order aUSDC -> aWETH; wait epoch_length
   // blocks; aggregator does close_epoch_and_clear_verified; maker claim_fill.
-  console.log("step8: 1-hop ZSwap trade aUSDC -> aWETH (stub)");
+  console.log("step8: 1-hop Quetzal trade aUSDC -> aWETH (stub)");
   state.step = 8;
   saveState(state);
 }
@@ -161,11 +161,11 @@ async function step8L2Trade(state: State) {
 async function step9L2Exit(state: State) {
   if (state.step >= 9) return;
   // Implementer:
-  //   pnpm zswap bridge exit --token aWETH --amount <N> --l1-recipient <addr> \
+  //   pnpm quetzal bridge exit --token aWETH --amount <N> --l1-recipient <addr> \
   //     --no-private
   // (--no-private is required since exit_to_l1_private has no L1 consumer.)
   // Capture L2 tx hash for the proof lookup.
-  console.log("step9: aWETH.exit_to_l1_public via zswap bridge exit --no-private (stub)");
+  console.log("step9: aWETH.exit_to_l1_public via quetzal bridge exit --no-private (stub)");
   state.step = 9;
   saveState(state);
 }

@@ -1,10 +1,10 @@
-# ZSwap-on-Aztec — Week 1: Foundation Implementation Plan
+# Quetzal — Week 1: Foundation Implementation Plan
 
 > **Status:** Executed and tagged as `week-01-foundation` at commit `6435b8c`. See "What Actually Shipped" section below for deviations from this plan.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Scaffold the ZSwap monorepo with Aztec toolchain pinned, two deployable test-token contracts (tUSDC and tETH), green Noir TXE tests, green TypeScript integration tests, and CI compiling on every PR.
+**Goal:** Scaffold the Quetzal monorepo with Aztec toolchain pinned, two deployable test-token contracts (tUSDC and tETH), green Noir TXE tests, green TypeScript integration tests, and CI compiling on every PR.
 
 **Architecture:** pnpm workspaces monorepo. Each Noir contract is a separate Nargo package under `contracts/`. TypeScript packages under `aggregator/`, `cli/`, `tests/`. Test tokens depend on `@defi-wonderland/aztec-standards` token contract as a Nargo git dependency, configured with a mint authority for testing. Aztec 4.x removed the self-contained sandbox, so local development uses `scripts/dev.sh` which orchestrates `anvil` (L1, from Foundry) + `aztec start --local-network` (L2). CI uses both as service containers.
 
@@ -303,7 +303,7 @@ git commit -m "chore: pin Aztec to 4.2.1, add anvil + aztec dev orchestrator"
 
 ```json
 {
-  "name": "zswap-aztec",
+  "name": "quetzal",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -381,7 +381,7 @@ store/
 - [ ] **Step 5: Create `README.md`**
 
 ```markdown
-# ZSwap-on-Aztec
+# Quetzal
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
@@ -776,7 +776,7 @@ git commit -m "feat(token-b): add tETH contract with TXE tests"
 
 ```json
 {
-  "name": "@zswap/tests",
+  "name": "@quetzal/tests",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -1007,7 +1007,7 @@ Wait for `Aztec PXE running on http://localhost:8080`.
 In the repo terminal:
 
 ```bash
-pnpm --filter @zswap/tests test
+pnpm --filter @quetzal/tests test
 ```
 
 Expected: Both tests pass. First run can take 60-90 seconds due to contract deployment cost.
@@ -1200,7 +1200,7 @@ jobs:
           echo "Dev stack failed to come up; tail of log:"
           tail -100 /tmp/dev.log
           exit 1
-      - run: pnpm --filter @zswap/tests test
+      - run: pnpm --filter @quetzal/tests test
         env:
           PXE_URL: http://localhost:8080
       - name: Stop dev stack
@@ -1245,7 +1245,7 @@ scripts/dev.sh
 Wait for readiness, then in the main terminal:
 
 ```bash
-pnpm --filter @zswap/tests test
+pnpm --filter @quetzal/tests test
 ```
 
 Expected: All TypeScript integration tests pass.

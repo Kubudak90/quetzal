@@ -1,7 +1,7 @@
-# ZSwap-on-Aztec On-Call Playbook
+# Quetzal On-Call Playbook
 
 This playbook codifies the operator response to production alerts + incidents
-for the ZSwap-on-Aztec L1↔L2 bridge + L2 dark-pool exchange. Audience: on-call
+for the Quetzal L1↔L2 bridge + L2 dark-pool exchange. Audience: on-call
 engineers + 2-of-3 emergency multisig signers + 3-of-5 governance multisig
 signers.
 
@@ -10,8 +10,8 @@ signers.
 | Sev | Definition | Response time | Channels |
 |-----|------------|---------------|----------|
 | **SEV1** | Bridge funds at risk, paused unexpectedly, drain attempt detected, L2 orderbook clearing stalled with funds in flight | <15 min | PagerDuty page + emergency multisig huddle (Signal/Telegram) |
-| **SEV2** | Orderbook stalled >1h (no clearing), aggregator daemon outage, treasury balance dry blocking aggregator fee payouts, exporter scrape failure >30min | <1 hour | Slack #zswap-ops + governance multisig async |
-| **SEV3** | Monitoring alert (TVL near cap, outbox backlog, single-portal pause that is operator-initiated), CLI UX regression reported | <4 hours | Slack #zswap-ops |
+| **SEV2** | Orderbook stalled >1h (no clearing), aggregator daemon outage, treasury balance dry blocking aggregator fee payouts, exporter scrape failure >30min | <1 hour | Slack #quetzal-ops + governance multisig async |
+| **SEV3** | Monitoring alert (TVL near cap, outbox backlog, single-portal pause that is operator-initiated), CLI UX regression reported | <4 hours | Slack #quetzal-ops |
 | **SEV4** | Documentation gap, dashboard cosmetic issue, governance proposal that isn't time-critical | next business day | GitHub issue with `sub5d` label |
 
 ## Escalation tree
@@ -49,7 +49,7 @@ incident messages:
 
 ## SEV1 — Bridge funds at risk: immediate response
 
-1. **Verify the alert.** Check Grafana `ZSwap Bridge Health` dashboard for context (TVL trend, paused state, outbox backlog). False positives happen; spending 30s confirming saves a multisig huddle.
+1. **Verify the alert.** Check Grafana `Quetzal Bridge Health` dashboard for context (TVL trend, paused state, outbox backlog). False positives happen; spending 30s confirming saves a multisig huddle.
 
 2. **Page emergency multisig signers** via PagerDuty + Signal/Telegram. Goal: 2-of-3 quorum reachable within 5 minutes.
 
@@ -74,7 +74,7 @@ incident messages:
    - Next update ETA
 
 5. **Begin investigation** in a dedicated incident channel. Snapshot:
-   - Last 24h of bridge events (`zswap_bridge_*` metrics)
+   - Last 24h of bridge events (`quetzal_bridge_*` metrics)
    - Last 24h of governance / emergency timelock txs
    - L1 portal address etherscan history
    - L2 orderbook last clearings
@@ -94,8 +94,8 @@ filled until clearing resumes.
 3. **Check aggregator daemon status:**
    ```bash
    ssh root@194.163.136.1
-   docker ps | grep zswap-aggregator
-   docker logs --tail 200 zswap-aggregator-1
+   docker ps | grep quetzal-aggregator
+   docker logs --tail 200 quetzal-aggregator-1
    ```
 
 4. **If daemon crashed:** restart. If repeated crashes: switch to backup
@@ -129,7 +129,7 @@ Each SEV3 has a corresponding runbook entry. The general flow:
 
 ## Rotation
 
-**Schedule:** PagerDuty service "zswap-oncall". 3 engineers in rotation;
+**Schedule:** PagerDuty service "quetzal-oncall". 3 engineers in rotation;
 weekly handoff (Monday 09:00 UTC). On-call covers SEV1 + SEV2; SEV3 + SEV4
 handled async during business hours.
 

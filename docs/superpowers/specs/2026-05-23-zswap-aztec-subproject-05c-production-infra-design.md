@@ -2,19 +2,19 @@
 
 **Status:** Design
 **Date:** 2026-05-23
-**Parent project:** [ZSwap-on-Aztec](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (final 5a / 5b / 5c split).
+**Parent project:** [Quetzal](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (final 5a / 5b / 5c split).
 **Predecessor specs:**
 - [Sub-5a Deterministic Addresses + Carryforward Fixes](2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses-design.md) — SHIPPED.
 - [Sub-5b L1 Bridge](2026-05-23-zswap-aztec-subproject-05b-l1-bridge-design.md) — SHIPPED.
 
 ## Goal
 
-Close every remaining code-blocking gap for mainnet open of ZSwap-on-Aztec and ship the production operations stack alongside it. Three independent work buckets: (A) bridge completion — `EmergencyPauser` role separation, `siblingPath` construction via standalone subprocess binary, `deploy-bridge.ts` end-to-end automation. (B) bridge expansion — `wBTC` as third asset, `recoverDeposit` flow for lost L2 wallets, `withdrawPrivate` L1 consumer. (C) ops infrastructure — Prometheus + Grafana + Alertmanager VPS stack, opt-in relayer service, audit-prep materials, on-call playbook, runbook upgrade. After Sub-5c ships, ZSwap is mainnet-ready in `$10k` cap mode pending only the external audit.
+Close every remaining code-blocking gap for mainnet open of Quetzal and ship the production operations stack alongside it. Three independent work buckets: (A) bridge completion — `EmergencyPauser` role separation, `siblingPath` construction via standalone subprocess binary, `deploy-bridge.ts` end-to-end automation. (B) bridge expansion — `wBTC` as third asset, `recoverDeposit` flow for lost L2 wallets, `withdrawPrivate` L1 consumer. (C) ops infrastructure — Prometheus + Grafana + Alertmanager VPS stack, opt-in relayer service, audit-prep materials, on-call playbook, runbook upgrade. After Sub-5c ships, Quetzal is mainnet-ready in `$10k` cap mode pending only the external audit.
 
 ## Non-Goals
 
 - L1 portal v2 upgrade design — Sub-5c ships v1; v2 is a separate post-launch project.
-- Cross-chain bridges to non-Ethereum L1s — explicit never (privacy-maximalist ZSwap is Aztec-on-Ethereum only).
+- Cross-chain bridges to non-Ethereum L1s — explicit never (privacy-maximalist Quetzal is Aztec-on-Ethereum only).
 - Statistical privacy leak mitigation (deposit↔claim temporal linkage) — Sub-6 dummy-order territory.
 - Audit findings remediation — separate project; planned reactively from audit deliverable.
 - Public bug-bounty launch — operator team initiates post-Sub-5c.
@@ -36,7 +36,7 @@ Sub-5c partitions into three independent buckets that may run partially in paral
 │     - Production: both governanceTL + emergencyTL as roles  │
 │                                                             │
 │ A2. siblingPath standalone TS subprocess binary             │
-│     - bin/zswap-outbox-proof (esbuild bundle, optional pkg) │
+│     - bin/quetzal-outbox-proof (esbuild bundle, optional pkg) │
 │     - CLI: bridge claim-l1 subcommand invokes subprocess    │
 │                                                             │
 │ A3. deploy-bridge.ts automation                             │
@@ -50,7 +50,7 @@ Sub-5c partitions into three independent buckets that may run partially in paral
 ├─────────────────────────────────────────────────────────────┤
 │ B1. wBTC bridge (third asset)                               │
 │     - TokenBridge.sol parametric — deploy script + CLI      │
-│       alias + zswap.config.json updates only                │
+│       alias + quetzal.config.json updates only                │
 │                                                             │
 │ B2. recoverDeposit(secret, l1Recipient)                     │
 │     - Maker-side proof-of-ownership                         │
@@ -205,7 +205,7 @@ function withdrawPrivate(
 }
 ```
 
-Uses `WITHDRAW_PRIVATE_TAG` content matching L2's `exit_to_l1_private`. CLI gains `zswap bridge claim-l1 --private` flag; the relayer picks the function based on the L2 exit tag.
+Uses `WITHDRAW_PRIVATE_TAG` content matching L2's `exit_to_l1_private`. CLI gains `quetzal bridge claim-l1 --private` flag; the relayer picks the function based on the L2 exit tag.
 
 ### B1. wBTC parametric expansion
 
@@ -213,13 +213,13 @@ Zero contract changes — only deploy script + CLI alias + config:
 
 - `scripts/deploy-bridge.ts`: third asset env `L1_WBTC_ADDR` (mainnet `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599`)
 - `cli/src/commands/bridge.ts`: `aWBTC` → `config.tBTC` mapping already present
-- `zswap.config.json`: new `l1.wbtc` + `l1.wbtcBridge` + `tBTC` slot
+- `quetzal.config.json`: new `l1.wbtc` + `l1.wbtcBridge` + `tBTC` slot
 
 ## Section 3 — L2 + CLI Changes (Bucket A)
 
 ### A2. siblingPath standalone TS subprocess binary
 
-**New binary:** `bin/zswap-outbox-proof` (TypeScript source in `tools/outbox-proof/`, esbuild single-file bundle).
+**New binary:** `bin/quetzal-outbox-proof` (TypeScript source in `tools/outbox-proof/`, esbuild single-file bundle).
 
 ```
 tools/outbox-proof/
@@ -228,12 +228,12 @@ tools/outbox-proof/
 ├── src/
 │   ├── main.ts               ← CLI entry: parse args, call buildProof, output JSON
 │   └── build-proof.ts        ← core: getL2ToL1Messages → MerkleTree → siblingPath
-└── build.mjs                 ← esbuild bundle to dist/zswap-outbox-proof.mjs
+└── build.mjs                 ← esbuild bundle to dist/quetzal-outbox-proof.mjs
 ```
 
 **Subprocess argv API:**
 ```bash
-zswap-outbox-proof \
+quetzal-outbox-proof \
   --node-url https://rpc.testnet.aztec-labs.com \
   --l2-tx-hash 0x... \
   --expected-content 0x...
@@ -252,7 +252,7 @@ import { spawn } from "node:child_process";
 export async function buildOutboxProof(
   nodeUrl: string, l2TxHash: string, expectedContent: string,
 ): Promise<OutboxProof> {
-  const binPath = process.env.ZSWAP_OUTBOX_PROOF_BIN ?? "zswap-outbox-proof";
+  const binPath = process.env.QUETZAL_OUTBOX_PROOF_BIN ?? "quetzal-outbox-proof";
   return new Promise((resolve, reject) => {
     const child = spawn(binPath, [
       "--node-url", nodeUrl,
@@ -262,7 +262,7 @@ export async function buildOutboxProof(
     let stdout = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.on("exit", (code) => {
-      if (code !== 0) return reject(new Error(`zswap-outbox-proof exited ${code}`));
+      if (code !== 0) return reject(new Error(`quetzal-outbox-proof exited ${code}`));
       resolve(JSON.parse(stdout) as OutboxProof);
     });
   });
@@ -277,7 +277,7 @@ export async function buildOutboxProof(
 
 **Distribution:**
 - Sub-5c dev mode: `pnpm tsx tools/outbox-proof/src/main.ts ...`
-- Production: `pnpm --filter @zswap/outbox-proof build` → `tools/outbox-proof/dist/zswap-outbox-proof.mjs` (single Node-runnable .mjs)
+- Production: `pnpm --filter @quetzal/outbox-proof build` → `tools/outbox-proof/dist/quetzal-outbox-proof.mjs` (single Node-runnable .mjs)
 - Optional native binary (Sub-5c-2 follow-up): `bun build --compile` or `pkg` for platform-specific binary
 
 ### A3. deploy-bridge.ts automation
@@ -353,7 +353,7 @@ export async function bootstrapAztecWallet(
 │         │ alert rules                                         │
 │         ▼                                                     │
 │  ┌──────────────┐  webhook   ┌──────────────────┐            │
-│  │ Alertmanager │ ─────────► │ Slack #zswap-ops │            │
+│  │ Alertmanager │ ─────────► │ Slack #quetzal-ops │            │
 │  │ (:9093)      │ ─────────► │ PagerDuty (sev1) │            │
 │  └──────────────┘            └──────────────────┘            │
 │                                                               │
@@ -367,51 +367,51 @@ export async function bootstrapAztecWallet(
 
 **New package:** `tools/exporters/` (own `package.json`, audit isolation).
 
-**L1 exporter metrics** (`zswap_bridge_*`):
+**L1 exporter metrics** (`quetzal_bridge_*`):
 ```
-zswap_bridge_total_locked{token="USDC|WETH|wBTC"}                  # totalLocked()
-zswap_bridge_max_tvl{token="..."}                                  # maxTvl()
-zswap_bridge_tvl_utilization{token="..."}                          # locked/max ratio
-zswap_bridge_paused{token="..."}                                   # 0/1
-zswap_bridge_recovery_requests_pending                             # pendingRecoveries count
-zswap_bridge_inbox_pending_messages                                # Inbox queue depth
-zswap_bridge_outbox_unconsumed_messages{epoch="..."}               # L2→L1 backlog
+quetzal_bridge_total_locked{token="USDC|WETH|wBTC"}                  # totalLocked()
+quetzal_bridge_max_tvl{token="..."}                                  # maxTvl()
+quetzal_bridge_tvl_utilization{token="..."}                          # locked/max ratio
+quetzal_bridge_paused{token="..."}                                   # 0/1
+quetzal_bridge_recovery_requests_pending                             # pendingRecoveries count
+quetzal_bridge_inbox_pending_messages                                # Inbox queue depth
+quetzal_bridge_outbox_unconsumed_messages{epoch="..."}               # L2→L1 backlog
 ```
 
-**L2 exporter metrics** (`zswap_l2_*`):
+**L2 exporter metrics** (`quetzal_l2_*`):
 ```
-zswap_l2_orderbook_open_orders_estimate                            # ~from tx logs
-zswap_l2_orderbook_last_clearing_timestamp                         # tx age = liveness
-zswap_l2_treasury_balance{token="USDC|WETH|wBTC"}                  # public-only
-zswap_l2_aggregator_registry_size                                  # bonded count
-zswap_l2_aggregator_active_last_24h                                # unique submitters
-zswap_l2_pool_reserve{pair="USDC/ETH|...",token="a|b"}             # pool depth
+quetzal_l2_orderbook_open_orders_estimate                            # ~from tx logs
+quetzal_l2_orderbook_last_clearing_timestamp                         # tx age = liveness
+quetzal_l2_treasury_balance{token="USDC|WETH|wBTC"}                  # public-only
+quetzal_l2_aggregator_registry_size                                  # bonded count
+quetzal_l2_aggregator_active_last_24h                                # unique submitters
+quetzal_l2_pool_reserve{pair="USDC/ETH|...",token="a|b"}             # pool depth
 ```
 
 **Alertmanager rules** (`prometheus/alerts.yml`):
 ```yaml
 - alert: BridgePaused
-  expr: zswap_bridge_paused > 0
+  expr: quetzal_bridge_paused > 0
   for: 1m
   severity: page                                                   # → PagerDuty sev1
 
 - alert: BridgeTvlNearCap
-  expr: zswap_bridge_tvl_utilization > 0.9
+  expr: quetzal_bridge_tvl_utilization > 0.9
   for: 5m
   severity: warn                                                   # → Slack
 
 - alert: OrderbookStalled
-  expr: time() - zswap_l2_orderbook_last_clearing_timestamp > 3600
+  expr: time() - quetzal_l2_orderbook_last_clearing_timestamp > 3600
   for: 10m
   severity: page                                                   # 1h no clearing = aggregator down
 
 - alert: OutboxBacklog
-  expr: zswap_bridge_outbox_unconsumed_messages > 50
+  expr: quetzal_bridge_outbox_unconsumed_messages > 50
   for: 30m
   severity: warn                                                   # makers can't withdraw
 ```
 
-**Setup:** `tools/exporters/docker-compose.yml` + Grafana dashboards (bridge health, MEV-protection health, aggregator competition) JSON-as-code. README documents `ssh root@194.163.136.1 && cd /root/zswap-ops && docker compose up -d`.
+**Setup:** `tools/exporters/docker-compose.yml` + Grafana dashboards (bridge health, MEV-protection health, aggregator competition) JSON-as-code. README documents `ssh root@194.163.136.1 && cd /root/quetzal-ops && docker compose up -d`.
 
 ### C2. Optional opt-in relayer service
 
@@ -419,7 +419,7 @@ New mode in Sub-3's aggregator daemon. **A bonded aggregator may also serve as a
 
 **Maker-side opt-in (CLI):**
 ```bash
-pnpm zswap bridge exit --token aWETH --amount 100000000000000000 \
+pnpm quetzal bridge exit --token aWETH --amount 100000000000000000 \
   --l1-recipient 0xAbcd... \
   --relayer-fee 0.5          # ← NEW: paid in Treasury fee credits, 0.5% of amount
 ```
@@ -441,7 +441,7 @@ async function relayerLoop() {
   while (true) {
     const queue = await treasury.methods.get_pending_relayer_claims().simulate();
     for (const claim of queue) {
-      // 1. Build siblingPath via zswap-outbox-proof binary (A2)
+      // 1. Build siblingPath via quetzal-outbox-proof binary (A2)
       const proof = await buildOutboxProof(nodeUrl, claim.l2TxHash, claim.expectedContent);
       // 2. Submit L1 cast send (or viem writeContract)
       await tokenBridge.write.withdraw([
@@ -470,7 +470,7 @@ async function relayerLoop() {
 **New file:** `contracts-l1/AUDIT.md` (auditor single-source-of-truth):
 
 ```markdown
-# ZSwap-on-Aztec L1 Bridge — Audit Brief
+# Quetzal L1 Bridge — Audit Brief
 
 ## Scope (in-scope contracts)
 - contracts-l1/src/TokenBridge.sol          (UUPS + AccessControl + Pausable)
@@ -526,7 +526,7 @@ async function relayerLoop() {
 **New file:** `docs/on-call-playbook.md`:
 
 ```markdown
-# ZSwap-on-Aztec On-Call Playbook
+# Quetzal On-Call Playbook
 
 ## Severity classification
 
@@ -548,7 +548,7 @@ On-call (rotation) → Tech lead → Emergency multisig signer #1 → Signer #2 
 - (new alert) → add runbook section + link here
 
 ## Rotation
-PagerDuty schedule "zswap-oncall" (initial: 3 engineers, weekly handoff).
+PagerDuty schedule "quetzal-oncall" (initial: 3 engineers, weekly handoff).
 Hand-off ritual: review last week's alerts, validate runbook accuracy.
 
 ## Post-mortem template
@@ -585,7 +585,7 @@ Rename + extend Sub-5b's `sub5b-runbook.md` to `sub5c-runbook.md`:
 ### Success criteria
 
 1. **EmergencyPauser:** governance multisig pause() reverts (only emergency multisig may pause); emergency multisig pause() executes <2 min (delay=0); upgrade() still requires 7-day timelock.
-2. **siblingPath binary:** `zswap-outbox-proof --node-url <testnet> --l2-tx-hash <real-tx> --expected-content <hex>` returns valid JSON against testnet; output successfully consumed in a real L1 `withdraw()` tx.
+2. **siblingPath binary:** `quetzal-outbox-proof --node-url <testnet> --l2-tx-hash <real-tx> --expected-content <hex>` returns valid JSON against testnet; output successfully consumed in a real L1 `withdraw()` tx.
 3. **deploy-bridge.ts:** `NETWORK=mainnet pnpm tsx scripts/deploy-bridge.ts` completes L1 forge + L2 deploy + timelock wiring in one command (no manual operator step).
 4. **recoverDeposit:** 3-phase flow passes Foundry tests: request (old deposit) → approveRecovery (governance role) → executeRecovery (original sender receives L1 token); foreign-sender calls revert.
 5. **withdrawPrivate:** WITHDRAW_PRIVATE_TAG content consumable on L1; L2's `exit_to_l1_private` becomes functional.

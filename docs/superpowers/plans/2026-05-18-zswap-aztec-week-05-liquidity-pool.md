@@ -1,8 +1,8 @@
-# ZSwap-on-Aztec — Week 5: LiquidityPoolContract Implementation Plan
+# Quetzal — Week 5: LiquidityPoolContract Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `LiquidityPool`, a constant-product AMM Noir contract with private LP positions — `deposit` / `withdraw`, public reserves, the (inert until clearing) fee-accrual machinery — plus `zswap deposit` / `withdraw` / `positions` CLI commands.
+**Goal:** Build `LiquidityPool`, a constant-product AMM Noir contract with private LP positions — `deposit` / `withdraw`, public reserves, the (inert until clearing) fee-accrual machinery — plus `quetzal deposit` / `withdraw` / `positions` CLI commands.
 
 **Architecture:** A new `contracts/pool/` Noir contract. Private functions cannot read `PublicMutable`, so `deposit`/`withdraw` take the live `PoolState` as a caller-supplied `hint`, do all arithmetic on it privately, and enqueue a public callback that asserts the hint equals the actual state before applying the reserve mutation (optimistic concurrency). LP-share math is Uniswap-V2: `sqrt(a·b)` initial, `min`-of-sides subsequent, with the unmatched remainder simply never escrowed.
 
@@ -19,12 +19,12 @@
 | `contracts/pool/Nargo.toml` | Noir package manifest for the pool contract | Create |
 | `contracts/pool/src/main.nr` | The `LiquidityPool` contract | Create |
 | `contracts/pool/src/test.nr` | TXE tests | Create |
-| `cli/src/commands/deposit.ts` | `zswap deposit` | Create |
-| `cli/src/commands/withdraw.ts` | `zswap withdraw` | Create |
-| `cli/src/commands/positions.ts` | `zswap positions` | Create |
+| `cli/src/commands/deposit.ts` | `quetzal deposit` | Create |
+| `cli/src/commands/withdraw.ts` | `quetzal withdraw` | Create |
+| `cli/src/commands/positions.ts` | `quetzal positions` | Create |
 | `cli/src/index.ts` | Register the three commands | Modify |
 | `cli/src/wallet.ts` | Register the `LiquidityPool` contract with the PXE | Modify |
-| `cli/src/config.ts` | Add `pool` to `ZswapConfig` | Modify |
+| `cli/src/config.ts` | Add `pool` to `QuetzalConfig` | Modify |
 | `scripts/deploy-tokens.ts` | Deploy `LiquidityPool`, add `pool` to config | Modify |
 | `tests/integration/pool.test.ts` | Pool integration suite | Create |
 | `tests/integration/cli.test.ts` | `deposit`/`withdraw`/`positions` smoke case | Modify |
@@ -942,10 +942,10 @@ git commit -m "test(pool): deposit/withdraw integration tests"
 
 - [ ] **Step 1: `cli/src/config.ts` — add `pool` to the config type**
 
-In `ZswapConfig`, add a `pool: string` field, and add `"pool"` to the `REQUIRED` array. The interface becomes:
+In `QuetzalConfig`, add a `pool: string` field, and add `"pool"` to the `REQUIRED` array. The interface becomes:
 
 ```ts
-export interface ZswapConfig {
+export interface QuetzalConfig {
   nodeUrl: string;
   tUSDC: string;
   tETH: string;
@@ -954,7 +954,7 @@ export interface ZswapConfig {
   admin: string;
 }
 
-const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
+const REQUIRED: (keyof QuetzalConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "pool", "admin"];
 ```
 
 - [ ] **Step 2: `cli/src/wallet.ts` — register the pool contract**
@@ -1025,7 +1025,7 @@ export function registerDeposit(program: Command): void {
 
         console.log(`liquidity deposited (max A ${amountA}, max B ${amountB})`);
         console.log(`position nonce: 0x${positionNonce.toString(16)}`);
-        console.log(`withdraw later with: zswap withdraw --nonce 0x${positionNonce.toString(16)}`);
+        console.log(`withdraw later with: quetzal withdraw --nonce 0x${positionNonce.toString(16)}`);
       } finally {
         await ctx.stop();
       }
@@ -1047,7 +1047,7 @@ export function registerWithdraw(program: Command): void {
   program
     .command("withdraw")
     .description("burn an LP position and reclaim its liquidity")
-    .requiredOption("--nonce <field>", "position nonce (from `zswap deposit` / `zswap positions`)")
+    .requiredOption("--nonce <field>", "position nonce (from `quetzal deposit` / `quetzal positions`)")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const positionNonce = parseField(String(opts.nonce));
@@ -1179,7 +1179,7 @@ Add `pool` to the `result` object (between `orderbook` and `admin`):
 
 - [ ] **Step 8: Typecheck the CLI**
 
-Run: `pnpm --filter @zswap/cli typecheck`
+Run: `pnpm --filter @quetzal/cli typecheck`
 Expected: no errors.
 
 - [ ] **Step 9: `tests/integration/cli.test.ts` — add a pool smoke case**
@@ -1215,14 +1215,14 @@ Add this test case inside the `describe`, after the `close-epoch` case:
       "deposit", "--amount-a", (1000n * 10n ** 6n).toString(), "--amount-b", (10n ** 18n).toString(),
     );
     const nonceMatch = depositOut.match(/position nonce:\s*(0x[0-9a-fA-F]+)/);
-    assert.ok(nonceMatch, `\`zswap deposit\` should print a position nonce; got:\n${depositOut}`);
+    assert.ok(nonceMatch, `\`quetzal deposit\` should print a position nonce; got:\n${depositOut}`);
     const nonce = nonceMatch![1]!;
 
     const listed = zswap("positions");
-    assert.match(listed, new RegExp(nonce, "i"), "the new position must appear in `zswap positions`");
+    assert.match(listed, new RegExp(nonce, "i"), "the new position must appear in `quetzal positions`");
 
     const withdrawOut = zswap("withdraw", "--nonce", nonce);
-    assert.match(withdrawOut, /withdrawn/i, "`zswap withdraw` should confirm the withdrawal");
+    assert.match(withdrawOut, /withdrawn/i, "`quetzal withdraw` should confirm the withdrawal");
 
     const afterList = zswap("positions");
     assert.match(afterList, /no LP positions/i, "positions must be empty after withdraw");
@@ -1242,7 +1242,7 @@ Stop the dev stack: `bash scripts/dev.sh --down`.
 
 ```bash
 git add cli/src/commands/deposit.ts cli/src/commands/withdraw.ts cli/src/commands/positions.ts cli/src/index.ts cli/src/wallet.ts cli/src/config.ts scripts/deploy-tokens.ts tests/integration/cli.test.ts
-git commit -m "feat(cli): zswap deposit/withdraw/positions + pool in deploy script"
+git commit -m "feat(cli): quetzal deposit/withdraw/positions + pool in deploy script"
 ```
 
 ---
@@ -1257,7 +1257,7 @@ git commit -m "feat(cli): zswap deposit/withdraw/positions + pool in deploy scri
 - [ ] **Step 1: Clean rebuild from scratch**
 
 ```bash
-rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json zswap.config.json
+rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json quetzal.config.json
 pnpm install
 pnpm compile
 pnpm codegen
@@ -1280,7 +1280,7 @@ pnpm tsx scripts/deploy-tokens.ts
 
 Expected:
 - `pnpm test`: `pass 23`, `fail 0`.
-- `deploy-tokens.ts`: prints JSON with `nodeUrl`/`tUSDC`/`tETH`/`orderbook`/`pool`/`admin`; `zswap.config.json` written with all six fields.
+- `deploy-tokens.ts`: prints JSON with `nodeUrl`/`tUSDC`/`tETH`/`orderbook`/`pool`/`admin`; `quetzal.config.json` written with all six fields.
 
 Stop the dev stack: `bash scripts/dev.sh --down`.
 
@@ -1295,9 +1295,9 @@ In `README.md`, replace the `**Status:**` line with:
 In the `## Quickstart` CLI block, add after the `close-epoch` line:
 
 ```
-pnpm --filter @zswap/cli zswap deposit --amount-a 1000000000 --amount-b 1000000000000000000
-pnpm --filter @zswap/cli zswap positions
-pnpm --filter @zswap/cli zswap withdraw --nonce <position-nonce-from-above>
+pnpm --filter @quetzal/cli quetzal deposit --amount-a 1000000000 --amount-b 1000000000000000000
+pnpm --filter @quetzal/cli quetzal positions
+pnpm --filter @quetzal/cli quetzal withdraw --nonce <position-nonce-from-above>
 ```
 
 In the `## Documentation` section, add:
@@ -1325,7 +1325,7 @@ Expected: `week-05-liquidity-pool`.
 - `LiquidityPool` compiles; `pnpm compile` and `pnpm codegen` succeed for all three contracts.
 - All prior tests still pass; the 7 pool TXE tests, the 5 `pool.test.ts` integration tests, and the pool CLI smoke case pass — `21` TXE tests total (7 pool + 10 orderbook + 4 token), `23` integration tests.
 - A first deposit mints `floor(sqrt(a*b))` shares; a proportional deposit mints proportional shares; an off-ratio deposit escrows only the matched amount; `withdraw` returns principal and nullifies the position — all verified on-chain.
-- `zswap deposit` / `withdraw` / `positions` work end-to-end against the dev stack.
+- `quetzal deposit` / `withdraw` / `positions` work end-to-end against the dev stack.
 - `git tag` shows `week-05-liquidity-pool`.
 
 ## Hand-off to Week 5b

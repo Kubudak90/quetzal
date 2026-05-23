@@ -449,7 +449,7 @@ Modify `aggregator/package.json`. Add a `dependencies` block (currently the file
 
 ```json
 {
-  "name": "@zswap/aggregator",
+  "name": "@quetzal/aggregator",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -558,7 +558,7 @@ describe("aggregator/merkle", () => {
 - [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error — `aggregator/src/merkle.ts` doesn't exist yet, so the test file fails to resolve.
@@ -670,7 +670,7 @@ export async function buildFillsTree(fills: JsFillEntry[]): Promise<MerkleTreeOu
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: all six merkle tests PASS. Existing `witness.test.ts` may FAIL — that's expected and is fixed in Task 6.
@@ -756,7 +756,7 @@ describe("aggregator/snapshot", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 ```
 
 Expected: import error — `aggregator/src/snapshot.ts` doesn't exist.
@@ -770,7 +770,7 @@ Create `aggregator/src/snapshot.ts`:
  * Per-epoch snapshot store for the Week 5d-4 settlement Merkle tree.
  *
  * The aggregator writes one JSON file per closed epoch under `<dir>/epoch-<N>.json`;
- * the CLI's `zswap claim` reads it back to construct the inclusion proof.
+ * the CLI's `quetzal claim` reads it back to construct the inclusion proof.
  */
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -876,7 +876,7 @@ export function findEpochForNonce(dir: string, order_nonce_hex: string): number 
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: snapshot tests + merkle tests PASS (existing witness.test.ts still may FAIL — fixed in Task 6).
@@ -976,7 +976,7 @@ describe("buildClearingWitness", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: failures because `buildClearingWitness` doesn't return `fillsRoot`/`maxOrdersPerEpoch` yet and the TOML still emits `fills_len = N` as a top-level public input.
@@ -1147,7 +1147,7 @@ export async function buildClearingWitness(args: {
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -20
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -20
 ```
 
 Expected: all aggregator tests PASS — witness.test.ts new fixture expectations, plus merkle.test.ts and snapshot.test.ts from Tasks 4-5.
@@ -1722,7 +1722,7 @@ reverts. T9b: cancel-after-fill blocked by token-level balance underflow
 
 ---
 
-### Task 10: CLI `zswap claim` rewrite
+### Task 10: CLI `quetzal claim` rewrite
 
 **Files:**
 - Modify: `cli/src/commands/claim.ts`
@@ -1825,7 +1825,7 @@ export function registerClaim(program: Command): void {
 - [ ] **Step 2: Run the CLI typecheck**
 
 ```bash
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -10
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -10
 ```
 
 Expected: clean typecheck. If `parseField` returns something other than `Fr`, the `orderNonce.toString()` and `snap.paths.get(nonceHex)` line may need a minor adjustment — inspect `cli/src/field.ts` if so.
@@ -2102,11 +2102,11 @@ After Task 13 commits:
 
 1. Confirm the full pipeline runs green:
    ```bash
-   pnpm compile && pnpm test:noir && pnpm --filter @zswap/aggregator test && pnpm --filter @zswap/cli typecheck
+   pnpm compile && pnpm test:noir && pnpm --filter @quetzal/aggregator test && pnpm --filter @quetzal/cli typecheck
    ```
 2. With `scripts/dev.sh` running, also confirm:
    ```bash
    pnpm test
    ```
 3. Update `README.md`'s status line to reflect 5d-4 complete + sub-project 1 complete (out of scope for this plan; do as a follow-up commit).
-4. (Deferred — separate session) Re-run `scripts/deploy-and-run-testnet.ts` with the new circuit + `epoch_length=30` to complete the 5d-3 testnet validation gap. Per `memory/project_5d3_testnet_validation.md` the runner is idempotent via `/tmp/testnet-zswap.config.json`.
+4. (Deferred — separate session) Re-run `scripts/deploy-and-run-testnet.ts` with the new circuit + `epoch_length=30` to complete the 5d-3 testnet validation gap. Per `memory/project_5d3_testnet_validation.md` the runner is idempotent via `/tmp/testnet-quetzal.config.json`.

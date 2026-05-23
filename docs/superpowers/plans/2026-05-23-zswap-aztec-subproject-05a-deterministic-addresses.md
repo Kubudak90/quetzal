@@ -25,7 +25,7 @@
 - `scripts/sub5a-fixture.ts` — Prover.toml emitter for the rebuilt circuit (carryover from Sub-4 fixture pattern).
 - `scripts/testnet-sub5a.ts` — NEW. 17-step joint testnet runner.
 - `tests/integration/orderbook.test.ts` — update `submit_order` call sites for the new Orderbook constructor signature (`pool_registry_admin` arg).
-- `cli/src/config.ts` — possibly extend `ZswapConfig` if testnet run requires additional fields.
+- `cli/src/config.ts` — possibly extend `QuetzalConfig` if testnet run requires additional fields.
 - `README.md` — Sub-5a status block update.
 
 **Files created:**
@@ -233,7 +233,7 @@ NOTE: the existing Phase 2 throwaway Treasury and the discarded `orderbookPhase1
 
 - [ ] **Step 3 [Preferred]: Update the variable references downstream**
 
-Find any reference to `orderbookPhase1.contract.address` later in the file (e.g. in `pool.set_orderbook(...)` and the `result` object that gets written to `zswap.config.json`). Replace with `orderbook.contract.address`. Drop the `WARN: orderbook.storage.treasury is the deploy admin (placeholder)` warning — the ceremony is now correct.
+Find any reference to `orderbookPhase1.contract.address` later in the file (e.g. in `pool.set_orderbook(...)` and the `result` object that gets written to `quetzal.config.json`). Replace with `orderbook.contract.address`. Drop the `WARN: orderbook.storage.treasury is the deploy admin (placeholder)` warning — the ceremony is now correct.
 
 #### A2 — Fallback branch (args-DEPENDENT)
 
@@ -1454,7 +1454,7 @@ Create `/Users/huseyinarslan/.claude/projects/-Users-huseyinarslan-Desktop-aztec
 ```markdown
 ---
 name: subproject5a-complete
-description: "Sub-project 5a of ZSwap-on-Aztec — deterministic addresses + Sub-4 carryforward fixes (per-hop nullifier, 1-hop DoS, mutable pool registry) — shipped <YYYY-MM-DD>; first-ever testnet close_epoch_and_clear_verified resolved Sub-1 5d-3 + Sub-2.5 + Sub-3 + Sub-4 dormancy"
+description: "Sub-project 5a of Quetzal — deterministic addresses + Sub-4 carryforward fixes (per-hop nullifier, 1-hop DoS, mutable pool registry) — shipped <YYYY-MM-DD>; first-ever testnet close_epoch_and_clear_verified resolved Sub-1 5d-3 + Sub-2.5 + Sub-3 + Sub-4 dormancy"
 metadata:
   type: project
 ---

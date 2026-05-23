@@ -120,7 +120,7 @@ export function registerBridge(program: Command): void {
       if (usePrivate) {
         console.log(
           "INFO: exit_to_l1_private uses WITHDRAW_PRIVATE_TAG content. After this L2 tx " +
-          "settles to L1, claim via:  pnpm zswap bridge claim-l1 --private --l2-tx <hash> ... " +
+          "settles to L1, claim via:  pnpm quetzal bridge claim-l1 --private --l2-tx <hash> ... " +
           "(or use --relayer-fee here to delegate the L1 step to a bonded aggregator).",
         );
       }
@@ -146,7 +146,7 @@ export function registerBridge(program: Command): void {
         const receipt = await tx.wait();
         const l2TxHash = receipt.txHash.toString();
         console.log(
-          `${fn} submitted; query Outbox proof + claim on L1 via 'zswap bridge claim-l1'`,
+          `${fn} submitted; query Outbox proof + claim on L1 via 'quetzal bridge claim-l1'`,
         );
 
         // Sub-5c D3: optionally queue a Treasury relayer claim so a bonded

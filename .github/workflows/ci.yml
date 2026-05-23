@@ -1,4 +1,4 @@
-# CI Pipeline for ZSwap-on-Aztec
+# CI Pipeline for Quetzal
 #
 # Three jobs:
 #   noir        - compile Noir contracts + run TXE (oracle) tests inside Docker

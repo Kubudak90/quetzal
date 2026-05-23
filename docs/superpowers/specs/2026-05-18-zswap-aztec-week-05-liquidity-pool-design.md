@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 5 — LiquidityPoolContract
+# Quetzal Week 5 — LiquidityPoolContract
 
 **Status:** design
 **Date:** 2026-05-18
@@ -39,9 +39,9 @@ This spec covers 5a only.
   supply, cumulative per-share fee counters).
 - Utility getters: `get_pool_state`, `get_positions`, `get_token_a_addr`,
   `get_token_b_addr`.
-- CLI commands `zswap deposit`, `zswap withdraw`, `zswap positions`.
+- CLI commands `quetzal deposit`, `quetzal withdraw`, `quetzal positions`.
 - `deploy-tokens.ts` also deploys `LiquidityPool` and records it in
-  `zswap.config.json`.
+  `quetzal.config.json`.
 
 ## 2. Non-goals (deferred)
 
@@ -404,22 +404,22 @@ hint, then the contract method.
 
 | Command | Flags | Action |
 |---|---|---|
-| `zswap deposit` | `--amount-a <n>`, `--amount-b <n>` | reads pool state, calls `deposit`; prints the new `position_nonce`. |
-| `zswap withdraw` | `--nonce <field>` | reads pool state, calls `withdraw(position_nonce, hint, 0, 0)`. |
-| `zswap positions` | (none) | calls `get_positions`; prints each position's `nonce`, `lp_share`, fee snapshots. |
+| `quetzal deposit` | `--amount-a <n>`, `--amount-b <n>` | reads pool state, calls `deposit`; prints the new `position_nonce`. |
+| `quetzal withdraw` | `--nonce <field>` | reads pool state, calls `withdraw(position_nonce, hint, 0, 0)`. |
+| `quetzal positions` | (none) | calls `get_positions`; prints each position's `nonce`, `lp_share`, fee snapshots. |
 
 `openCli` (in `cli/src/wallet.ts`) must additionally register the `LiquidityPool`
 contract with the PXE - extend its contract-registration loop with the pool
 address + artifact (the same `node.getContract` + `wallet.registerContract` it
 already does for the orderbook and the two tokens).
 
-`zswap.config.json` gains a `pool` field.
+`quetzal.config.json` gains a `pool` field.
 
 ## 11. deploy-tokens.ts
 
 After deploying the two tokens and the orderbook, also deploy `LiquidityPool`
 (constructor args: the two token addresses) and add `pool: <address>` to the JSON
-written to `zswap.config.json` and printed to stdout.
+written to `quetzal.config.json` and printed to stdout.
 
 ## 12. Test strategy
 
@@ -469,7 +469,7 @@ cli/src/commands/withdraw.ts          +  new
 cli/src/commands/positions.ts         +  new
 cli/src/index.ts                      ~  register the three commands
 cli/src/wallet.ts                     ~  register the LiquidityPool contract with the PXE
-scripts/deploy-tokens.ts              ~  deploy LiquidityPool, add `pool` to zswap.config.json
+scripts/deploy-tokens.ts              ~  deploy LiquidityPool, add `pool` to quetzal.config.json
 tests/integration/pool.test.ts        +  new integration suite
 tests/integration/cli.test.ts         ~  deposit/withdraw/positions smoke case
 README.md                             ~  status line + CLI command list + docs links
@@ -511,7 +511,7 @@ README.md                             ~  status line + CLI command list + docs l
 - A first deposit mints `floor(sqrt(a*b))` shares; a proportional second deposit
   mints proportional shares; an off-ratio deposit escrows only the matched amount;
   `withdraw` returns principal and nullifies the position - all verified on-chain.
-- `zswap deposit` / `withdraw` / `positions` work end-to-end against the dev stack.
+- `quetzal deposit` / `withdraw` / `positions` work end-to-end against the dev stack.
 - `git tag` shows `week-05-liquidity-pool`.
 
 ## 17. Open questions deferred to implementation

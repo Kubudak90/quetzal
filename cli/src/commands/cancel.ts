@@ -9,7 +9,7 @@ export function registerCancel(program: Command): void {
   program
     .command("cancel")
     .description("cancel a resting order and reclaim its escrow")
-    .requiredOption("--nonce <field>", "order-identity nonce (from `zswap order` / `zswap orders`)")
+    .requiredOption("--nonce <field>", "order-identity nonce (from `quetzal order` / `quetzal orders`)")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const orderNonce = parseField(String(opts.nonce));

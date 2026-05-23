@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec — Week 4: Epoch transitions Implementation Plan
+# Quetzal — Week 4: Epoch transitions Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -20,7 +20,7 @@
 | `contracts/orderbook/src/test.nr` | Update `deploy_orderbook` helper + affected tests; add `close_epoch` / guard TXE tests | Modify |
 | `tests/integration/orderbook.test.ts` | Update existing deploys for the new signature; add epoch-transition `describe` block | Modify |
 | `tests/integration/cli.test.ts` | Update deploy for the new signature; add `close-epoch` smoke case | Modify |
-| `cli/src/commands/close-epoch.ts` | `zswap close-epoch` command | Create |
+| `cli/src/commands/close-epoch.ts` | `quetzal close-epoch` command | Create |
 | `cli/src/index.ts` | Register the `close-epoch` command | Modify |
 | `scripts/deploy-tokens.ts` | Pass `epoch_length` (100) to the Orderbook constructor | Modify |
 | `README.md` | Status line + CLI command list | Modify |
@@ -590,7 +590,7 @@ git commit -m "test(orderbook): epoch-transition integration tests"
 
 ---
 
-## Task 4: `zswap close-epoch` CLI command
+## Task 4: `quetzal close-epoch` CLI command
 
 **Dispatch with model: sonnet.**
 
@@ -655,7 +655,7 @@ registerCloseEpoch(program);
 
 - [ ] **Step 3: Typecheck the CLI**
 
-Run: `pnpm --filter @zswap/cli typecheck`
+Run: `pnpm --filter @quetzal/cli typecheck`
 Expected: no errors.
 
 - [ ] **Step 4: Add a `close-epoch` case to the CLI smoke test**
@@ -685,7 +685,7 @@ Add this test case inside the `describe("cli smoke (live integration)", ...)` bl
     await mineUntilBlock(Number(before.result.closes_at_block));
 
     const out = zswap("close-epoch");
-    assert.match(out, /epoch advanced/i, "`zswap close-epoch` should confirm the advance");
+    assert.match(out, /epoch advanced/i, "`quetzal close-epoch` should confirm the advance");
 
     const after = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
       result: { epoch_id: bigint };
@@ -707,7 +707,7 @@ Stop the dev stack: `bash scripts/dev.sh --down`.
 
 ```bash
 git add cli/src/commands/close-epoch.ts cli/src/index.ts tests/integration/cli.test.ts
-git commit -m "feat(cli): zswap close-epoch command"
+git commit -m "feat(cli): quetzal close-epoch command"
 ```
 
 ---
@@ -722,7 +722,7 @@ git commit -m "feat(cli): zswap close-epoch command"
 - [ ] **Step 1: Clean rebuild from scratch**
 
 ```bash
-rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json zswap.config.json
+rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json quetzal.config.json
 pnpm install
 pnpm compile
 pnpm codegen
@@ -745,7 +745,7 @@ pnpm tsx scripts/deploy-tokens.ts
 
 Expected:
 - `pnpm test`: `pass 17`, `fail 0`.
-- `deploy-tokens.ts`: prints JSON with `nodeUrl`/`tUSDC`/`tETH`/`orderbook`/`admin`; `zswap.config.json` is written.
+- `deploy-tokens.ts`: prints JSON with `nodeUrl`/`tUSDC`/`tETH`/`orderbook`/`admin`; `quetzal.config.json` is written.
 
 Stop the dev stack: `bash scripts/dev.sh --down`.
 
@@ -760,7 +760,7 @@ In `README.md`, replace the `**Status:**` line with:
 In the `## Quickstart` CLI block, add the `close-epoch` command after the `cancel` line:
 
 ```
-pnpm --filter @zswap/cli zswap close-epoch
+pnpm --filter @quetzal/cli quetzal close-epoch
 ```
 
 In the `## Documentation` section, add:
@@ -788,7 +788,7 @@ Expected: `week-04-epoch-transitions`.
 - `close_epoch`, the new constructor, and the expiry guard compile; `pnpm compile` and `pnpm codegen` succeed.
 - All prior tests still pass (updated for the constructor change); the 2 new `close_epoch` TXE tests and the 4 new integration epoch-transition tests and the CLI `close-epoch` case pass — `10` TXE orderbook tests, `17` integration tests total.
 - An epoch deployed with `epoch_length = E` advances via `close_epoch` only after `block >= closes_at_block`, and `submit_order` is blocked in the expired-but-not-closed window — both verified on-chain.
-- `zswap close-epoch` advances the epoch end-to-end against the dev stack.
+- `quetzal close-epoch` advances the epoch end-to-end against the dev stack.
 - `git tag` shows `week-04-epoch-transitions`.
 
 ## Hand-off to Week 5+

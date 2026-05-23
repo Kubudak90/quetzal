@@ -2,7 +2,7 @@
 
 **Status:** Design
 **Date:** 2026-05-23
-**Parent project:** [ZSwap-on-Aztec](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (split into 5a / 5b / 5c)
+**Parent project:** [Quetzal](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (split into 5a / 5b / 5c)
 **Predecessor specs:**
 - [Sub-3 Permissionless Aggregator](2026-05-22-zswap-aztec-subproject-03-dar-permissionless-aggregator-design.md) — introduced the 4-deploy circular-dep wart
 - [Sub-2.5 Circuit Integration](2026-05-22-zswap-aztec-subproject-02-5-circuit-integration-design.md) — `close_epoch_and_clear_verified` blocked on testnet by the wart

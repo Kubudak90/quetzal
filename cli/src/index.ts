@@ -14,9 +14,9 @@ import { registerBridge } from "./commands/bridge.js";
 
 const program = new Command();
 program
-  .name("zswap")
-  .description("ZSwap-on-Aztec CLI — submit, list, and cancel private orders")
-  .option("-c, --config <path>", "path to zswap.config.json", "zswap.config.json")
+  .name("quetzal")
+  .description("Quetzal CLI — submit, list, and cancel private orders")
+  .option("-c, --config <path>", "path to quetzal.config.json", "quetzal.config.json")
   .option("-a, --account <index>", "test account index to act as", "0");
 
 registerOrder(program);

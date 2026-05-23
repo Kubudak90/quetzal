@@ -1,7 +1,7 @@
 {
-  "title": "ZSwap Aggregator Competition",
-  "uid": "zswap-aggregator-comp",
-  "tags": ["zswap", "aggregator"],
+  "title": "Quetzal Aggregator Competition",
+  "uid": "quetzal-aggregator-comp",
+  "tags": ["quetzal", "aggregator"],
   "schemaVersion": 38,
   "version": 1,
   "refresh": "60s",
@@ -9,7 +9,7 @@
     {
       "id": 1, "type": "timeseries", "title": "Aggregator Registry Size (24h)",
       "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
-      "targets": [{"expr": "zswap_l2_aggregator_registry_size", "refId": "A"}]
+      "targets": [{"expr": "quetzal_l2_aggregator_registry_size", "refId": "A"}]
     }
   ]
 }

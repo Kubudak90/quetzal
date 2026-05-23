@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec — Week 5c: On-chain trusted clearing Implementation Plan
+# Quetzal — Week 5c: On-chain trusted clearing Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -23,8 +23,8 @@
 | `contracts/orderbook/src/test.nr` | update the deploy helper; clearing / claim TXE tests | Modify |
 | `tests/integration/clearing.test.ts` | the full close_epoch_and_clear → claim round trip | Create |
 | `tests/integration/orderbook.test.ts` | update Orderbook deploys for the new constructor | Modify |
-| `tests/integration/cli.test.ts` | update deploys; `zswap claim` smoke case | Modify |
-| `cli/src/commands/claim.ts` | `zswap claim` | Create |
+| `tests/integration/cli.test.ts` | update deploys; `quetzal claim` smoke case | Modify |
+| `cli/src/commands/claim.ts` | `quetzal claim` | Create |
 | `cli/src/index.ts` | register `claim` | Modify |
 | `scripts/deploy-tokens.ts` | new deploy order + Orderbook constructor args + `set_orderbook` | Modify |
 | `README.md` | status line + CLI list + docs links | Modify |
@@ -430,7 +430,7 @@ args, and call `set_orderbook` afterward. The deploy section becomes:
 ```
 
 Keep the `result` object writing all of `nodeUrl`, `tUSDC`, `tETH`, `orderbook`,
-`pool`, `admin` to `zswap.config.json` (the `pool` field already exists as of
+`pool`, `admin` to `quetzal.config.json` (the `pool` field already exists as of
 Week 5).
 
 - [ ] **Step 9: Compile, codegen, run TXE tests**
@@ -964,7 +964,7 @@ git commit -m "test(clearing): end-to-end close_epoch_and_clear + claim round tr
 
 ---
 
-## Task 6: CLI `zswap claim`
+## Task 6: CLI `quetzal claim`
 
 **Dispatch with model: sonnet.**
 
@@ -1020,7 +1020,7 @@ existing `register*` calls.
 
 - [ ] **Step 3: Typecheck**
 
-Run: `pnpm --filter @zswap/cli typecheck`
+Run: `pnpm --filter @quetzal/cli typecheck`
 Expected: no errors.
 
 - [ ] **Step 4: `tests/integration/cli.test.ts` — add a `claim` smoke case**
@@ -1028,7 +1028,7 @@ Expected: no errors.
 The CLI smoke test already deploys the wired contracts (Task 2 updated its
 deploys). Add a test case that submits a crossing pair of orders as two CLI/wallet
 actions, drives `close_epoch_and_clear` directly via the contract (the authority
-is the smoke test's `admin`), then runs `zswap claim` for a filled order and
+is the smoke test's `admin`), then runs `quetzal claim` for a filled order and
 asserts the stdout reports a non-zero claimed amount. Reuse the
 `buildClearingSwap` approach from `clearing.test.ts` (extract it to a shared
 helper under `tests/integration/helpers/` if convenient, or duplicate the small
@@ -1045,7 +1045,7 @@ Stop the dev stack.
 
 ```bash
 git add cli/src/commands/claim.ts cli/src/index.ts tests/integration/cli.test.ts
-git commit -m "feat(cli): zswap claim command"
+git commit -m "feat(cli): quetzal claim command"
 ```
 
 ---
@@ -1059,7 +1059,7 @@ git commit -m "feat(cli): zswap claim command"
 - [ ] **Step 1: Clean rebuild**
 
 ```bash
-rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules aggregator/node_modules codegenCache.json zswap.config.json
+rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules aggregator/node_modules codegenCache.json quetzal.config.json
 pnpm install
 pnpm compile
 pnpm codegen
@@ -1080,7 +1080,7 @@ pnpm tsx scripts/deploy-tokens.ts
 
 Expected: `pnpm test` — the aggregator unit tests + every integration suite pass,
 `fail 0`. `deploy-tokens.ts` prints JSON with `nodeUrl`/`tUSDC`/`tETH`/`orderbook`/`pool`/`admin`
-and writes `zswap.config.json`.
+and writes `quetzal.config.json`.
 
 Stop the dev stack: `bash scripts/dev.sh --down`.
 
@@ -1095,7 +1095,7 @@ Replace the `**Status:**` line with:
 Add to the `## Quickstart` CLI block, after the `cancel` line:
 
 ```
-pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
+pnpm --filter @quetzal/cli quetzal claim --nonce <order-nonce>
 ```
 
 Add to `## Documentation`:
@@ -1128,7 +1128,7 @@ Expected: `week-05c-onchain-clearing`.
 - End-to-end on the dev stack: a crossing epoch is cleared by the authority, the
   pool reserves + `cum_fee_*` move as the aggregator computed, filled makers
   `claim_fill` and receive their output privately, a re-claim fails.
-- `zswap claim` works against the dev stack.
+- `quetzal claim` works against the dev stack.
 - `git tag` shows `week-05c-onchain-clearing`.
 
 ## Hand-off to Week 5d

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close every remaining code-blocking gap for mainnet open + ship the production ops stack. After Sub-5c lands, ZSwap is mainnet-ready in `$10k` cap mode pending only the external audit.
+**Goal:** Close every remaining code-blocking gap for mainnet open + ship the production ops stack. After Sub-5c lands, Quetzal is mainnet-ready in `$10k` cap mode pending only the external audit.
 
-**Architecture:** Three buckets. (A) Bridge completion: refactor `TokenBridge.sol` from `Ownable` to OZ `AccessControl` with separate `GOVERNANCE_ROLE` (7d timelock) + `EMERGENCY_PAUSER_ROLE` (0d timelock); ship a standalone TS subprocess binary `bin/zswap-outbox-proof` for L2→L1 sibling-path construction (audit-isolated under `tools/outbox-proof/`); automate `scripts/deploy-bridge.ts` end-to-end via a shared `aztec-wallet-bootstrap.ts` helper + forge broadcast log parsing. (B) Bridge expansion: add wBTC as third asset (parametric — deploy script + CLI alias only); add 3-phase `recoverDeposit` flow with 90-day time-lock + governance approval; add `withdrawPrivate` sibling function for `WITHDRAW_PRIVATE_TAG` consumption. (C) Ops infra: VPS-hosted Prometheus + Grafana + Alertmanager with custom L1+L2 exporters; opt-in relayer extending Sub-3's aggregator daemon with Treasury fee economy; audit-prep materials (AUDIT.md + Slither report + commit-freeze tag); on-call playbook + sub5c-runbook upgrade.
+**Architecture:** Three buckets. (A) Bridge completion: refactor `TokenBridge.sol` from `Ownable` to OZ `AccessControl` with separate `GOVERNANCE_ROLE` (7d timelock) + `EMERGENCY_PAUSER_ROLE` (0d timelock); ship a standalone TS subprocess binary `bin/quetzal-outbox-proof` for L2→L1 sibling-path construction (audit-isolated under `tools/outbox-proof/`); automate `scripts/deploy-bridge.ts` end-to-end via a shared `aztec-wallet-bootstrap.ts` helper + forge broadcast log parsing. (B) Bridge expansion: add wBTC as third asset (parametric — deploy script + CLI alias only); add 3-phase `recoverDeposit` flow with 90-day time-lock + governance approval; add `withdrawPrivate` sibling function for `WITHDRAW_PRIVATE_TAG` consumption. (C) Ops infra: VPS-hosted Prometheus + Grafana + Alertmanager with custom L1+L2 exporters; opt-in relayer extending Sub-3's aggregator daemon with Treasury fee economy; audit-prep materials (AUDIT.md + Slither report + commit-freeze tag); on-call playbook + sub5c-runbook upgrade.
 
 **Tech Stack:** Solidity 0.8.27 + Foundry + OZ contracts-upgradeable v5.0.2 (`AccessControl`, `Pausable`, `UUPSUpgradeable`). Noir 1.0.0-beta.19 + aztec-nr 4.2.0. TypeScript + esbuild + @aztec/aztec.js. Prometheus + Grafana + Alertmanager (Docker Compose on VPS `194.163.136.1`). Slither static analysis.
 
@@ -21,7 +21,7 @@ tools/outbox-proof/                              ← NEW: audit-isolated subproc
 ├── src/
 │   ├── main.ts                                  ← CLI entry: parse argv, output JSON
 │   └── build-proof.ts                           ← core: getL2ToL1Messages → tree → path
-├── build.mjs                                    ← esbuild → dist/zswap-outbox-proof.mjs
+├── build.mjs                                    ← esbuild → dist/quetzal-outbox-proof.mjs
 └── test/build-proof.test.ts                     ← unit tests
 
 tools/exporters/                                 ← NEW: Prometheus exporters
@@ -70,7 +70,7 @@ docs/superpowers/specs/sub5c-runbook.md          ← Sub-5b runbook extended (re
 - `scripts/deploy-bridge.ts` — full automation via `aztec-wallet-bootstrap.ts` + forge broadcast log parsing + wBTC + emergency timelock.
 - `scripts/testnet-m1-hello.ts` — refactored to call `aztec-wallet-bootstrap.ts` (DRY).
 - `scripts/testnet-sub5b-bridge.ts` — step 3 delegates to `aztec-wallet-bootstrap.ts`.
-- `zswap.config.json` — gains `l1.governanceTimelock` + `l1.emergencyTimelock` + `l1.wbtc` + `l1.wbtcBridge` + `tBTC`.
+- `quetzal.config.json` — gains `l1.governanceTimelock` + `l1.emergencyTimelock` + `l1.wbtc` + `l1.wbtcBridge` + `tBTC`.
 - `README.md` — Sub-5c CODE-COMPLETE block.
 
 ---
@@ -268,7 +268,7 @@ git add contracts-l1/test/TokenBridge.t.sol contracts-l1/test/BridgeFlow.t.sol
 git commit -m "test(sub5c): A2 adapt TokenBridge + BridgeFlow tests for 2-timelock topology"
 ```
 
-### Task A3: Standalone TS subprocess binary `bin/zswap-outbox-proof`
+### Task A3: Standalone TS subprocess binary `bin/quetzal-outbox-proof`
 
 **Files:**
 - Create: `tools/outbox-proof/package.json`
@@ -296,12 +296,12 @@ Create `tools/outbox-proof/package.json`:
 
 ```json
 {
-  "name": "@zswap/outbox-proof",
+  "name": "@quetzal/outbox-proof",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "zswap-outbox-proof": "./dist/zswap-outbox-proof.mjs"
+    "quetzal-outbox-proof": "./dist/quetzal-outbox-proof.mjs"
   },
   "scripts": {
     "build": "node build.mjs",
@@ -460,14 +460,14 @@ import { build } from "esbuild";
 
 await build({
   entryPoints: ["src/main.ts"],
-  outfile: "dist/zswap-outbox-proof.mjs",
+  outfile: "dist/quetzal-outbox-proof.mjs",
   bundle: true,
   platform: "node",
   target: "node22",
   format: "esm",
   banner: { js: "#!/usr/bin/env node\nimport { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
 });
-console.log("Built dist/zswap-outbox-proof.mjs");
+console.log("Built dist/quetzal-outbox-proof.mjs");
 ```
 
 - [ ] **Step 7: Write minimal unit test**
@@ -513,8 +513,8 @@ import { spawn } from "node:child_process";
 export async function buildOutboxProof(
   nodeUrl: string, l2TxHash: string, expectedContent: string,
 ): Promise<OutboxProof> {
-  const binPath = process.env.ZSWAP_OUTBOX_PROOF_BIN ??
-    `${process.cwd()}/tools/outbox-proof/dist/zswap-outbox-proof.mjs`;
+  const binPath = process.env.QUETZAL_OUTBOX_PROOF_BIN ??
+    `${process.cwd()}/tools/outbox-proof/dist/quetzal-outbox-proof.mjs`;
   return new Promise((resolve, reject) => {
     const child = spawn("node", [binPath,
       "--node-url", nodeUrl,
@@ -526,7 +526,7 @@ export async function buildOutboxProof(
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     child.on("exit", (code) => {
-      if (code !== 0) return reject(new Error(`zswap-outbox-proof exited ${code}: ${stderr}`));
+      if (code !== 0) return reject(new Error(`quetzal-outbox-proof exited ${code}: ${stderr}`));
       resolve(JSON.parse(stdout) as OutboxProof);
     });
   });
@@ -546,7 +546,7 @@ Expected: 0 errors.
 
 ```
 git add tools/outbox-proof/ cli/src/bridge-helpers.ts
-git commit -m "feat(sub5c): A3 zswap-outbox-proof subprocess binary + CLI rewire"
+git commit -m "feat(sub5c): A3 quetzal-outbox-proof subprocess binary + CLI rewire"
 ```
 
 ### Task A4: deploy-bridge.ts automation — shared wallet bootstrap + log parsing
@@ -766,7 +766,7 @@ async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBr
 ```
 
 - Update `wirePortalL2Token` calls in `main()` to wire all 3 portals.
-- Update `zswap.config.json` write block to include `l1.wbtc`, `l1.wbtcBridge`, `l1.emergencyTimelock`, `tBTC`.
+- Update `quetzal.config.json` write block to include `l1.wbtc`, `l1.wbtcBridge`, `l1.emergencyTimelock`, `tBTC`.
 
 - [ ] **Step 5: Update testnet-sub5b-bridge.ts step 3 to delegate**
 
@@ -1170,7 +1170,7 @@ Create `tools/exporters/package.json`:
 
 ```json
 {
-  "name": "@zswap/exporters",
+  "name": "@quetzal/exporters",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -1229,7 +1229,7 @@ import { setupRegistry, startServer } from "./shared/promClient.js";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 9100);
-const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "zswap.config.json";
+const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "quetzal.config.json";
 const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as {
   l1: { rpcUrl: string; usdcBridge: string; wethBridge: string; wbtcBridge?: string };
 };
@@ -1244,10 +1244,10 @@ const TOKEN_BRIDGE_ABI = [
 ] as const;
 
 const reg = setupRegistry();
-const totalLockedG = new Gauge({ name: "zswap_bridge_total_locked", help: "token amount", labelNames: ["token"], registers: [reg] });
-const maxTvlG      = new Gauge({ name: "zswap_bridge_max_tvl",      help: "cap",          labelNames: ["token"], registers: [reg] });
-const tvlUtilG     = new Gauge({ name: "zswap_bridge_tvl_utilization", help: "ratio",     labelNames: ["token"], registers: [reg] });
-const pausedG      = new Gauge({ name: "zswap_bridge_paused",       help: "0/1",         labelNames: ["token"], registers: [reg] });
+const totalLockedG = new Gauge({ name: "quetzal_bridge_total_locked", help: "token amount", labelNames: ["token"], registers: [reg] });
+const maxTvlG      = new Gauge({ name: "quetzal_bridge_max_tvl",      help: "cap",          labelNames: ["token"], registers: [reg] });
+const tvlUtilG     = new Gauge({ name: "quetzal_bridge_tvl_utilization", help: "ratio",     labelNames: ["token"], registers: [reg] });
+const pausedG      = new Gauge({ name: "quetzal_bridge_paused",       help: "0/1",         labelNames: ["token"], registers: [reg] });
 
 async function scrape(): Promise<void> {
   for (const [label, addr] of [
@@ -1301,7 +1301,7 @@ import { setupRegistry, startServer } from "./shared/promClient.js";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 9101);
-const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "zswap.config.json";
+const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "quetzal.config.json";
 const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as {
   nodeUrl: string;
   treasury?: string;
@@ -1311,10 +1311,10 @@ const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as {
 };
 
 const reg = setupRegistry();
-const lastClearingG = new Gauge({ name: "zswap_l2_orderbook_last_clearing_timestamp", help: "unix sec", registers: [reg] });
-const treasuryBalanceG = new Gauge({ name: "zswap_l2_treasury_balance", help: "u128", labelNames: ["token"], registers: [reg] });
-const registrySizeG = new Gauge({ name: "zswap_l2_aggregator_registry_size", help: "count", registers: [reg] });
-const poolReserveG = new Gauge({ name: "zswap_l2_pool_reserve", help: "u128", labelNames: ["pool_id", "token"], registers: [reg] });
+const lastClearingG = new Gauge({ name: "quetzal_l2_orderbook_last_clearing_timestamp", help: "unix sec", registers: [reg] });
+const treasuryBalanceG = new Gauge({ name: "quetzal_l2_treasury_balance", help: "u128", labelNames: ["token"], registers: [reg] });
+const registrySizeG = new Gauge({ name: "quetzal_l2_aggregator_registry_size", help: "count", registers: [reg] });
+const poolReserveG = new Gauge({ name: "quetzal_l2_pool_reserve", help: "u128", labelNames: ["pool_id", "token"], registers: [reg] });
 
 async function scrape(): Promise<void> {
   const node = createAztecNodeClient(cfg.nodeUrl);
@@ -1371,13 +1371,13 @@ version: "3.9"
 services:
   l1-exporter:
     build: { context: ., dockerfile: Dockerfile.exporter, args: { TARGET: l1 } }
-    environment: { ZSWAP_CONFIG: /config/zswap.config.json, PORT: "9100" }
-    volumes: [ "../../zswap.config.json:/config/zswap.config.json:ro" ]
+    environment: { ZSWAP_CONFIG: /config/quetzal.config.json, PORT: "9100" }
+    volumes: [ "../../quetzal.config.json:/config/quetzal.config.json:ro" ]
     ports: [ "9100:9100" ]
   l2-exporter:
     build: { context: ., dockerfile: Dockerfile.exporter, args: { TARGET: l2 } }
-    environment: { ZSWAP_CONFIG: /config/zswap.config.json, PORT: "9101" }
-    volumes: [ "../../zswap.config.json:/config/zswap.config.json:ro" ]
+    environment: { ZSWAP_CONFIG: /config/quetzal.config.json, PORT: "9101" }
+    volumes: [ "../../quetzal.config.json:/config/quetzal.config.json:ro" ]
     ports: [ "9101:9101" ]
   prometheus:
     image: prom/prometheus:v2.50.0
@@ -1441,25 +1441,25 @@ groups:
 - name: zswap-bridge
   rules:
   - alert: BridgePaused
-    expr: zswap_bridge_paused > 0
+    expr: quetzal_bridge_paused > 0
     for: 1m
     labels: { severity: page }
     annotations: { summary: "Bridge paused — emergency intervention required" }
 
   - alert: BridgeTvlNearCap
-    expr: zswap_bridge_tvl_utilization > 0.9
+    expr: quetzal_bridge_tvl_utilization > 0.9
     for: 5m
     labels: { severity: warn }
     annotations: { summary: "Bridge {{ $labels.token }} TVL above 90% of cap" }
 
   - alert: OrderbookStalled
-    expr: time() - zswap_l2_orderbook_last_clearing_timestamp > 3600
+    expr: time() - quetzal_l2_orderbook_last_clearing_timestamp > 3600
     for: 10m
     labels: { severity: page }
     annotations: { summary: "Orderbook >1h without a clearing — aggregator down?" }
 
   - alert: OutboxBacklog
-    expr: zswap_bridge_outbox_unconsumed_messages > 50
+    expr: quetzal_bridge_outbox_unconsumed_messages > 50
     for: 30m
     labels: { severity: warn }
     annotations: { summary: "L2→L1 Outbox backlog — relayer down or makers can't withdraw" }
@@ -1482,12 +1482,12 @@ receivers:
   - name: default
     slack_configs:
       - api_url: "${SLACK_WEBHOOK_URL}"
-        channel: "#zswap-ops"
+        channel: "#quetzal-ops"
         send_resolved: true
   - name: slack
     slack_configs:
       - api_url: "${SLACK_WEBHOOK_URL}"
-        channel: "#zswap-ops"
+        channel: "#quetzal-ops"
         send_resolved: true
   - name: pagerduty
     pagerduty_configs:
@@ -1501,15 +1501,15 @@ Each is a JSON file with a minimal dashboard structure; populate panels later. E
 
 ```json
 {
-  "title": "ZSwap Bridge Health",
+  "title": "Quetzal Bridge Health",
   "uid": "zswap-bridge-health",
   "panels": [
     { "id": 1, "type": "stat", "title": "Total Locked (USDC)",
-      "targets": [{ "expr": "zswap_bridge_total_locked{token=\"USDC\"}" }] },
+      "targets": [{ "expr": "quetzal_bridge_total_locked{token=\"USDC\"}" }] },
     { "id": 2, "type": "stat", "title": "TVL Utilization (USDC)",
-      "targets": [{ "expr": "zswap_bridge_tvl_utilization{token=\"USDC\"}" }] },
+      "targets": [{ "expr": "quetzal_bridge_tvl_utilization{token=\"USDC\"}" }] },
     { "id": 3, "type": "stat", "title": "Paused?",
-      "targets": [{ "expr": "max(zswap_bridge_paused)" }] }
+      "targets": [{ "expr": "max(quetzal_bridge_paused)" }] }
   ],
   "schemaVersion": 38, "version": 1
 }
@@ -1530,7 +1530,7 @@ git commit -m "feat(sub5c): C3 docker-compose Prometheus + Grafana + Alertmanage
 Document in sub5c-runbook.md (F2):
 ```
 ssh root@194.163.136.1
-mkdir -p /root/zswap-ops && cd /root/zswap-ops
+mkdir -p /root/quetzal-ops && cd /root/quetzal-ops
 git clone <repo> .
 cd tools/exporters
 export SLACK_WEBHOOK_URL=... PAGERDUTY_ROUTING_KEY=... GRAFANA_ADMIN_PASSWORD=...
@@ -1977,7 +1977,7 @@ Use the full template from Section 5 of the spec. Sections:
 - Severity classification table (SEV1-4 with response times + channels)
 - Escalation tree
 - Runbooks (linked per alert)
-- Rotation (PagerDuty "zswap-oncall" schedule, weekly handoff, hand-off ritual)
+- Rotation (PagerDuty "quetzal-oncall" schedule, weekly handoff, hand-off ritual)
 - Post-mortem template (docs/post-mortems/YYYY-MM-DD-<incident>.md)
 
 - [ ] **Step 2: Commit**
@@ -2011,7 +2011,7 @@ Edit `docs/superpowers/specs/sub5c-runbook.md`:
 - Add NEW section "withdrawPrivate / exit_to_l1_private": explain when to use private exit (privacy-maximalist makers), CLI flag, L1 cast send template (uses `withdrawPrivate` function selector)
 - Add NEW section "wBTC adding-an-asset playbook" (template for future asset additions)
 - Add NEW section "Monitoring setup": full VPS docker compose instructions (from Phase C step 7)
-- Add NEW section "Relayer setup": how to enable RELAYER_MODE on an aggregator daemon, fee tuning, queue inspection (`zswap aggregator inspect-relayer-queue` if added)
+- Add NEW section "Relayer setup": how to enable RELAYER_MODE on an aggregator daemon, fee tuning, queue inspection (`quetzal aggregator inspect-relayer-queue` if added)
 - Update "Cap ramp policy" to include wBTC row
 - Refine "Incident response": expand to SEV1-4 step-by-steps cross-linking on-call-playbook.md
 
@@ -2051,7 +2051,7 @@ After the existing Sub-5b CODE-COMPLETE block in README.md, add:
 **Sub-5c CODE-COMPLETE (2026-MM-DD):** Production infrastructure — final Sub-5 split.
 TokenBridge.sol Ownable→AccessControl refactor with `GOVERNANCE_ROLE` (7d timelock) +
 `EMERGENCY_PAUSER_ROLE` (0d timelock); 2-of-3 emergency multisig can pause in <2min.
-Standalone TS subprocess binary `bin/zswap-outbox-proof` (audit-isolated under
+Standalone TS subprocess binary `bin/quetzal-outbox-proof` (audit-isolated under
 `tools/outbox-proof/`) constructs L2→L1 siblingPath via `@aztec/merkle-tree`.
 `scripts/deploy-bridge.ts` fully automated end-to-end via shared
 `scripts/lib/aztec-wallet-bootstrap.ts` (DRY with testnet-m1-hello + testnet-sub5b-bridge)
@@ -2065,7 +2065,7 @@ Slither report + commit-freeze git tag `sub5c-audit-snapshot`. `docs/on-call-pla
 SEV1-4 classification + escalation tree. `docs/superpowers/specs/sub5c-runbook.md`
 extends Sub-5b runbook with Sub-5c sections. L1 test scoreboard: 23 Foundry tests
 pass (16 unit + 5 BridgeFlow + 2 withdrawPrivate); +5 recovery flow tests in
-TokenBridge.t.sol; +3 Treasury TXE tests. **ZSwap is now mainnet-ready in $10k cap
+TokenBridge.t.sol; +3 Treasury TXE tests. **Quetzal is now mainnet-ready in $10k cap
 mode pending only the external audit.** Sub-5d (post-audit fixes) + Sub-6 (privacy
 mitigations) remain.
 ```

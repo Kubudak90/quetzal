@@ -1,8 +1,8 @@
-# ZSwap-on-Aztec
+# Quetzal
 
 MEV-resistant dark-pool DEX on Aztec Network. Penumbra-style frequent batch auction with native private state, built in Noir.
 
-**Status:** Sub-project 2 (concentrated liquidity, LP-side complete; circuit integration deferred to Sub-2.5). The LiquidityPool is now a 16-bucket concentrated AMM with geometric 1.5x spacing — `PoolState` collapses to (reserve_a, reserve_b, current_sqrt_price); per-bucket state lives in `Map<u32, PublicMutable<BucketState>>` (reserve_a, reserve_b, liquidity, cum_fee_a/b_per_share). `PositionNote` gains `bucket_id` (private). New `deposit(bucket_id, amount_a, amount_b, ...)` uses V3 math + Sub-1's V2 refund pattern (LP-friendly: surplus side returned privately). New `withdraw` carries per-bucket fee accrual via `cum_fee_per_share` MasterChef counters. `apply_clearing(swap)` iterates `BucketDelta[4]` sparse encoding (max 4 active buckets per clearing). V3 math primitives (`compute_deposit_in_range/_below_range/_above_range`, `max_a_in_to_upper`, `max_b_in_to_lower`) implemented three ways with parity tests: circuit (`circuits/clearing/src/buckets.nr`), pool contract (`contracts/pool/src/buckets.nr`), aggregator (`aggregator/src/buckets.ts`). Orderbook's `ClearingPublic` grew 19→42 fields with `BucketDelta[4]` sparse encoding; `flatten_clearing_public` rewritten. CLI: `zswap deposit --bucket <id> [--auto-b]` + bucket-aware `withdraw` + enriched `positions` (shows bucket_id + in-range status). Deploy script writes `bucketPMinSqrt` + `bucketGrowthNum` to zswap.config.json. Test status: all TXE (clearing circuit B1-B5, pool V3 math, orderbook 42-field flatten) + JS aggregator (71 tests including bucket-trace) + CLI typecheck green. **Deferred to Sub-2.5:** circuit's 42-field public-input shape rewrite + per-bucket constant-product assertions + multi-bucket V3 swap-step formula + bb prove against new circuit. With those deferred, end-to-end clearing path is dormant; the LP-side (deposit/withdraw/positions) works standalone. Sub-1 + Sub-3 trust model + Sub-3 deferred-to-e2e items still apply. Next: Sub-2.5 (circuit integration) or sub-project 4 (multi-pair routing).
+**Status:** Sub-project 2 (concentrated liquidity, LP-side complete; circuit integration deferred to Sub-2.5). The LiquidityPool is now a 16-bucket concentrated AMM with geometric 1.5x spacing — `PoolState` collapses to (reserve_a, reserve_b, current_sqrt_price); per-bucket state lives in `Map<u32, PublicMutable<BucketState>>` (reserve_a, reserve_b, liquidity, cum_fee_a/b_per_share). `PositionNote` gains `bucket_id` (private). New `deposit(bucket_id, amount_a, amount_b, ...)` uses V3 math + Sub-1's V2 refund pattern (LP-friendly: surplus side returned privately). New `withdraw` carries per-bucket fee accrual via `cum_fee_per_share` MasterChef counters. `apply_clearing(swap)` iterates `BucketDelta[4]` sparse encoding (max 4 active buckets per clearing). V3 math primitives (`compute_deposit_in_range/_below_range/_above_range`, `max_a_in_to_upper`, `max_b_in_to_lower`) implemented three ways with parity tests: circuit (`circuits/clearing/src/buckets.nr`), pool contract (`contracts/pool/src/buckets.nr`), aggregator (`aggregator/src/buckets.ts`). Orderbook's `ClearingPublic` grew 19→42 fields with `BucketDelta[4]` sparse encoding; `flatten_clearing_public` rewritten. CLI: `quetzal deposit --bucket <id> [--auto-b]` + bucket-aware `withdraw` + enriched `positions` (shows bucket_id + in-range status). Deploy script writes `bucketPMinSqrt` + `bucketGrowthNum` to quetzal.config.json. Test status: all TXE (clearing circuit B1-B5, pool V3 math, orderbook 42-field flatten) + JS aggregator (71 tests including bucket-trace) + CLI typecheck green. **Deferred to Sub-2.5:** circuit's 42-field public-input shape rewrite + per-bucket constant-product assertions + multi-bucket V3 swap-step formula + bb prove against new circuit. With those deferred, end-to-end clearing path is dormant; the LP-side (deposit/withdraw/positions) works standalone. Sub-1 + Sub-3 trust model + Sub-3 deferred-to-e2e items still apply. Next: Sub-2.5 (circuit integration) or sub-project 4 (multi-pair routing).
 
 **Sub-2.5 CODE-COMPLETE (2026-05-22):** 15 tasks across 6 phases (A-F) delivered. The circuit's `fn main` emits 42 public fields matching the orderbook's `flatten_clearing_public`; the aggregator's `traceBucketSwap` is a true multi-bucket state machine (UP + DOWN, empty-bucket skip, MAX_BUCKET_HOPS=4, last-bucket-residual fee); the witness builder rewritten for Sub-2.5 42-field public layout; bb prove passes (500-field proof, 115-field VK, EMPTY_ROOT unchanged, new vk_hash `0e634a5b7cb463a6...`, gate count 107,762). Test scoreboard: 52 Noir TXE tests + 86+ JS aggregator tests passing. Joint testnet runner scaffolded at `scripts/testnet-sub2-5.ts` (9-step state machine + AZTEC_NODE_URL safety check); **testnet execution deferred to a future session when an Aztec testnet endpoint is configured.**
 
@@ -37,7 +37,7 @@ functions (`claim_public`, `claim_private`, `exit_to_l1_public`,
 hash unified on `sha256_to_field(abi.encode(...))` (Aztec convention; matches
 the canonical `Hash.sha256ToField` from upstream `@aztec/l1-artifacts`).
 `exit_to_l1_private` has no L1 consumer yet — Sub-5c follow-up. CLI:
-`zswap bridge {claim, exit, claim-l1}` subcommands; bridge-helpers.ts wires
+`quetzal bridge {claim, exit, claim-l1}` subcommands; bridge-helpers.ts wires
 `getTxEffect` + `getL2ToL1Messages` for the L2→L1 lookup half (siblingPath
 construction deferred to Sub-5c — operator completes proof manually via the
 upstream portal_manager.js reference). L1 test scoreboard: **21 Foundry tests
@@ -56,7 +56,7 @@ Closes every Sub-5b carryforward + ships the production ops stack.
 TokenBridge.sol refactored from `Ownable` to `AccessControl` with `GOVERNANCE_ROLE`
 (7-day governance timelock) + `EMERGENCY_PAUSER_ROLE` (0-day emergency timelock,
 self-admin invariant — governance cannot revoke). Standalone TS subprocess binary
-`bin/zswap-outbox-proof` (audit-isolated under `tools/outbox-proof/`) constructs
+`bin/quetzal-outbox-proof` (audit-isolated under `tools/outbox-proof/`) constructs
 L2→L1 sibling paths via canonical `computeL2ToL1MembershipWitness` from
 `@aztec/stdlib/messaging`. `scripts/deploy-bridge.ts` end-to-end automated via
 shared `scripts/lib/aztec-wallet-bootstrap.ts` (DRY across testnet-m1-hello,
@@ -74,7 +74,7 @@ SEV1-4 + escalation tree + quarterly pause-drill. `docs/superpowers/specs/sub5c-
 extends Sub-5b runbook with EmergencyPauser usage, 3-phase recovery walkthrough,
 withdrawPrivate UX, monitoring setup, relayer setup, 3-asset cap-ramp policy.
 L1 test scoreboard: **31 Foundry tests pass**. L2 TXE: 8 tests (5 Token bridge-mode
-+ 3 Treasury queue). **ZSwap is now mainnet-ready in $10k cap mode pending only
++ 3 Treasury queue). **Quetzal is now mainnet-ready in $10k cap mode pending only
 the external audit.** Sub-5d (post-audit remediation) + Sub-6 (privacy mitigations)
 remain.
 
@@ -111,16 +111,16 @@ scripts/dev.sh
 # (codegen runs automatically before tests via the pretest hook)
 pnpm test
 
-# Use the CLI (after deploy-tokens.ts has written zswap.config.json)
+# Use the CLI (after deploy-tokens.ts has written quetzal.config.json)
 pnpm tsx scripts/deploy-tokens.ts
-pnpm --filter @zswap/cli zswap order --side buy --amount 100000000 --limit 2000000000000000000
-pnpm --filter @zswap/cli zswap orders
-pnpm --filter @zswap/cli zswap cancel --nonce <order-nonce-from-above>
-pnpm --filter @zswap/cli zswap close-epoch
-pnpm --filter @zswap/cli zswap deposit --amount-a 1000000000 --amount-b 1000000000000000000
-pnpm --filter @zswap/cli zswap positions
-pnpm --filter @zswap/cli zswap withdraw --nonce <position-nonce-from-above>
-pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
+pnpm --filter @quetzal/cli quetzal order --side buy --amount 100000000 --limit 2000000000000000000
+pnpm --filter @quetzal/cli quetzal orders
+pnpm --filter @quetzal/cli quetzal cancel --nonce <order-nonce-from-above>
+pnpm --filter @quetzal/cli quetzal close-epoch
+pnpm --filter @quetzal/cli quetzal deposit --amount-a 1000000000 --amount-b 1000000000000000000
+pnpm --filter @quetzal/cli quetzal positions
+pnpm --filter @quetzal/cli quetzal withdraw --nonce <position-nonce-from-above>
+pnpm --filter @quetzal/cli quetzal claim --nonce <order-nonce>
 ```
 
 ## Testing
@@ -181,7 +181,7 @@ To run as a permissionless aggregator:
 1. Acquire ≥ 1000 tUSDC (the registry's default `bond_amount = 1_000_000_000` at 6 decimals).
 2. Register on-chain:
    ```bash
-   pnpm --filter @zswap/cli zswap aggregator register --bond 1000000000 --url https://my-aggregator.example.com
+   pnpm --filter @quetzal/cli quetzal aggregator register --bond 1000000000 --url https://my-aggregator.example.com
    ```
 3. Add your address+URL to `cli/aggregator-manifest.json` via a PR.
 4. Run the Fastify HTTP reveal server (in one terminal):
@@ -193,7 +193,7 @@ To run as a permissionless aggregator:
 
 To unregister and reclaim your bond:
 ```bash
-pnpm --filter @zswap/cli zswap aggregator unregister
+pnpm --filter @quetzal/cli quetzal aggregator unregister
 ```
 
 ## License

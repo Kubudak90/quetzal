@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 5b — Off-chain clearing aggregator
+# Quetzal Week 5b — Off-chain clearing aggregator
 
 **Status:** design
 **Date:** 2026-05-19
@@ -29,7 +29,7 @@ verify.
 
 ## 1. Goals (in scope)
 
-- A new `aggregator/` pnpm-workspace package (`@zswap/aggregator`) containing the
+- A new `aggregator/` pnpm-workspace package (`@quetzal/aggregator`) containing the
   pure clearing module.
 - **`computeClearing(pool, orders)`** - a pure function implementing the MVP
   frequent-batch-auction clearing: FIFO order selection, binary-search discovery
@@ -63,7 +63,7 @@ exists in `pnpm-workspace.yaml`, reserved since Week 1).
 
 ```
 aggregator/
-  package.json          # name "@zswap/aggregator", type "module", private
+  package.json          # name "@quetzal/aggregator", type "module", private
   tsconfig.json         # mirrors cli/tsconfig.json (NodeNext, strict, noEmit)
   src/
     fixed-point.ts      # bigint fixed-point helpers
@@ -194,7 +194,7 @@ root, the search returns `cleared: false`. See 7 (Risks).
 / `eligibleSells`, `sumAIn`, `sumBIn`, `netA`.
 
 - Apply the net AMM swap as in Step 3. **The fee is extracted, not retained in
-  reserves** (ZSwap uses a separate MasterChef counter, so the fee must NOT be
+  reserves** (Quetzal uses a separate MasterChef counter, so the fee must NOT be
   added to `reserve_*` or the Week-5 `withdraw` - which pays `principal` from
   reserves and `fees` from the counter - would double-count it). Concretely, for
   `netA > 0`: `feeAmountA = netA - amountInAfterFee`, `newReserveA = reserveA +
@@ -340,7 +340,7 @@ README.md                      ~ status line + docs links
 
 ## 10. Acceptance criteria
 
-- `@zswap/aggregator` typechecks; `computeClearing` and the fixed-point helpers
+- `@quetzal/aggregator` typechecks; `computeClearing` and the fixed-point helpers
   are pure (no `@aztec/*`, no I/O).
 - All aggregator unit tests pass; `pnpm test` runs them and they are green; the
   prior 21 TXE + 23 integration tests are unaffected.

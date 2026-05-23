@@ -2,7 +2,7 @@
  * Sub-2.5 e2e: concentrated liquidity multi-bucket clearing + LP withdraw.
  *
  * Requires the dev stack up: scripts/dev.sh (anvil + aztec start --local-network)
- * + scripts/deploy-tokens.ts already run so zswap.config.json exists.
+ * + scripts/deploy-tokens.ts already run so quetzal.config.json exists.
  *
  * E1: LP1 deposits to bucket 5 (in-range), LP2 deposits to bucket 7
  *     (above current spot). Alice submits a large buy that crosses
@@ -29,7 +29,7 @@ import { SCALE } from "../../aggregator/src/buckets.js";
 
 describe("Sub-2.5 e2e — concentrated liquidity multi-bucket clearing", () => {
   it("E1: LP1 + LP2 + alice clearing across 3 buckets (with empty bucket 6 skipped)", { timeout: 600_000 }, async () => {
-    const config = JSON.parse(readFileSync("zswap.config.json", "utf8")) as {
+    const config = JSON.parse(readFileSync("quetzal.config.json", "utf8")) as {
       nodeUrl: string;
       tUSDC: string;
       tETH: string;

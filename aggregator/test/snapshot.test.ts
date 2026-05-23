@@ -9,7 +9,7 @@ import { writeSnapshot, readSnapshot, findEpochForNonce } from "../src/snapshot.
 
 describe("aggregator/snapshot", () => {
   it("writes and reads back a snapshot identically", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "zswap-snapshot-"));
+    const dir = mkdtempSync(join(tmpdir(), "quetzal-snapshot-"));
     try {
       const fills: JsFillEntry[] = [
         { order_nonce: new Fr(101n), amount_out: 500n },
@@ -35,7 +35,7 @@ describe("aggregator/snapshot", () => {
   });
 
   it("findEpochForNonce returns the matching epoch_id, or null", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "zswap-snapshot-"));
+    const dir = mkdtempSync(join(tmpdir(), "quetzal-snapshot-"));
     try {
       const fillsA: JsFillEntry[] = [{ order_nonce: new Fr(11n), amount_out: 100n }];
       const fillsB: JsFillEntry[] = [{ order_nonce: new Fr(22n), amount_out: 200n }];

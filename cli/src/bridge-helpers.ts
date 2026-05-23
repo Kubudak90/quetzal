@@ -13,11 +13,11 @@ import { TxHash } from "@aztec/aztec.js/tx";
  *   - siblingPath: Merkle proof from leaf to Outbox root
  *
  * Sub-5c A3: buildOutboxProof is now a thin spawn wrapper around the
- * audit-isolated subprocess binary tools/outbox-proof/dist/zswap-outbox-proof.mjs.
+ * audit-isolated subprocess binary tools/outbox-proof/dist/quetzal-outbox-proof.mjs.
  * The binary delegates to computeL2ToL1MembershipWitness from @aztec/stdlib/messaging,
  * which builds the full 4-level combined sibling path internally.
  *
- * Override the binary path via ZSWAP_OUTBOX_PROOF_BIN env var.
+ * Override the binary path via QUETZAL_OUTBOX_PROOF_BIN env var.
  */
 
 export interface OutboxLookup {
@@ -137,11 +137,11 @@ export async function lookupOutboxMessage(
  * Full proof builder. Returns { l2Epoch, leafIndex, siblingPath, content }.
  *
  * Sub-5c A3: delegates to the audit-isolated subprocess binary
- * tools/outbox-proof/dist/zswap-outbox-proof.mjs, which calls
+ * tools/outbox-proof/dist/quetzal-outbox-proof.mjs, which calls
  * computeL2ToL1MembershipWitness from @aztec/stdlib/messaging for the
  * full 4-level combined sibling path.
  *
- * Override binary path via ZSWAP_OUTBOX_PROOF_BIN env var.
+ * Override binary path via QUETZAL_OUTBOX_PROOF_BIN env var.
  *
  * @param nodeUrl          Aztec node RPC URL
  * @param l2TxHash         L2 tx hash of the exit_to_l1_* call
@@ -154,8 +154,8 @@ export async function buildOutboxProof(
   expectedContent: string,
 ): Promise<OutboxProof> {
   const binPath =
-    process.env.ZSWAP_OUTBOX_PROOF_BIN ??
-    `${process.cwd()}/tools/outbox-proof/dist/zswap-outbox-proof.mjs`;
+    process.env.QUETZAL_OUTBOX_PROOF_BIN ??
+    `${process.cwd()}/tools/outbox-proof/dist/quetzal-outbox-proof.mjs`;
 
   return new Promise((resolve, reject) => {
     const child = spawn("node", [
@@ -170,7 +170,7 @@ export async function buildOutboxProof(
     child.stderr.on("data", (d: Buffer) => (stderr += d));
     child.on("exit", (code: number | null) => {
       if (code !== 0) {
-        return reject(new Error(`zswap-outbox-proof exited ${code}: ${stderr.trim()}`));
+        return reject(new Error(`quetzal-outbox-proof exited ${code}: ${stderr.trim()}`));
       }
       try {
         const raw = JSON.parse(stdout) as {
@@ -188,7 +188,7 @@ export async function buildOutboxProof(
       } catch (e) {
         reject(
           new Error(
-            `zswap-outbox-proof returned non-JSON stdout: ${stdout}; stderr: ${stderr}`,
+            `quetzal-outbox-proof returned non-JSON stdout: ${stdout}; stderr: ${stderr}`,
           ),
         );
       }

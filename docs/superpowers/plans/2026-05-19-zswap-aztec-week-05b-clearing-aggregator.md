@@ -1,8 +1,8 @@
-# ZSwap-on-Aztec — Week 5b: Off-chain clearing aggregator Implementation Plan
+# Quetzal — Week 5b: Off-chain clearing aggregator Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `@zswap/aggregator` — a pure TypeScript module whose `computeClearing(pool, orders)` implements the frequent-batch-auction clearing algorithm (FIFO selection, binary-search uniform clearing price, peer-to-peer crossing, net imbalance through the constant-product AMM with the 0.3% fee, full fills, LP fee accrual).
+**Goal:** Build `@quetzal/aggregator` — a pure TypeScript module whose `computeClearing(pool, orders)` implements the frequent-batch-auction clearing algorithm (FIFO selection, binary-search uniform clearing price, peer-to-peer crossing, net imbalance through the constant-product AMM with the 0.3% fee, full fills, LP fee accrual).
 
 **Architecture:** A new `aggregator/` pnpm-workspace package with no Aztec dependency — pure `bigint` computation. Built as four composable, independently-tested units: `mulDiv` fixed-point helpers → `selectBatch` (FIFO) → `simulateNet`/`clearingAt`/`findClearingPrice` (price discovery) → `computeClearing` (the assembled result).
 
@@ -16,7 +16,7 @@
 
 | File | Responsibility | Action |
 |---|---|---|
-| `aggregator/package.json` | `@zswap/aggregator` manifest (`test`, `typecheck` scripts) | Create |
+| `aggregator/package.json` | `@quetzal/aggregator` manifest (`test`, `typecheck` scripts) | Create |
 | `aggregator/tsconfig.json` | TS config (NodeNext, strict, noEmit) | Create |
 | `aggregator/src/fixed-point.ts` | `mulDiv` + scale/fee constants | Create |
 | `aggregator/src/clearing.ts` | types, `selectBatch`, `simulateNet`, `clearingAt`, `findClearingPrice`, `computeClearing` | Create (grown across Tasks 2-4) |
@@ -46,7 +46,7 @@
 
 ```json
 {
-  "name": "@zswap/aggregator",
+  "name": "@quetzal/aggregator",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -161,8 +161,8 @@ Change it to also run the aggregator's package `test` script:
 
 ```bash
 pnpm install
-pnpm --filter @zswap/aggregator typecheck
-pnpm --filter @zswap/aggregator test
+pnpm --filter @quetzal/aggregator typecheck
+pnpm --filter @quetzal/aggregator test
 ```
 
 Expected: install succeeds (picks up the new `aggregator` workspace member); `tsc --noEmit` reports no errors; `node:test` reports `4` passing tests under the `fixed-point` suite.
@@ -171,7 +171,7 @@ Expected: install succeeds (picks up the new `aggregator` workspace member); `ts
 
 ```bash
 git add aggregator/ package.json pnpm-lock.yaml
-git commit -m "feat(aggregator): @zswap/aggregator scaffold + fixed-point helpers"
+git commit -m "feat(aggregator): @quetzal/aggregator scaffold + fixed-point helpers"
 ```
 
 ---
@@ -187,7 +187,7 @@ git commit -m "feat(aggregator): @zswap/aggregator scaffold + fixed-point helper
 
 ```ts
 /**
- * Frequent-batch-auction clearing for ZSwap. Pure computation — given a pool
+ * Frequent-batch-auction clearing for Quetzal. Pure computation — given a pool
  * snapshot and a set of orders, `computeClearing` produces the uniform clearing
  * price, the per-order fills, the post-clearing reserves, and the LP fee accrual.
  *
@@ -333,8 +333,8 @@ describe("selectBatch", () => {
 - [ ] **Step 3: Typecheck + test**
 
 ```bash
-pnpm --filter @zswap/aggregator typecheck
-pnpm --filter @zswap/aggregator test
+pnpm --filter @quetzal/aggregator typecheck
+pnpm --filter @quetzal/aggregator test
 ```
 
 Expected: typecheck clean; `node:test` reports `4` fixed-point + `5` `selectBatch` tests passing.
@@ -376,7 +376,7 @@ export interface NetSwap {
  * Swap the signed net imbalance through the constant-product pool.
  * `netA > 0`: token A flows in. `netA < 0`: token B flows in (sized via `p`).
  * `netA == 0`: no swap. The 0.3% fee is WITHHELD from the swap input and reported
- * in `feeAmount*` — it is NOT added to the reserves (ZSwap tracks fees in a
+ * in `feeAmount*` — it is NOT added to the reserves (Quetzal tracks fees in a
  * separate per-share counter; see the spec, Step 4).
  */
 export function simulateNet(
@@ -565,8 +565,8 @@ describe("findClearingPrice", () => {
 - [ ] **Step 3: Typecheck + test**
 
 ```bash
-pnpm --filter @zswap/aggregator typecheck
-pnpm --filter @zswap/aggregator test
+pnpm --filter @quetzal/aggregator typecheck
+pnpm --filter @quetzal/aggregator test
 ```
 
 Expected: typecheck clean; `node:test` reports `4` fixed-point + `5` selectBatch + `3` simulateNet + `3` findClearingPrice tests passing (`15` total).
@@ -778,8 +778,8 @@ describe("computeClearing", () => {
 - [ ] **Step 3: Typecheck + test**
 
 ```bash
-pnpm --filter @zswap/aggregator typecheck
-pnpm --filter @zswap/aggregator test
+pnpm --filter @quetzal/aggregator typecheck
+pnpm --filter @quetzal/aggregator test
 ```
 
 Expected: typecheck clean; `node:test` reports all suites passing — `4` fixed-point + `5` selectBatch + `3` simulateNet + `3` findClearingPrice + `8` computeClearing = `23` tests.
@@ -805,8 +805,8 @@ git commit -m "feat(aggregator): computeClearing — fills, reserves, LP fee acc
 ```bash
 rm -rf node_modules aggregator/node_modules tests/node_modules cli/node_modules
 pnpm install
-pnpm --filter @zswap/aggregator typecheck
-pnpm --filter @zswap/aggregator test
+pnpm --filter @quetzal/aggregator typecheck
+pnpm --filter @quetzal/aggregator test
 ```
 
 Expected: install succeeds; typecheck clean; `23` aggregator tests pass.
@@ -834,7 +834,7 @@ Stop the dev stack: `bash scripts/dev.sh --down`.
 In `README.md`, replace the `**Status:**` line with:
 
 ```
-**Status:** Week 5b complete. The off-chain clearing aggregator (`@zswap/aggregator`) computes the frequent-batch-auction clearing — FIFO selection, uniform clearing price, the net imbalance through the AMM with the 0.3% LP fee. 23 aggregator unit tests + 23 integration tests + 21 TXE tests green. Week 5c wires an on-chain ClearingContract.
+**Status:** Week 5b complete. The off-chain clearing aggregator (`@quetzal/aggregator`) computes the frequent-batch-auction clearing — FIFO selection, uniform clearing price, the net imbalance through the AMM with the 0.3% LP fee. 23 aggregator unit tests + 23 integration tests + 21 TXE tests green. Week 5c wires an on-chain ClearingContract.
 ```
 
 In the `## Documentation` section, add:
@@ -859,7 +859,7 @@ Expected: `week-05b-clearing-aggregator`.
 
 ## Definition of Done for Week 5b
 
-- `@zswap/aggregator` typechecks; `computeClearing` and its helpers are pure (no `@aztec/*`, no I/O).
+- `@quetzal/aggregator` typechecks; `computeClearing` and its helpers are pure (no `@aztec/*`, no I/O).
 - All `23` aggregator unit tests pass; `pnpm test` runs them green alongside the unaffected `23` integration tests.
 - `computeClearing` implements MVP design 8.1: FIFO selection, binary-search uniform clearing price, peer-to-peer crossing, the net AMM swap with the 0.3% counter-tracked fee, full fills, and the fee-per-share increments — verified by the fixtures.
 - Empty / degenerate / non-convergent inputs return `cleared: false` safely.

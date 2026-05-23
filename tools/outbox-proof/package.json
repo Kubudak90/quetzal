@@ -1,10 +1,10 @@
 {
-  "name": "@zswap/outbox-proof",
+  "name": "@quetzal/outbox-proof",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "zswap-outbox-proof": "./dist/zswap-outbox-proof.mjs"
+    "quetzal-outbox-proof": "./dist/quetzal-outbox-proof.mjs"
   },
   "scripts": {
     "build": "node build.mjs",

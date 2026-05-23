@@ -1,4 +1,4 @@
-# ZSwap on Aztec — Sub-project 3 Design: Permissionless Aggregator (Liveness-First)
+# Quetzal on Aztec — Sub-project 3 Design: Permissionless Aggregator (Liveness-First)
 
 **Status:** spec
 **Date:** 2026-05-22
@@ -209,7 +209,7 @@ For MVP/devnet, this is a curated file in the repo (operators submit PRs to add 
 2. For i in 1..N: `get_aggregator_by_id(i)` → address.
    - If address == `AztecAddress::ZERO` → that id was unregistered; skip.
    - Otherwise: `get_endpoint_hash(address)` → on-chain hash.
-3. PXE loads `aggregator-manifest.json`. MVP location: bundled inside the `@zswap/cli` package at `cli/aggregator-manifest.json` (operators submit PRs to add their entry). Operators can override via the env var `ZSWAP_AGGREGATOR_MANIFEST=/path/to/manifest.json` for local testing or alternative discovery sources.
+3. PXE loads `aggregator-manifest.json`. MVP location: bundled inside the `@quetzal/cli` package at `cli/aggregator-manifest.json` (operators submit PRs to add their entry). Operators can override via the env var `ZSWAP_AGGREGATOR_MANIFEST=/path/to/manifest.json` for local testing or alternative discovery sources.
 4. For each non-zero address, look up URL in manifest. If present, compute `poseidon2_hash(URL_bytes)` and assert it equals on-chain hash. Mismatch (or URL absent) → skip (manifest stale or malicious; aggregator effectively offline from this maker's perspective).
 5. POST reveal to validated URLs in parallel via `Promise.allSettled` (failed pushes do not block other targets).
 
@@ -293,9 +293,9 @@ Reveal validation step (step 1 above) is critical: an aggregator that includes a
 ### 4.6 CLI surface
 
 New commands (`cli/src/commands/aggregator.ts`):
-- `zswap aggregator register --bond 1000 --url https://my-agg.example.com` — calls `AggregatorRegistry.register(hash(URL), authwit_nonce)` after the maker tops up tUSDC to the required bond amount.
-- `zswap aggregator list` — prints `{id, address, url}` triples (resolves URLs via manifest).
-- `zswap aggregator unregister` — calls `AggregatorRegistry.unregister(authwit_nonce)`.
+- `quetzal aggregator register --bond 1000 --url https://my-agg.example.com` — calls `AggregatorRegistry.register(hash(URL), authwit_nonce)` after the maker tops up tUSDC to the required bond amount.
+- `quetzal aggregator list` — prints `{id, address, url}` triples (resolves URLs via manifest).
+- `quetzal aggregator unregister` — calls `AggregatorRegistry.unregister(authwit_nonce)`.
 
 Modified command (`cli/src/commands/order.ts`):
 - After `submit_order` mines, invoke `broadcastReveal(payload, registry)` to push to all registered aggregators (best-effort, errors logged not thrown).
@@ -306,7 +306,7 @@ Modified command (`cli/src/commands/order.ts`):
 
 ### 5.1 Order submission (per maker)
 
-1. Maker calls `zswap order --side buy --amount 1000 --limit 2.0`.
+1. Maker calls `quetzal order --side buy --amount 1000 --limit 2.0`.
 2. CLI builds OrderNote, calls `Orderbook.submit_order`. Wait for receipt. Capture `submitted_at_block` from receipt.
 3. CLI calls `broadcastReveal({epoch_id, order_nonce, side, amount_in, limit_price, submitted_at_block, owner})` →
    3a. Read on-chain registry list.
@@ -339,7 +339,7 @@ After successful clearing:
 ## 6. Migration
 
 - **Storage layout change:** Orderbook constructor gains 3 new args. Fresh deploy required. No on-chain migration path (acceptable for pre-mainnet).
-- **CLI behavior change:** `zswap close-epoch-verified` only works for callers who have called `zswap aggregator register` first. Document this in the README. Users running tests should add a `register` step before any expected clearing.
+- **CLI behavior change:** `quetzal close-epoch-verified` only works for callers who have called `quetzal aggregator register` first. Document this in the README. Users running tests should add a `register` step before any expected clearing.
 - **Treasury seeding:** `scripts/deploy-tokens.ts` deploys Treasury and transfers 1000 tUSDC to it via `deposit`. Without this, aggregators submit clearings successfully but earn 0 fee.
 
 ## 7. Test plan
@@ -383,9 +383,9 @@ After successful clearing:
 ### 7.3 CLI integration
 
 **`tests/integration/cli.test.ts` (additions):**
-- C1: `zswap aggregator register --bond 1000 --url X` mines, then `zswap aggregator list` shows the new entry.
-- C2: `zswap aggregator unregister` after register returns bond + removes entry.
-- C3: `zswap order` post-submit triggers HTTP POST to all registered aggregator URLs (mocked aggregator servers in the test harness).
+- C1: `quetzal aggregator register --bond 1000 --url X` mines, then `quetzal aggregator list` shows the new entry.
+- C2: `quetzal aggregator unregister` after register returns bond + removes entry.
+- C3: `quetzal order` post-submit triggers HTTP POST to all registered aggregator URLs (mocked aggregator servers in the test harness).
 
 ### 7.4 Full e2e (`tests/integration/aggregator-race.test.ts`)
 
@@ -407,12 +407,12 @@ After Sub-3 ships locally, run on Aztec testnet alongside the still-deferred 5d-
 
 ## 9. Success criteria
 
-- 2+ aggregators register concurrently via `zswap aggregator register` from different accounts.
+- 2+ aggregators register concurrently via `quetzal aggregator register` from different accounts.
 - E1 e2e test green on live dev stack: both aggregators race, first valid wins, treasury → winner credit confirmed.
 - O3 TXE test green: treasury-empty case does not block clearing.
-- Maker's `zswap order` reaches all registered aggregators (CLI integration test C3).
+- Maker's `quetzal order` reaches all registered aggregators (CLI integration test C3).
 - `pnpm test:noir` green for the 4 contracts (Token, Pool, Orderbook, AggregatorRegistry, Treasury).
-- `pnpm --filter @zswap/aggregator test` green for server + daemon + validation modules.
+- `pnpm --filter @quetzal/aggregator test` green for server + daemon + validation modules.
 
 ## 10. Implementation phases (5 weeks)
 
@@ -421,7 +421,7 @@ After Sub-3 ships locally, run on Aztec testnet alongside the still-deferred 5d-
 | 1 | AggregatorRegistry + Treasury contracts | 2 new Noir contracts, 10 TXE tests, fresh deploy script |
 | 2 | Orderbook diff + wiring | Constructor args, `_assert_aggregator_registered` callback, `pay_aggregator` call, 3 TXE tests |
 | 3 | Aggregator HTTP server + daemon refactor | `server.ts`, `daemon.ts`, validation module, 8 JS unit tests |
-| 4 | CLI commands + reveal broadcasting | `zswap aggregator register/list/unregister`, `broadcastReveal()`, manifest discovery, 3 CLI tests |
+| 4 | CLI commands + reveal broadcasting | `quetzal aggregator register/list/unregister`, `broadcastReveal()`, manifest discovery, 3 CLI tests |
 | 5 | Full e2e + docs + testnet | `aggregator-race.test.ts`, README ops runbook, joint Sub-3 + 5d-3+5d-4 testnet validation run |
 
 ## 11. Cross-refs

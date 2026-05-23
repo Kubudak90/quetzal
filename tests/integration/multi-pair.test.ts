@@ -23,7 +23,7 @@ import { strict as assert } from "node:assert";
  *
  * After close_epoch:
  *   - All three makers' orders fill (composite eligibility for C)
- *   - C runs `zswap claim --nonce <c> --hop 0` then `--hop 1` (or --hop all)
+ *   - C runs `quetzal claim --nonce <c> --hop 0` then `--hop 1` (or --hop all)
  *   - Final balances: C receives tBTC, A receives tETH, B receives tUSDC
  *
  * The 2-hop maker's double-claim flow is also a Sub-4 known issue
@@ -41,7 +41,7 @@ describe("Sub-4 e2e — multi-pair triangle clearing", { skip: true }, () => {
     //   - tests/integration/claim-merkle.test.ts as the claim_fill +
     //     Merkle-proof reading pattern (adapted for the 64-leaf
     //     hop-fills tree from Sub-4 Task C4)
-    //   - zswap claim --hop {0|1|all} CLI flag from Sub-4 Task E1
+    //   - quetzal claim --hop {0|1|all} CLI flag from Sub-4 Task E1
     assert.ok(true, "Sub-4 e2e scaffold pending dev stack + Sub-5");
   });
 });

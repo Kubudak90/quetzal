@@ -11,7 +11,7 @@
 **Source spec:** `docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-2-clearing-circuit-design.md`
 
 **Execution preconditions:**
-- VPS dev stack is available (`zswap-vps` ssh alias, anvil :18545 + aztec :18080 already running). All `nargo`/`bb` invocations run on VPS via SSH for parity with the existing per-orderbook tests.
+- VPS dev stack is available (`quetzal-vps` ssh alias, anvil :18545 + aztec :18080 already running). All `nargo`/`bb` invocations run on VPS via SSH for parity with the existing per-orderbook tests.
 - Local Mac has `nargo` available for fast iteration on the Noir unit tests (Tasks 1–9).
 - Tasks 1–10 don't need Docker; Tasks 11–14 may use existing project tooling. Task 13–14 (live e2e) need the VPS dev stack.
 
@@ -55,14 +55,14 @@ Creates the Noir project skeleton, the shared `ClearingSwap` / `FillEntry` / `Or
 [package]
 name = "clearing"
 type = "bin"
-authors = ["ZSwap"]
+authors = ["Quetzal"]
 compiler_version = ">=1.0.0-beta.19"
 ```
 
 - [ ] **Step 2: Write `circuits/clearing/src/types.nr`.**
 
 ```noir
-// Shared types for the ZSwap clearing circuit. Matches:
+// Shared types for the Quetzal clearing circuit. Matches:
 // - contracts/pool/src/main.nr's ClearingSwap (10 u128 fields).
 // - contracts/orderbook/src/main.nr's FillEntry (order_nonce + amount_out).
 // - contracts/orderbook/src/main.nr's OrderNote (the per-order preimage).
@@ -181,7 +181,7 @@ Run from the repo root:
 nargo compile --silence-warnings --package clearing --workspace circuits/clearing
 ```
 
-(If your shell's nargo isn't 1.0.0-beta.19, run instead via VPS: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo compile --silence-warnings'`.)
+(If your shell's nargo isn't 1.0.0-beta.19, run instead via VPS: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo compile --silence-warnings'`.)
 
 Expected: a `circuits/clearing/target/clearing.json` artifact appears and no errors print.
 
@@ -310,7 +310,7 @@ fn fee_constants() {
 
 - [ ] **Step 2: Run tests to verify they fail.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -20`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -20`
 
 Expected: compilation errors / "module pricing has no item mul_div".
 
@@ -345,7 +345,7 @@ pub fn mul_div(x: u128, y: u128, z: u128) -> u128 {
 
 - [ ] **Step 4: Run tests to verify they pass.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -20`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -20`
 
 Expected: 3 tests passed.
 
@@ -475,7 +475,7 @@ fn u7_cancel_acc_replay_is_binding() {
 
 - [ ] **Step 2: Run tests to verify they fail.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: errors like "no item c_i" / "no item replay_chain" / "no item derive_is_cancelled".
 
@@ -567,7 +567,7 @@ pub fn derive_is_cancelled(
 
 - [ ] **Step 4: Run tests to verify they pass.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
 
 Expected: 6 tests passed (3 from Task 3 + U1 + U2 + U7).
 
@@ -660,7 +660,7 @@ fn u8_payout_ineligible_zero_or_panic() {
 
 - [ ] **Step 2: Run tests to verify they fail.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
 
 Expected: errors like "no item eligible" / "no item payout".
 
@@ -702,7 +702,7 @@ pub fn payout(order: OrderPreimage, clearing_price: u128) -> u128 {
 
 - [ ] **Step 4: Run tests to verify they pass.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -15`
 
 Expected: 9 tests passed total (3 + 3 + 3).
 
@@ -765,13 +765,13 @@ Open `circuits/clearing/src/main.nr` and replace the existing `fn main(...)` bod
 
 - [ ] **Step 2: Verify `main.nr` compiles via the workspace.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo compile --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo compile --silence-warnings 2>&1' | tail -10`
 
 Expected: no errors; `target/clearing.json` is rewritten.
 
 - [ ] **Step 3: Run the unit tests again to confirm nothing regressed.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: 9 tests passed (same as Task 5; `main.nr` doesn't add new unit tests in this task).
 
@@ -835,7 +835,7 @@ fn u6_dos_resistance_mask_derivation() {
 
 - [ ] **Step 2: Run tests to verify it fails.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Actually the test will pass (it's self-contained). But we want a CONSTRAINT failure in main.nr if the DoS condition arises. The U6 test above only exercises the mask-derivation logic. Run it just to confirm clean.
 
@@ -874,7 +874,7 @@ In `circuits/clearing/src/main.nr`, append to the existing `fn main` body (after
 
 - [ ] **Step 4: Recompile and re-run tests.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: 10 tests passed.
 
@@ -997,7 +997,7 @@ Now correct the b-side reserve identity. Replace the b-side assert just written 
 
 - [ ] **Step 3: Recompile + re-run unit tests.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: 10 tests passed (unchanged count — this block is exercised end-to-end by E1 in Task 13).
 
@@ -1048,7 +1048,7 @@ fn u5_amm_k_monotonic_on_small_swap() {
 
 - [ ] **Step 2: Run tests to verify it fails.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: errors like "no item assert_k_monotonic".
 
@@ -1107,7 +1107,7 @@ In `circuits/clearing/src/main.nr`, append to the body after the §6.5 ClearingS
 
 - [ ] **Step 5: Recompile + run tests.**
 
-Run: `ssh zswap-vps 'source /root/.zswap-env && cd /root/zswap-aztec/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
+Run: `ssh quetzal-vps 'source /root/.quetzal-env && cd /root/quetzal/circuits/clearing && nargo test --silence-warnings 2>&1' | tail -10`
 
 Expected: 11 tests passed.
 
@@ -1356,7 +1356,7 @@ export function buildClearingWitness(args: {
 
 - [ ] **Step 3: Typecheck.**
 
-Run: `pnpm --filter @zswap/aggregator typecheck 2>&1 | tail -15`
+Run: `pnpm --filter @quetzal/aggregator typecheck 2>&1 | tail -15`
 
 Expected: 0 errors. If property names don't match the aggregator's `ClearingResult`, fix the accessor calls to use the actual names.
 
@@ -1473,7 +1473,7 @@ describe("buildClearingWitness", () => {
 
 - [ ] **Step 2: Run the aggregator tests.**
 
-Run: `pnpm --filter @zswap/aggregator test 2>&1 | tail -15`
+Run: `pnpm --filter @quetzal/aggregator test 2>&1 | tail -15`
 
 Expected: all existing aggregator tests still pass plus 3 new "buildClearingWitness" tests pass (total = previous + 3).
 
@@ -1502,7 +1502,7 @@ JS-orchestrated test: deploys orderbook + tokens + pool on the live VPS stack, s
 
 - [ ] **Step 1: Confirm the dev stack is up.**
 
-Run: `ssh zswap-vps 'lsof -i :18080 -sTCP:LISTEN -t && lsof -i :18545 -sTCP:LISTEN -t && echo stack-up'`
+Run: `ssh quetzal-vps 'lsof -i :18080 -sTCP:LISTEN -t && lsof -i :18545 -sTCP:LISTEN -t && echo stack-up'`
 
 Expected: `stack-up`. If not, start with `scripts/dev.sh` on VPS (custom-port variant per `memory/aztec-pxe-tagging-window.md` notes).
 
@@ -1527,7 +1527,7 @@ import { computeClearing } from "../../aggregator/src/clearing.js";
 import { buildClearingWitness } from "../../aggregator/src/witness.js";
 
 // Absolute paths on VPS (where the e2e runs). Adjust if local-Mac variant.
-const CIRCUIT_DIR = "/root/zswap-aztec/circuits/clearing";
+const CIRCUIT_DIR = "/root/quetzal/circuits/clearing";
 const BB_BIN = "/root/.aztec/versions/4.2.1/node_modules/@aztec/bb.js/build/amd64-linux/bb";
 
 describe("clearing circuit E2E (live integration)", { timeout: 30 * 60 * 1_000 }, () => {
@@ -1563,9 +1563,9 @@ The implementer's job here is to fill in steps 1-3 by copy-adapting from `tests/
 - [ ] **Step 3: Sync the test file to VPS and run E1.**
 
 ```
-rsync -e ssh tests/integration/clearing-circuit.test.ts zswap-vps:/root/zswap-aztec/tests/integration/clearing-circuit.test.ts
-rsync -e ssh aggregator/src/witness.ts zswap-vps:/root/zswap-aztec/aggregator/src/witness.ts
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing-circuit.test.ts 2>&1 | tail -60"
+rsync -e ssh tests/integration/clearing-circuit.test.ts quetzal-vps:/root/quetzal/tests/integration/clearing-circuit.test.ts
+rsync -e ssh aggregator/src/witness.ts quetzal-vps:/root/quetzal/aggregator/src/witness.ts
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing-circuit.test.ts 2>&1 | tail -60"
 ```
 
 Expected: E1 passes. Total runtime ~15-25 minutes (deploys + submits + proof gen).
@@ -1611,8 +1611,8 @@ Implementer detail: use a regex-based string mutation on the TOML, e.g. `proverT
 - [ ] **Step 2: Sync + run.**
 
 ```
-rsync -e ssh tests/integration/clearing-circuit.test.ts zswap-vps:/root/zswap-aztec/tests/integration/clearing-circuit.test.ts
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E2' integration/clearing-circuit.test.ts 2>&1 | tail -40"
+rsync -e ssh tests/integration/clearing-circuit.test.ts quetzal-vps:/root/quetzal/tests/integration/clearing-circuit.test.ts
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E2' integration/clearing-circuit.test.ts 2>&1 | tail -40"
 ```
 
 Expected: E2 passes (the test passes when bb prove rejects).

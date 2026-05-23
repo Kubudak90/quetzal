@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 3 — `cancel_order` + CLI scaffold
+# Quetzal Week 3 — `cancel_order` + CLI scaffold
 
 **Status:** design
 **Date:** 2026-05-17
@@ -20,9 +20,9 @@ escrow back, plus a CLI to drive submission, cancellation, and order listing.
   balance.
 - **`get_orders` utility getter** on `OrderbookContract` — lets an off-chain
   caller (the CLI) read the maker's resting orders, including their `nonce`s.
-- **A new `cli/` workspace package** with three commands: `zswap order`,
-  `zswap cancel`, `zswap orders`.
-- **`deploy-tokens.ts` change** — also writes a `zswap.config.json` so the CLI
+- **A new `cli/` workspace package** with three commands: `quetzal order`,
+  `quetzal cancel`, `quetzal orders`.
+- **`deploy-tokens.ts` change** — also writes a `quetzal.config.json` so the CLI
   works immediately after a deploy.
 
 ## 2. Non-goals (deferred)
@@ -171,11 +171,11 @@ A new pnpm workspace member at `cli/`:
 
 ```
 cli/
-  package.json        # name "@zswap/cli", bin "zswap" -> dist/index.js or tsx entry
+  package.json        # name "@quetzal/cli", bin "zswap" -> dist/index.js or tsx entry
   tsconfig.json
   src/
     index.ts          # commander setup, registers the three subcommands
-    config.ts         # load/validate zswap.config.json
+    config.ts         # load/validate quetzal.config.json
     wallet.ts         # node client + EmbeddedWallet + account selection
     commands/
       order.ts
@@ -189,7 +189,7 @@ imported directly (same as `deploy-tokens.ts`).
 
 ### 6.2 Config
 
-The CLI reads `zswap.config.json` from the working directory (overridable with
+The CLI reads `quetzal.config.json` from the working directory (overridable with
 `--config <path>`):
 
 ```json
@@ -218,9 +218,9 @@ key management is out of scope until the UI sub-project.
 
 | Command | Flags | Action |
 |---|---|---|
-| `zswap order` | `--side <buy\|sell>`, `--amount <n>`, `--limit <price>`, `--account <i>` | Computes fresh `nonce` + `order_nonce`, calls `submit_order`. `buy` → `side=false`, `sell` → `side=true`. Prints the resulting `order_nonce` so the maker can cancel later. |
-| `zswap cancel` | `--nonce <field>`, `--account <i>` | Calls `cancel_order(order_nonce, nonce)` with a fresh authwit `nonce`. Prints the returned amount. |
-| `zswap orders` | `--account <i>` | Calls the `get_orders` utility getter for the account's address; prints a table of resting orders (`order_nonce`, side, `amount_in`, `limit_price`, `submitted_at_block`). |
+| `quetzal order` | `--side <buy\|sell>`, `--amount <n>`, `--limit <price>`, `--account <i>` | Computes fresh `nonce` + `order_nonce`, calls `submit_order`. `buy` → `side=false`, `sell` → `side=true`. Prints the resulting `order_nonce` so the maker can cancel later. |
+| `quetzal cancel` | `--nonce <field>`, `--account <i>` | Calls `cancel_order(order_nonce, nonce)` with a fresh authwit `nonce`. Prints the returned amount. |
+| `quetzal orders` | `--account <i>` | Calls the `get_orders` utility getter for the account's address; prints a table of resting orders (`order_nonce`, side, `amount_in`, `limit_price`, `submitted_at_block`). |
 
 `--amount` and `--limit` are parsed as integers in the token's smallest unit
 (no decimal-scaling convenience in Week 3 — that is UI-layer polish).
@@ -256,9 +256,9 @@ Run against the live dev stack:
 
 ### 7.3 CLI smoke test (`tests/integration/cli.test.ts`)
 
-Drives the CLI as a child process against the dev stack: `zswap order` →
-`zswap orders` (asserts the new order is listed with a `nonce`) → `zswap cancel`
-(using that nonce) → `zswap orders` (asserts the list is now empty).
+Drives the CLI as a child process against the dev stack: `quetzal order` →
+`quetzal orders` (asserts the new order is listed with a `nonce`) → `quetzal cancel`
+(using that nonce) → `quetzal orders` (asserts the list is now empty).
 
 ---
 
@@ -269,10 +269,10 @@ contracts/orderbook/src/main.nr     +  cancel_order, get_orders
 contracts/orderbook/src/test.nr     +  5 TXE tests
 cli/                                +  new workspace package (package.json, src/**)
 pnpm-workspace.yaml                 ~  add cli/ to the workspace
-scripts/deploy-tokens.ts            ~  also writes zswap.config.json
+scripts/deploy-tokens.ts            ~  also writes quetzal.config.json
 tests/integration/orderbook.test.ts +  5 cancel integration tests
 tests/integration/cli.test.ts       +  CLI smoke test
-.gitignore                          ~  add zswap.config.json
+.gitignore                          ~  add quetzal.config.json
 README.md                           ~  status line + CLI quickstart
 ```
 
@@ -283,7 +283,7 @@ README.md                           ~  status line + CLI quickstart
 3. Cancel integration tests.
 4. `cli/` workspace package scaffold (config, wallet, commander entry).
 5. `order` / `cancel` / `orders` commands.
-6. `deploy-tokens.ts` writes `zswap.config.json`; CLI smoke test.
+6. `deploy-tokens.ts` writes `quetzal.config.json`; CLI smoke test.
 7. Final clean rebuild + smoke; README; milestone commit + tag.
 
 ## 10. Risks specific to Week 3
@@ -305,8 +305,8 @@ README.md                           ~  status line + CLI quickstart
   succeed for both contracts.
 - All Week 2 TXE + integration tests still pass; the 5 new cancel TXE tests, 5
   new cancel integration tests, and the CLI smoke test pass.
-- `zswap order`, `zswap orders`, `zswap cancel` work end-to-end against the dev
-  stack after `deploy-tokens.ts` has written `zswap.config.json`.
+- `quetzal order`, `quetzal orders`, `quetzal cancel` work end-to-end against the dev
+  stack after `deploy-tokens.ts` has written `quetzal.config.json`.
 - A submitted order can be cancelled and the maker's **private** balance is
   fully restored — verified on-chain, not just by the absence of a note.
 

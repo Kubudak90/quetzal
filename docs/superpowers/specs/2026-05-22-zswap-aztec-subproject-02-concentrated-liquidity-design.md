@@ -1,4 +1,4 @@
-# ZSwap on Aztec — Sub-project 2 Design: Concentrated Liquidity (Bucket Model)
+# Quetzal on Aztec — Sub-project 2 Design: Concentrated Liquidity (Bucket Model)
 
 **Status:** spec
 **Date:** 2026-05-22
@@ -186,7 +186,7 @@ Hint-validate pattern carried over from Sub-1:
 
 ### 5.3 CLI ergonomics
 
-`zswap deposit --bucket <id> --amount-a <X> [--auto-b]`:
+`quetzal deposit --bucket <id> --amount-a <X> [--auto-b]`:
 - `--auto-b`: CLI reads bucket state via `get_bucket(id)` simulate-call, computes exact required `amount_b` for `amount_a` at the bucket's current ratio. Submits with that exact pair to maximize L_used.
 - Without `--auto-b`: maker provides both amounts; refund pattern handles surplus.
 
@@ -280,7 +280,7 @@ Hypothesis (carries forward from 5d-3 / 5d-4): bb proof size stays at 500 fields
 - **Fresh deploy required.** PositionNote shape changed (added `bucket_id`); PoolState shape changed (dropped 3 fields, added `current_sqrt_price` + buckets Map). No on-chain migration; existing positions from any Sub-1 deployment must be withdrawn before deploying Sub-2.
 - **Deploy script:** `scripts/deploy-tokens.ts` gains `P_MIN_SQRT` + `BUCKET_GROWTH_NUM` (= 1.5e18) constants; pool constructor computes 16 bounds.
 - **Pool constructor signature** grows: `constructor(token_a, token_b, p_min_sqrt, bucket_growth_num)` (was just `token_a, token_b`).
-- **CLI breaking changes:** `zswap deposit` adds required `--bucket` flag; `zswap positions` output includes bucket info.
+- **CLI breaking changes:** `quetzal deposit` adds required `--bucket` flag; `quetzal positions` output includes bucket info.
 - **Orderbook side migration:** `clearing_vk_hash` refreshes (new circuit ⇒ new VK). Orderbook constructor itself doesn't change, just gets a fresh deploy with the new hash + new ClearingPublic struct shape.
 
 ## 9. Test plan
@@ -333,7 +333,7 @@ Hypothesis (carries forward from 5d-3 / 5d-4): bb proof size stays at 500 fields
 | 3 | Aggregator clearing.ts bucket tracing | `computeClearing` bucket-walk + B4 JS unit + 16-bucket parity |
 | 4 | Clearing circuit rewrite + bb artifact rebuild | `circuits/clearing/src/buckets.nr` + main.nr 40-field shape + Task 3 empirical bridge recheck |
 | 5 | Orderbook ClearingPublic shape update + integration test E1 stub | flatten_clearing_public `[Field; 40]`, ClearingSwap struct grows, integration test scaffold |
-| 6 | CLI updates + deploy script bucket-bounds generation | `zswap deposit --bucket`, `zswap positions` enriched, deploy script geometric-bounds computation |
+| 6 | CLI updates + deploy script bucket-bounds generation | `quetzal deposit --bucket`, `quetzal positions` enriched, deploy script geometric-bounds computation |
 | 7 | E1 e2e + dormant-test housekeeping + README docs | Full LP1+LP2 deposit→clearing→withdraw e2e, op runbook update, sub-2 memory note |
 
 ---

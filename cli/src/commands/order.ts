@@ -61,7 +61,7 @@ export function registerOrder(program: Command): void {
 
         console.log(`order submitted (${side}, amount ${amount}, limit ${limit})`);
         console.log(`order nonce: 0x${orderNonce.toString(16)}`);
-        console.log(`cancel later with: zswap cancel --nonce 0x${orderNonce.toString(16)}`);
+        console.log(`cancel later with: quetzal cancel --nonce 0x${orderNonce.toString(16)}`);
 
         // Sub-3: broadcast reveal to all bonded aggregators. Best-effort; if the
         // aggregator registry isn't deployed yet (Sub-1 MVP config), skip silently.

@@ -1,9 +1,9 @@
-# ZSwap-on-Aztec — Protocol Roadmap
+# Quetzal — Protocol Roadmap
 
 **Status:** Living document. Updated as sub-projects close.
 **Date:** 2026-05-14
 
-This document outlines the full 6-sub-project roadmap for ZSwap-on-Aztec. Each sub-project has its own design spec written in a dedicated brainstorming session before implementation begins. Sub-project 1 is the currently active spec; the rest are scoped here but not yet detailed.
+This document outlines the full 6-sub-project roadmap for Quetzal. Each sub-project has its own design spec written in a dedicated brainstorming session before implementation begins. Sub-project 1 is the currently active spec; the rest are scoped here but not yet detailed.
 
 ---
 

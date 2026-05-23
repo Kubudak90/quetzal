@@ -1,11 +1,11 @@
 {
-  "name": "@zswap/cli",
+  "name": "@quetzal/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "zswap": "src/index.ts" },
+  "bin": { "quetzal": "src/index.ts" },
   "scripts": {
-    "zswap": "tsx src/index.ts",
+    "quetzal": "tsx src/index.ts",
     "test": "node --import tsx --test --test-reporter=spec 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },

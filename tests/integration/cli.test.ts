@@ -26,7 +26,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
 const CLI_ENTRY = resolve(REPO_ROOT, "cli/src/index.ts");
-const CONFIG_PATH = resolve(REPO_ROOT, "zswap.config.cli-test.json");
+const CONFIG_PATH = resolve(REPO_ROOT, "quetzal.config.cli-test.json");
 
 const ONE_TUSDC = 10n ** 6n;
 const ONE_TETH = 10n ** 18n;
@@ -36,7 +36,7 @@ const ORDER_AMOUNT = 100n * ONE_TUSDC;
 const PRICE_2 = 2_000_000_000_000_000_000n;
 
 /** Run the CLI as a child process from the repo root; return its stdout. */
-function zswap(...args: string[]): string {
+function quetzal(...args: string[]): string {
   return execFileSync(
     process.execPath,
     ["--import", "tsx", CLI_ENTRY, "--config", CONFIG_PATH, ...args],
@@ -176,20 +176,20 @@ describe("cli smoke (live integration)", () => {
   }
 
   it("order -> orders -> cancel -> orders round-trip", { timeout: 600_000 }, () => {
-    const orderOut = zswap(
+    const orderOut = quetzal(
       "order", "--side", "buy", "--amount", ORDER_AMOUNT.toString(), "--limit", PRICE_2.toString(),
     );
     const nonceMatch = orderOut.match(/order nonce:\s*(0x[0-9a-fA-F]+)/);
-    assert.ok(nonceMatch, `\`zswap order\` should print an order nonce; got:\n${orderOut}`);
+    assert.ok(nonceMatch, `\`quetzal order\` should print an order nonce; got:\n${orderOut}`);
     const nonce = nonceMatch![1]!;
 
-    const listed = zswap("orders");
-    assert.match(listed, new RegExp(nonce, "i"), "the new order must appear in `zswap orders`");
+    const listed = quetzal("orders");
+    assert.match(listed, new RegExp(nonce, "i"), "the new order must appear in `quetzal orders`");
 
-    const cancelOut = zswap("cancel", "--nonce", nonce);
-    assert.match(cancelOut, /cancelled/i, "`zswap cancel` should confirm cancellation");
+    const cancelOut = quetzal("cancel", "--nonce", nonce);
+    assert.match(cancelOut, /cancelled/i, "`quetzal cancel` should confirm cancellation");
 
-    const afterCancel = zswap("orders");
+    const afterCancel = quetzal("orders");
     assert.match(afterCancel, /no resting orders/i, "the order list must be empty after cancel");
   });
 
@@ -199,8 +199,8 @@ describe("cli smoke (live integration)", () => {
     };
     await mineUntilBlock(Number(before.result.closes_at_block));
 
-    const out = zswap("close-epoch");
-    assert.match(out, /epoch advanced/i, "`zswap close-epoch` should confirm the advance");
+    const out = quetzal("close-epoch");
+    assert.match(out, /epoch advanced/i, "`quetzal close-epoch` should confirm the advance");
 
     const after = (await orderbook.methods.get_epoch().simulate({ from: admin })) as {
       result: { epoch_id: bigint };
@@ -209,20 +209,20 @@ describe("cli smoke (live integration)", () => {
   });
 
   it("deposit -> positions -> withdraw round-trip", { timeout: 600_000 }, async () => {
-    const depositOut = zswap(
+    const depositOut = quetzal(
       "deposit", "--amount-a", (1000n * 10n ** 6n).toString(), "--amount-b", (10n ** 18n).toString(),
     );
     const nonceMatch = depositOut.match(/position nonce:\s*(0x[0-9a-fA-F]+)/);
-    assert.ok(nonceMatch, `\`zswap deposit\` should print a position nonce; got:\n${depositOut}`);
+    assert.ok(nonceMatch, `\`quetzal deposit\` should print a position nonce; got:\n${depositOut}`);
     const nonce = nonceMatch![1]!;
 
-    const listed = zswap("positions");
-    assert.match(listed, new RegExp(nonce, "i"), "the new position must appear in `zswap positions`");
+    const listed = quetzal("positions");
+    assert.match(listed, new RegExp(nonce, "i"), "the new position must appear in `quetzal positions`");
 
-    const withdrawOut = zswap("withdraw", "--nonce", nonce);
-    assert.match(withdrawOut, /withdrawn/i, "`zswap withdraw` should confirm the withdrawal");
+    const withdrawOut = quetzal("withdraw", "--nonce", nonce);
+    assert.match(withdrawOut, /withdrawn/i, "`quetzal withdraw` should confirm the withdrawal");
 
-    const afterList = zswap("positions");
+    const afterList = quetzal("positions");
     assert.match(afterList, /no LP positions/i, "positions must be empty after withdraw");
   });
 
@@ -278,7 +278,7 @@ describe("cli smoke (live integration)", () => {
     await orderbook.methods.close_epoch_and_clear(fills, swap).send({ from: admin });
 
     // The buy order (admin, account 0) should now be claimable via the CLI.
-    const claimOut = zswap("claim", "--nonce", `0x${buyNonce.toString(16)}`);
-    assert.match(claimOut, /claimed [1-9]\d* output tokens/i, "`zswap claim` should confirm the claimed amount");
+    const claimOut = quetzal("claim", "--nonce", `0x${buyNonce.toString(16)}`);
+    assert.match(claimOut, /claimed [1-9]\d* output tokens/i, "`quetzal claim` should confirm the claimed amount");
   });
 });

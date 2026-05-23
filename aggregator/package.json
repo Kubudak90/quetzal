@@ -1,5 +1,5 @@
 {
-  "name": "@zswap/aggregator",
+  "name": "@quetzal/aggregator",
   "version": "0.0.0",
   "private": true,
   "type": "module",

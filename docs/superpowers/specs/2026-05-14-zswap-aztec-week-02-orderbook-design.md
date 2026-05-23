@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 2 — Token Unification + OrderbookContract Scaffold + `submit_order`
+# Quetzal Week 2 — Token Unification + OrderbookContract Scaffold + `submit_order`
 
 **Status:** Draft, awaiting user review
 **Date:** 2026-05-14
@@ -23,7 +23,7 @@
 | `_advance_epoch` gated public function (called by `ClearingContract`) | Week 3+ (needs ClearingContract) |
 | EpochState `OPEN → CLOSING → SETTLED` transitions | Week 3+ |
 | Standing-order carryover semantics + FIFO fairness validation | Week 6–8 (clearing circuit) |
-| CLI subcommand `zswap order` | Week 3 |
+| CLI subcommand `quetzal order` | Week 3 |
 | Off-chain reveal collector / signed reveal publishing | Week 9 (aggregator) |
 | LiquidityPoolContract | Week 4–5 |
 | ClearingContract | Week 6–8 |

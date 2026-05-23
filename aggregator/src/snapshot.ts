@@ -2,7 +2,7 @@
  * Per-epoch snapshot store for the Week 5d-4 settlement Merkle tree.
  *
  * The aggregator writes one JSON file per closed epoch under `<dir>/epoch-<N>.json`;
- * the CLI's `zswap claim` reads it back to construct the inclusion proof.
+ * the CLI's `quetzal claim` reads it back to construct the inclusion proof.
  */
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";

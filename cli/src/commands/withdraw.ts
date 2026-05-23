@@ -13,7 +13,7 @@ export function registerWithdraw(program: Command): void {
     .description("burn an LP position and reclaim its liquidity (Sub-2: per-bucket)")
     .requiredOption("--nonce <field>", "position nonce")
     .requiredOption("--bucket <id>", "bucket id the position belongs to (0..15)")
-    .option("--pool-id <n>", "Pool ID from zswap pools list", "0")
+    .option("--pool-id <n>", "Pool ID from quetzal pools list", "0")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const positionNonce = new Fr(parseField(String(opts.nonce)));

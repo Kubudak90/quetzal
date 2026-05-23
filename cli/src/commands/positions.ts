@@ -32,7 +32,7 @@ export function registerPositions(program: Command): void {
   program
     .command("positions")
     .description("list the account's LP positions (Sub-2: includes bucket info)")
-    .option("--pool-id <n>", "Pool ID from zswap pools list", "0")
+    .option("--pool-id <n>", "Pool ID from quetzal pools list", "0")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);

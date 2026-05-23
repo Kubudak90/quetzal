@@ -2,7 +2,7 @@
 
 **Status:** Design
 **Date:** 2026-05-23
-**Parent project:** [ZSwap-on-Aztec](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 4 of 6
+**Parent project:** [Quetzal](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 4 of 6
 **Predecessor specs:**
 - [Sub-1 / Sub-2.5 trustless clearing](2026-05-22-zswap-aztec-subproject-02-5-circuit-integration-design.md)
 - [Sub-3 permissionless aggregator](2026-05-22-zswap-aztec-subproject-03-dar-permissionless-aggregator-design.md)
@@ -10,7 +10,7 @@
 
 ## Goal
 
-Generalize ZSwap from a single-pair frequent-batch-auction (tUSDC/tETH) to multi-pair with explicit 2-hop maker-specified routing. A maker submitting a `tUSDC -> tBTC` intent via the bridge token tETH executes both legs atomically in one clearing epoch, with each leg pricing through its own per-pair clearing price discovery (Sub-1) and concentrated-liquidity pool (Sub-2.5).
+Generalize Quetzal from a single-pair frequent-batch-auction (tUSDC/tETH) to multi-pair with explicit 2-hop maker-specified routing. A maker submitting a `tUSDC -> tBTC` intent via the bridge token tETH executes both legs atomically in one clearing epoch, with each leg pricing through its own per-pair clearing price discovery (Sub-1) and concentrated-liquidity pool (Sub-2.5).
 
 ## Non-Goals
 
@@ -263,20 +263,20 @@ export function computeClearingMultiPair(args: {
 
 ```bash
 # Existing order command extended with --path
-zswap order --side buy --amount 1000000000 --limit 50000000000000000000 \
+quetzal order --side buy --amount 1000000000 --limit 50000000000000000000 \
             --path tUSDC,tETH,tBTC
 
 # 1-hop unchanged
-zswap order --side buy --amount 1000000000 --limit 2000000000000000000 \
+quetzal order --side buy --amount 1000000000 --limit 2000000000000000000 \
             --path tUSDC,tETH
 
 # Pool registry inspection
-zswap pools
+quetzal pools
 
 # Per-hop claim_fill
-zswap claim --nonce <order-nonce> --hop 0    # claim first leg
-zswap claim --nonce <order-nonce> --hop 1    # claim second leg
-zswap claim --nonce <order-nonce> --all      # convenience: claim both legs in one tx
+quetzal claim --nonce <order-nonce> --hop 0    # claim first leg
+quetzal claim --nonce <order-nonce> --hop 1    # claim second leg
+quetzal claim --nonce <order-nonce> --all      # convenience: claim both legs in one tx
 ```
 
 ### Testing strategy
@@ -305,7 +305,7 @@ zswap claim --nonce <order-nonce> --all      # convenience: claim both legs in o
 - **Phase B (4 tasks):** Orderbook multi-pool storage (`Map<u32, AztecAddress>` for pools and pool_tokens) + canonical token ordering helper + deploy script multi-pool list + Sub-3 4-deploy dance generalized
 - **Phase C (4 tasks):** Aggregator `computeClearingMultiPair` + composite eligibility + fixed-point iteration + witness builder ~114 field emission
 - **Phase D (3 tasks):** Circuit `fn main` multi-pool rewrite + per-pool bucket loop + 2-hop atomicity assertion + 64-leaf Merkle update
-- **Phase E (2 tasks):** claim_fill `--hop` option + CLI `zswap pools` + integration test scaffolds
+- **Phase E (2 tasks):** claim_fill `--hop` option + CLI `quetzal pools` + integration test scaffolds
 - **Phase F (2 tasks):** bb prove against new circuit + bridge constants re-verification + local e2e + memory note
 
 Estimated effort: ~3-4 weeks.

@@ -1,10 +1,10 @@
-# ZSwap-on-Aztec — Week 3: `cancel_order` + CLI scaffold Implementation Plan
+# Quetzal — Week 3: `cancel_order` + CLI scaffold Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `cancel_order` (escrow returned to the maker's private balance) and a `get_orders` getter to `OrderbookContract`, and ship a `cli/` package with `zswap order` / `cancel` / `orders`.
+**Goal:** Add `cancel_order` (escrow returned to the maker's private balance) and a `get_orders` getter to `OrderbookContract`, and ship a `cli/` package with `quetzal order` / `cancel` / `orders`.
 
-**Architecture:** `cancel_order` is the exact inverse of Week 2's `submit_order`: it pops the maker's resting `OrderNote` by its identity nonce (which nullifies it) and calls `Token.transfer_public_to_private` to move the escrow from the Orderbook's public balance back to the maker's private balance. The CLI is a thin `commander` wrapper over `@aztec/aztec.js`, reading contract addresses from `zswap.config.json`.
+**Architecture:** `cancel_order` is the exact inverse of Week 2's `submit_order`: it pops the maker's resting `OrderNote` by its identity nonce (which nullifies it) and calls `Token.transfer_public_to_private` to move the escrow from the Orderbook's public balance back to the maker's private balance. The CLI is a thin `commander` wrapper over `@aztec/aztec.js`, reading contract addresses from `quetzal.config.json`.
 
 **Tech Stack:** Noir / aztec-nr v4.2.0, Aztec 4.2.1, TypeScript (Node 22), `commander`, `node:test` + `tsx`, pnpm workspaces.
 
@@ -20,17 +20,17 @@
 | `contracts/orderbook/src/test.nr` | Add TXE tests for the paths that fire before any cross-contract call | Modify |
 | `tests/integration/orderbook.test.ts` | Add 5 cancel/`get_orders` integration tests | Modify |
 | `tests/integration/cli.test.ts` | CLI smoke test (`order` → `orders` → `cancel` → `orders`) | Create |
-| `cli/package.json` | `@zswap/cli` workspace package manifest | Create |
+| `cli/package.json` | `@quetzal/cli` workspace package manifest | Create |
 | `cli/tsconfig.json` | TS config for the CLI package | Create |
 | `cli/src/index.ts` | `commander` entry — registers the three subcommands | Create |
-| `cli/src/config.ts` | Load + validate `zswap.config.json` | Create |
+| `cli/src/config.ts` | Load + validate `quetzal.config.json` | Create |
 | `cli/src/wallet.ts` | Node client + `EmbeddedWallet` + account selection | Create |
 | `cli/src/field.ts` | `randomField()` + hex `Field` parsing helpers | Create |
-| `cli/src/commands/order.ts` | `zswap order` implementation | Create |
-| `cli/src/commands/cancel.ts` | `zswap cancel` implementation | Create |
-| `cli/src/commands/orders.ts` | `zswap orders` implementation | Create |
-| `scripts/deploy-tokens.ts` | Also write `zswap.config.json` | Modify |
-| `.gitignore` | Ignore `zswap.config.json` | Modify |
+| `cli/src/commands/order.ts` | `quetzal order` implementation | Create |
+| `cli/src/commands/cancel.ts` | `quetzal cancel` implementation | Create |
+| `cli/src/commands/orders.ts` | `quetzal orders` implementation | Create |
+| `scripts/deploy-tokens.ts` | Also write `quetzal.config.json` | Modify |
+| `.gitignore` | Ignore `quetzal.config.json` | Modify |
 | `README.md` | Status line + CLI quickstart | Modify |
 
 `pnpm-workspace.yaml` already lists `cli` — no change needed; `pnpm install` picks it up once `cli/package.json` exists.
@@ -439,7 +439,7 @@ git commit -m "test(orderbook): cancel_order escrow-return integration tests"
 
 ```json
 {
-  "name": "@zswap/cli",
+  "name": "@quetzal/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -507,7 +507,7 @@ export function parseField(raw: string): bigint {
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export interface ZswapConfig {
+export interface QuetzalConfig {
   nodeUrl: string;
   tUSDC: string;
   tETH: string;
@@ -515,14 +515,14 @@ export interface ZswapConfig {
   admin: string;
 }
 
-const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin"];
+const REQUIRED: (keyof QuetzalConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin"];
 
-/** Load and validate zswap.config.json (written by scripts/deploy-tokens.ts). */
-export function loadConfig(path = "zswap.config.json"): ZswapConfig {
+/** Load and validate quetzal.config.json (written by scripts/deploy-tokens.ts). */
+export function loadConfig(path = "quetzal.config.json"): QuetzalConfig {
   const abs = resolve(process.cwd(), path);
-  let parsed: Partial<ZswapConfig>;
+  let parsed: Partial<QuetzalConfig>;
   try {
-    parsed = JSON.parse(readFileSync(abs, "utf8")) as Partial<ZswapConfig>;
+    parsed = JSON.parse(readFileSync(abs, "utf8")) as Partial<QuetzalConfig>;
   } catch (e) {
     throw new Error(
       `could not read config at ${abs} — run \`pnpm tsx scripts/deploy-tokens.ts\` first ` +
@@ -534,7 +534,7 @@ export function loadConfig(path = "zswap.config.json"): ZswapConfig {
       throw new Error(`config at ${abs} is missing required string field "${key}"`);
     }
   }
-  return parsed as ZswapConfig;
+  return parsed as QuetzalConfig;
 }
 ```
 
@@ -545,12 +545,12 @@ import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
-import type { ZswapConfig } from "./config.js";
+import type { QuetzalConfig } from "./config.js";
 
 export interface CliContext {
   wallet: EmbeddedWallet;
   account: AztecAddress;
-  config: ZswapConfig;
+  config: QuetzalConfig;
   stop: () => Promise<void>;
 }
 
@@ -558,7 +558,7 @@ export interface CliContext {
  * Connect to the Aztec node from `config`, build an ephemeral wallet, register the
  * local-network test accounts, and select account `accountIndex` as the actor.
  */
-export async function openCli(config: ZswapConfig, accountIndex: number): Promise<CliContext> {
+export async function openCli(config: QuetzalConfig, accountIndex: number): Promise<CliContext> {
   const node = createAztecNodeClient(config.nodeUrl);
   await waitForNode(node);
 
@@ -594,8 +594,8 @@ import { registerOrders } from "./commands/orders.js";
 const program = new Command();
 program
   .name("zswap")
-  .description("ZSwap-on-Aztec CLI — submit, list, and cancel private orders")
-  .option("-c, --config <path>", "path to zswap.config.json", "zswap.config.json")
+  .description("Quetzal CLI — submit, list, and cancel private orders")
+  .option("-c, --config <path>", "path to quetzal.config.json", "quetzal.config.json")
   .option("-a, --account <index>", "test account index to act as", "0");
 
 registerOrder(program);
@@ -637,7 +637,7 @@ export function registerCancel(program: Command): void {
   program
     .command("cancel")
     .description("cancel a resting order and reclaim its escrow")
-    .requiredOption("--nonce <field>", "order-identity nonce (from `zswap order` / `zswap orders`)")
+    .requiredOption("--nonce <field>", "order-identity nonce (from `quetzal order` / `quetzal orders`)")
     .action(() => {
       throw new Error("not implemented yet");
     });
@@ -660,14 +660,14 @@ export function registerOrders(program: Command): void {
 
 - [ ] **Step 8: Install and typecheck**
 
-Run: `pnpm install` (picks up the new `cli` workspace member), then `pnpm --filter @zswap/cli typecheck`.
+Run: `pnpm install` (picks up the new `cli` workspace member), then `pnpm --filter @quetzal/cli typecheck`.
 Expected: install succeeds; `tsc --noEmit` reports no errors.
 
 - [ ] **Step 9: Commit**
 
 ```bash
 git add cli/ pnpm-lock.yaml
-git commit -m "feat(cli): @zswap/cli package scaffold (config, wallet, commander entry)"
+git commit -m "feat(cli): @quetzal/cli package scaffold (config, wallet, commander entry)"
 ```
 
 ---
@@ -724,7 +724,7 @@ export function registerOrder(program: Command): void {
 
         console.log(`order submitted (${side}, amount ${amount}, limit ${limit})`);
         console.log(`order nonce: 0x${orderNonce.toString(16)}`);
-        console.log(`cancel later with: zswap cancel --nonce 0x${orderNonce.toString(16)}`);
+        console.log(`cancel later with: quetzal cancel --nonce 0x${orderNonce.toString(16)}`);
       } finally {
         await ctx.stop();
       }
@@ -746,7 +746,7 @@ export function registerCancel(program: Command): void {
   program
     .command("cancel")
     .description("cancel a resting order and reclaim its escrow")
-    .requiredOption("--nonce <field>", "order-identity nonce (from `zswap order` / `zswap orders`)")
+    .requiredOption("--nonce <field>", "order-identity nonce (from `quetzal order` / `quetzal orders`)")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const orderNonce = parseField(String(opts.nonce));
@@ -844,16 +844,16 @@ export function registerOrders(program: Command): void {
 
 - [ ] **Step 4: Typecheck**
 
-Run: `pnpm --filter @zswap/cli typecheck`
+Run: `pnpm --filter @quetzal/cli typecheck`
 Expected: no errors. If the generated `get_orders` return type makes `normalise`/`sim.result` access ill-typed, adjust to the actual shape.
 
 - [ ] **Step 5: Manual smoke against the dev stack**
 
 Start `bash scripts/dev.sh` in another terminal; then:
 ```bash
-pnpm tsx scripts/deploy-tokens.ts          # writes zswap.config.json once Task 6 lands;
-                                            # until then, hand-write zswap.config.json
-pnpm --filter @zswap/cli zswap orders       # -> "no resting orders"
+pnpm tsx scripts/deploy-tokens.ts          # writes quetzal.config.json once Task 6 lands;
+                                            # until then, hand-write quetzal.config.json
+pnpm --filter @quetzal/cli quetzal orders       # -> "no resting orders"
 ```
 (Full end-to-end is covered by the automated smoke test in Task 6 — this step just confirms the command wiring runs. Skip if Task 6 is done in the same session.)
 
@@ -876,7 +876,7 @@ git commit -m "feat(cli): order, cancel, and orders commands"
 - Modify: `scripts/deploy-tokens.ts`, `.gitignore`
 - Create: `tests/integration/cli.test.ts`
 
-- [ ] **Step 1: `deploy-tokens.ts` also writes `zswap.config.json`**
+- [ ] **Step 1: `deploy-tokens.ts` also writes `quetzal.config.json`**
 
 In `scripts/deploy-tokens.ts`, add the `node:fs` import at the top, near the other imports:
 
@@ -895,11 +895,11 @@ Then, in `main()`, replace the single `console.log(JSON.stringify(...))` block w
     admin: admin.toString(),
   };
 
-  writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));
+  writeFileSync("quetzal.config.json", JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 ```
 
-(Keep the existing variable names — `tokenA`, `tokenB`, `deployedOB`, `admin`, `NODE_URL` — exactly as they already appear in the file. The only behavioural change is adding the `zswap.config.json` write and including `nodeUrl` in the object.)
+(Keep the existing variable names — `tokenA`, `tokenB`, `deployedOB`, `admin`, `NODE_URL` — exactly as they already appear in the file. The only behavioural change is adding the `quetzal.config.json` write and including `nodeUrl` in the object.)
 
 - [ ] **Step 2: `.gitignore` — ignore the generated config**
 
@@ -907,12 +907,12 @@ Add to `.gitignore`, under a fitting section:
 
 ```
 # CLI runtime config (environment-specific contract addresses, written by deploy-tokens.ts)
-zswap.config.json
+quetzal.config.json
 ```
 
 - [ ] **Step 3: Create `tests/integration/cli.test.ts`**
 
-The smoke test deploys its own Token×2 + Orderbook, mints tUSDC to account 0, writes a dedicated `zswap.config.cli-test.json`, then drives the CLI as a child process: `order` → `orders` (asserts the order is listed) → `cancel` → `orders` (asserts empty).
+The smoke test deploys its own Token×2 + Orderbook, mints tUSDC to account 0, writes a dedicated `quetzal.config.cli-test.json`, then drives the CLI as a child process: `order` → `orders` (asserts the order is listed) → `cancel` → `orders` (asserts empty).
 
 ```ts
 import { describe, it, before, after } from "node:test";
@@ -933,7 +933,7 @@ import { OrderbookContract } from "./generated/Orderbook.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
 const CLI_ENTRY = resolve(REPO_ROOT, "cli/src/index.ts");
-const CONFIG_PATH = resolve(REPO_ROOT, "zswap.config.cli-test.json");
+const CONFIG_PATH = resolve(REPO_ROOT, "quetzal.config.cli-test.json");
 
 const ONE_TUSDC = 10n ** 6n;
 const MINT = 1_000n * ONE_TUSDC;
@@ -1009,14 +1009,14 @@ describe("cli smoke (live integration)", () => {
       "order", "--side", "buy", "--amount", ORDER_AMOUNT.toString(), "--limit", PRICE_2.toString(),
     );
     const nonceMatch = orderOut.match(/order nonce:\s*(0x[0-9a-fA-F]+)/);
-    assert.ok(nonceMatch, `\`zswap order\` should print an order nonce; got:\n${orderOut}`);
+    assert.ok(nonceMatch, `\`quetzal order\` should print an order nonce; got:\n${orderOut}`);
     const nonce = nonceMatch![1]!;
 
     const listed = zswap("orders");
-    assert.match(listed, new RegExp(nonce, "i"), "the new order must appear in `zswap orders`");
+    assert.match(listed, new RegExp(nonce, "i"), "the new order must appear in `quetzal orders`");
 
     const cancelOut = zswap("cancel", "--nonce", nonce);
-    assert.match(cancelOut, /cancelled/i, "`zswap cancel` should confirm cancellation");
+    assert.match(cancelOut, /cancelled/i, "`quetzal cancel` should confirm cancellation");
 
     const afterCancel = zswap("orders");
     assert.match(afterCancel, /no resting orders/i, "the order list must be empty after cancel");
@@ -1037,7 +1037,7 @@ Stop the dev stack: `bash scripts/dev.sh --down`.
 
 ```bash
 git add scripts/deploy-tokens.ts .gitignore tests/integration/cli.test.ts
-git commit -m "feat(cli): deploy-tokens writes zswap.config.json + CLI smoke test"
+git commit -m "feat(cli): deploy-tokens writes quetzal.config.json + CLI smoke test"
 ```
 
 ---
@@ -1052,7 +1052,7 @@ git commit -m "feat(cli): deploy-tokens writes zswap.config.json + CLI smoke tes
 - [ ] **Step 1: Clean rebuild from scratch**
 
 ```bash
-rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json zswap.config.json
+rm -rf node_modules contracts/*/target tests/integration/generated tests/node_modules cli/node_modules codegenCache.json quetzal.config.json
 pnpm install
 pnpm compile
 pnpm codegen
@@ -1075,7 +1075,7 @@ pnpm tsx scripts/deploy-tokens.ts
 
 Expected:
 - `pnpm test`: `pass 12`, `fail 0`.
-- `deploy-tokens.ts`: prints JSON with `tUSDC`/`tETH`/`orderbook`/`admin`/`nodeUrl`, and `zswap.config.json` now exists (`ls zswap.config.json`).
+- `deploy-tokens.ts`: prints JSON with `tUSDC`/`tETH`/`orderbook`/`admin`/`nodeUrl`, and `quetzal.config.json` now exists (`ls quetzal.config.json`).
 
 Stop the dev stack: `bash scripts/dev.sh --down`.
 
@@ -1084,17 +1084,17 @@ Stop the dev stack: `bash scripts/dev.sh --down`.
 In `README.md`, replace the `**Status:**` line with:
 
 ```
-**Status:** Week 3 complete. `OrderbookContract` supports `submit_order` and `cancel_order` (escrow returned to the maker's private balance); a `zswap` CLI submits, lists, and cancels orders. 12 integration tests + 8 TXE tests green. Week 4 adds epoch transitions and the `ClearingContract`.
+**Status:** Week 3 complete. `OrderbookContract` supports `submit_order` and `cancel_order` (escrow returned to the maker's private balance); a `quetzal` CLI submits, lists, and cancels orders. 12 integration tests + 8 TXE tests green. Week 4 adds epoch transitions and the `ClearingContract`.
 ```
 
 In the `## Quickstart` section, add a CLI block after the `pnpm test` block:
 
 ```
-# Use the CLI (after deploy-tokens.ts has written zswap.config.json)
+# Use the CLI (after deploy-tokens.ts has written quetzal.config.json)
 pnpm tsx scripts/deploy-tokens.ts
-pnpm --filter @zswap/cli zswap order --side buy --amount 100000000 --limit 2000000000000000000
-pnpm --filter @zswap/cli zswap orders
-pnpm --filter @zswap/cli zswap cancel --nonce <order-nonce-from-above>
+pnpm --filter @quetzal/cli quetzal order --side buy --amount 100000000 --limit 2000000000000000000
+pnpm --filter @quetzal/cli quetzal orders
+pnpm --filter @quetzal/cli quetzal cancel --nonce <order-nonce-from-above>
 ```
 
 In the `## Documentation` section, add:
@@ -1121,7 +1121,7 @@ Expected: `week-03-cancel-cli`.
 
 - `cancel_order` and `get_orders` compile; `pnpm compile` and `pnpm codegen` succeed for both contracts.
 - All Week 2 tests still pass; 2 new cancel TXE tests, 5 new cancel integration tests, and the CLI smoke test pass (`8` TXE orderbook tests, `12` integration tests total).
-- `zswap order` / `zswap orders` / `zswap cancel` work end-to-end against the dev stack after `deploy-tokens.ts` writes `zswap.config.json`.
+- `quetzal order` / `quetzal orders` / `quetzal cancel` work end-to-end against the dev stack after `deploy-tokens.ts` writes `quetzal.config.json`.
 - A submitted order can be cancelled and the maker's **private** balance is fully restored — verified on-chain by `readPrivateBalance`.
 - `git tag` shows `week-03-cancel-cli`.
 

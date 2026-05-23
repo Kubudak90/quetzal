@@ -11,7 +11,7 @@
 **Source spec:** `docs/superpowers/specs/2026-05-20-zswap-aztec-week-05d-3-onchain-recursive-verify-design.md`
 
 **Execution preconditions:**
-- VPS dev stack on `zswap-vps` (anvil :18545, aztec :18080) running.
+- VPS dev stack on `quetzal-vps` (anvil :18545, aztec :18080) running.
 - Local Mac + VPS both have Aztec 4.2.1 toolchain (set up in 5d-2). `bb` available at `/root/.aztec/versions/4.2.1/node_modules/@aztec/bb.js/build/amd64-linux/bb` on VPS.
 - HEAD is `3cd1712` (Week 5d-3 spec committed).
 
@@ -93,13 +93,13 @@ Run:
 ```
 pnpm compile 2>&1 | tail -10
 pnpm test:noir 2>&1 | grep -E "tests? (passed|failed)" | tail -5
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 ```
 
 Expected:
 - `pnpm compile` completes 0, including the circuit compile.
 - `pnpm test:noir` shows 14+10+4 = 28 TXE tests passing AND 11 Noir clearing-circuit unit tests passing.
-- `pnpm --filter @zswap/aggregator test` shows the full aggregator suite (last count = 29) green.
+- `pnpm --filter @quetzal/aggregator test` shows the full aggregator suite (last count = 29) green.
 
 If the test counts changed (e.g., one of the witness.test.ts reference vectors now mismatches because of the N reduction), open that test file and adjust the expected sizes (replace any literal `128` in array-length expectations with `32`, replace any `256` reflecting old `fills.length × 2` flatten with `64`, etc.).
 
@@ -757,9 +757,9 @@ const proofFields = readProofAsFields(`${CIRCUIT_DIR}/target/proof/proof`);
 - [ ] **Step 3: Sync to VPS + run the 5d-2 e2e to confirm the helper works.**
 
 ```
-rsync -e ssh tests/integration/helpers/proof.ts zswap-vps:/root/zswap-aztec/tests/integration/helpers/proof.ts
-rsync -e ssh tests/integration/clearing-circuit.test.ts zswap-vps:/root/zswap-aztec/tests/integration/clearing-circuit.test.ts
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing-circuit.test.ts 2>&1 | tail -30"
+rsync -e ssh tests/integration/helpers/proof.ts quetzal-vps:/root/quetzal/tests/integration/helpers/proof.ts
+rsync -e ssh tests/integration/clearing-circuit.test.ts quetzal-vps:/root/quetzal/tests/integration/clearing-circuit.test.ts
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing-circuit.test.ts 2>&1 | tail -30"
 ```
 
 Expected: E1 passes (1 pass, 0 fail). The helper-based parsing produces the same Fr[] the inline code did.
@@ -841,7 +841,7 @@ import { computeClearing } from "../../aggregator/src/clearing.js";
 import { buildClearingWitness } from "../../aggregator/src/witness.js";
 
 // VPS paths — the circuit + bb prover live there.
-const CIRCUIT_DIR = "/root/zswap-aztec/circuits/clearing";
+const CIRCUIT_DIR = "/root/quetzal/circuits/clearing";
 const BB_BIN = "/root/.aztec/versions/4.2.1/node_modules/@aztec/bb.js/build/amd64-linux/bb";
 
 const SIDE_A_TO_B = false;
@@ -989,13 +989,13 @@ describe("clearing verified-flow (live integration)", { timeout: 30 * 60 * 1_000
     });
 
     // Step 5: ssh write Prover.toml to VPS + run nargo execute + bb prove.
-    spawnSync("ssh", ["zswap-vps", `cat > ${CIRCUIT_DIR}/Prover.toml`], { input: proverToml });
+    spawnSync("ssh", ["quetzal-vps", `cat > ${CIRCUIT_DIR}/Prover.toml`], { input: proverToml });
 
-    const exec = spawnSync("ssh", ["zswap-vps",
-      `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings 2>&1`]);
+    const exec = spawnSync("ssh", ["quetzal-vps",
+      `source /root/.quetzal-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings 2>&1`]);
     assert.equal(exec.status, 0, `nargo execute failed: ${exec.stdout?.toString()}\n${exec.stderr?.toString()}`);
 
-    const prove = spawnSync("ssh", ["zswap-vps",
+    const prove = spawnSync("ssh", ["quetzal-vps",
       `${BB_BIN} prove -b ${CIRCUIT_DIR}/target/clearing.json -w ${CIRCUIT_DIR}/target/clearing.gz -o ${CIRCUIT_DIR}/target/proof -t noir-recursive 2>&1`]);
     if (prove.status !== 0) {
       // If this is the N=32 OOM scenario, the user must fall back to N=16 (re-do Task 1).
@@ -1004,7 +1004,7 @@ describe("clearing verified-flow (live integration)", { timeout: 30 * 60 * 1_000
     }
 
     // Step 6: copy the proof back, parse to Fr[456].
-    spawnSync("scp", [`zswap-vps:${CIRCUIT_DIR}/target/proof/proof`, "/tmp/clearing-proof.bin"]);
+    spawnSync("scp", [`quetzal-vps:${CIRCUIT_DIR}/target/proof/proof`, "/tmp/clearing-proof.bin"]);
     const proofFields = readProofAsFields("/tmp/clearing-proof.bin");
     assert.equal(proofFields.length, 456, "proof has 456 Field elements");
 
@@ -1086,8 +1086,8 @@ function buildPublicInputsStruct(epoch: any, pool: any, clearing: any) {
 - [ ] **Step 3: Sync + run E1 on VPS.**
 
 ```
-rsync -e ssh tests/integration/clearing.test.ts zswap-vps:/root/zswap-aztec/tests/integration/clearing.test.ts
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing.test.ts 2>&1 | tail -60"
+rsync -e ssh tests/integration/clearing.test.ts quetzal-vps:/root/quetzal/tests/integration/clearing.test.ts
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal && pnpm codegen > /tmp/codegen.log 2>&1 && cd tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E1' integration/clearing.test.ts 2>&1 | tail -60"
 ```
 
 Expected: E1 passes (`tests 1, pass 1, fail 0`). Total runtime ~15-25 min (fixture deploy + submits + nargo execute + bb prove + contract call + assertions).
@@ -1210,8 +1210,8 @@ The implementer can inline the helper body by copying the relevant block from E1
 - [ ] **Step 2: Sync + run E2.**
 
 ```
-rsync -e ssh tests/integration/clearing.test.ts zswap-vps:/root/zswap-aztec/tests/integration/clearing.test.ts
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E2' integration/clearing.test.ts 2>&1 | tail -40"
+rsync -e ssh tests/integration/clearing.test.ts quetzal-vps:/root/quetzal/tests/integration/clearing.test.ts
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E2' integration/clearing.test.ts 2>&1 | tail -40"
 ```
 
 Expected: E2 passes (asserts the tampered proof was rejected).
@@ -1219,7 +1219,7 @@ Expected: E2 passes (asserts the tampered proof was rejected).
 - [ ] **Step 3: Run E3.**
 
 ```
-ssh zswap-vps "source /root/.zswap-env && cd /root/zswap-aztec/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E3' integration/clearing.test.ts 2>&1 | tail -40"
+ssh quetzal-vps "source /root/.quetzal-env && cd /root/quetzal/tests && AZTEC_NODE_URL=http://localhost:18080 timeout 1800 node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-name-pattern='E3' integration/clearing.test.ts 2>&1 | tail -40"
 ```
 
 Expected: E3 passes (the second apply call rejects with `/order_acc mismatch/i`).
@@ -1240,9 +1240,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 8: CLI `zswap close-epoch-verified`
+## Task 8: CLI `quetzal close-epoch-verified`
 
-A new subcommand that, given a proof file path and the current epoch state, calls `close_epoch_and_clear_verified` against the deployed orderbook. The existing `zswap close-epoch` stays as the no-clear fallback.
+A new subcommand that, given a proof file path and the current epoch state, calls `close_epoch_and_clear_verified` against the deployed orderbook. The existing `quetzal close-epoch` stays as the no-clear fallback.
 
 **Files:**
 - Modify: `cli/src/commands/close-epoch.ts` (or create the new file alongside)
@@ -1253,7 +1253,7 @@ A new subcommand that, given a proof file path and the current epoch state, call
 cat cli/src/commands/close-epoch.ts
 ```
 
-Note the current command structure (yargs / commander / etc.), how it imports the orderbook contract, and how it reads `zswap.config.json` for the deployed address.
+Note the current command structure (yargs / commander / etc.), how it imports the orderbook contract, and how it reads `quetzal.config.json` for the deployed address.
 
 - [ ] **Step 2: Add a new `close-epoch-verified` subcommand.**
 
@@ -1268,7 +1268,7 @@ cli.command("close-epoch-verified")
   .option("--proof <path>", "Path to bb prove's binary proof file", "/tmp/clearing-proof.bin")
   .option("--public-inputs <path>", "Path to a JSON file with the ClearingPublic struct", "/tmp/clearing-public-inputs.json")
   .action(async (opts: { proof: string; publicInputs: string }) => {
-    const config = readZswapConfig();
+    const config = readQuetzalConfig();
     const { wallet, node } = await connectAndLoad(config);
     const orderbook = await OrderbookContract.at(config.orderbookAddress, wallet);
 
@@ -1281,15 +1281,15 @@ cli.command("close-epoch-verified")
   });
 ```
 
-(`readZswapConfig` + `connectAndLoad` mirror whatever the existing close-epoch command uses to load `zswap.config.json` and connect to PXE. If the existing pattern differs, adapt.)
+(`readQuetzalConfig` + `connectAndLoad` mirror whatever the existing close-epoch command uses to load `quetzal.config.json` and connect to PXE. If the existing pattern differs, adapt.)
 
 Note: if importing `readProofAsFields` from `../../tests/integration/helpers/proof.js` is awkward (cli shouldn't depend on tests/), MOVE the helper to `aggregator/src/proof.ts` or `cli/src/proof.ts` and update Task 5's commit to put it there — the tests then import from the new home.
 
 - [ ] **Step 3: Verify the CLI builds + the new subcommand shows up in --help.**
 
 ```
-pnpm --filter @zswap/cli build
-pnpm --filter @zswap/cli zswap --help 2>&1 | grep close-epoch-verified
+pnpm --filter @quetzal/cli build
+pnpm --filter @quetzal/cli zswap --help 2>&1 | grep close-epoch-verified
 ```
 
 Expected: the new subcommand appears in the help output.
@@ -1298,7 +1298,7 @@ Expected: the new subcommand appears in the help output.
 
 ```
 git add cli/src/commands/close-epoch.ts
-git commit -m "feat(cli): zswap close-epoch-verified subcommand
+git commit -m "feat(cli): quetzal close-epoch-verified subcommand
 
 Reads a bb prove'd proof file + a JSON public_inputs file and calls
 orderbook.close_epoch_and_clear_verified. The existing close-epoch

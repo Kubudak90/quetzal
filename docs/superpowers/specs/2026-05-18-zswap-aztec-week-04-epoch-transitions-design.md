@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 4 — Epoch transitions
+# Quetzal Week 4 — Epoch transitions
 
 **Status:** design
 **Date:** 2026-05-18
@@ -6,7 +6,7 @@
 **Predecessor:** `2026-05-17-zswap-aztec-week-03-cancel-cli-design.md`
 
 Week 3 completed the user-facing order lifecycle (`submit_order` / `cancel_order` /
-the `zswap` CLI), but the epoch never advances: epoch 0 stays OPEN forever and
+the `quetzal` CLI), but the epoch never advances: epoch 0 stays OPEN forever and
 `closes_at_block` is written yet never read. Week 4 makes the epoch genuinely
 cycle. It adds a `close_epoch` function that advances `current_epoch` to a fresh
 epoch once the time window has expired, and tightens `submit_order` /
@@ -31,7 +31,7 @@ fills, and settlement arrive in Week 6-8.
 - **Dead-code removal** - the unused `clearing` constructor argument, the
   `clearing_addr` storage field, and the `get_clearing_addr` getter are removed
   (see section 3).
-- **`zswap close-epoch`** CLI command.
+- **`quetzal close-epoch`** CLI command.
 
 ## 2. Non-goals (deferred)
 
@@ -193,7 +193,7 @@ epoch, after which cancellation works again.
 
 ---
 
-## 6. `zswap close-epoch` CLI command
+## 6. `quetzal close-epoch` CLI command
 
 A fourth CLI command so epoch advancement is reachable by users, not only tests.
 It mirrors the existing `order` / `cancel` / `orders` commands:
@@ -245,7 +245,7 @@ A new `describe` block, deploying the orderbook with a small `epoch_length`
 ### 7.3 CLI smoke (`tests/integration/cli.test.ts`)
 
 Extend the existing smoke test (or add a case): after the order round-trip, mine
-past expiry and run `zswap close-epoch`; assert stdout reports the incremented
+past expiry and run `quetzal close-epoch`; assert stdout reports the incremented
 `epoch_id`.
 
 ---
@@ -271,7 +271,7 @@ README.md                            ~  status line + CLI command list
 1. Constructor + storage change (`epoch_length` in, `clearing_addr` out); update the affected TXE test; recompile + codegen.
 2. `close_epoch` + the `_assert_epoch_open` expiry guard; TXE tests.
 3. Integration tests for epoch transitions.
-4. `zswap close-epoch` CLI command + CLI smoke case.
+4. `quetzal close-epoch` CLI command + CLI smoke case.
 5. `deploy-tokens.ts` passes `epoch_length`; final clean rebuild + smoke; README; milestone commit + tag `week-04-epoch-transitions`.
 
 ## 10. Risks specific to Week 4
@@ -299,7 +299,7 @@ README.md                            ~  status line + CLI command list
 - An epoch deployed with `epoch_length = E` can be advanced by `close_epoch` only
   after `block >= closes_at_block`, and `submit_order` is blocked in the
   expired-but-not-closed window - both verified on-chain.
-- `zswap close-epoch` advances the epoch end-to-end against the dev stack.
+- `quetzal close-epoch` advances the epoch end-to-end against the dev stack.
 - `git tag` shows `week-04-epoch-transitions`.
 
 ## 12. Open questions deferred to implementation

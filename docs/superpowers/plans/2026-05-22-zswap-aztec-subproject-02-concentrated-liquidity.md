@@ -647,7 +647,7 @@ describe("buckets.maxAInToUpper / maxBInToLower", () => {
 
 ```bash
 cd /Users/huseyinarslan/Desktop/aztec-project
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error — buckets.ts doesn't exist yet.
@@ -751,7 +751,7 @@ export function maxBInToLower(state: BucketState, bounds: BucketBounds, sqrt_p: 
 - [ ] **Step 4: Run tests (pass)**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 ```
 
 Expected: all new buckets tests PASS + existing 55 tests still PASS.
@@ -839,7 +839,7 @@ describe("buckets parity (JS vs Noir)", () => {
 - [ ] **Step 3: Run parity tests**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 ```
 
 Expected: 3 parity tests PASS (structural; full numeric parity pinning is a follow-up note in the file).
@@ -1730,7 +1730,7 @@ describe("traceBucketSwap (Sub-2)", () => {
 - [ ] **Step 4: Run JS tests**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 ```
 
 Expected: smoke test passes.
@@ -1779,7 +1779,7 @@ assert.match(out.proverToml, /^active_bucket_count = \d+$/m);
 - [ ] **Step 3: Run tests + commit**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
 git add aggregator/src/witness.ts aggregator/test/witness.test.ts
 git commit -m "feat(aggregator/witness): emit 40-field Sub-2 ClearingPublic shape"
 ```
@@ -2011,7 +2011,7 @@ git commit -m "feat(orderbook): _apply_verified_clearing wires BucketDelta[4] to
 
 ---
 
-### Task 18: CLI `zswap deposit --bucket` + `--auto-b`
+### Task 18: CLI `quetzal deposit --bucket` + `--auto-b`
 
 **Files:**
 - Modify: `cli/src/commands/deposit.ts`
@@ -2101,14 +2101,14 @@ In `contracts/pool/src/main.nr`, add to the utility getters section:
 
 ```bash
 pnpm compile 2>&1 | tail -5
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -5
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -5
 git add contracts/pool/src/main.nr cli/src/commands/deposit.ts
 git commit -m "feat(cli/deposit): --bucket required + --auto-b ratio derivation"
 ```
 
 ---
 
-### Task 19: CLI `zswap positions` enriched
+### Task 19: CLI `quetzal positions` enriched
 
 **Files:**
 - Modify: `cli/src/commands/positions.ts`
@@ -2133,7 +2133,7 @@ for (const p of positions) {
 - [ ] **Step 2: Typecheck + commit**
 
 ```bash
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -3
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -3
 git add cli/src/commands/positions.ts
 git commit -m "feat(cli/positions): show bucket_id + in-range status"
 ```
@@ -2159,7 +2159,7 @@ const deployedPool = await LiquidityPoolContract.deploy(
 ).send({ from: admin });
 ```
 
-Add these constants to `zswap.config.json` so the CLI can compute bucket bounds without re-reading on-chain:
+Add these constants to `quetzal.config.json` so the CLI can compute bucket bounds without re-reading on-chain:
 
 ```ts
 const result = {
@@ -2169,12 +2169,12 @@ const result = {
 };
 ```
 
-- [ ] **Step 2: Add to ZswapConfig**
+- [ ] **Step 2: Add to QuetzalConfig**
 
 In `cli/src/config.ts`:
 
 ```ts
-export interface ZswapConfig {
+export interface QuetzalConfig {
   // ... existing ...
   bucketPMinSqrt?: string;  // optional during incremental migration
   bucketGrowthNum?: string;
@@ -2256,7 +2256,7 @@ git commit -m "feat(sub-2): e2e dormant scaffold + README + memory note"
 
 After Task 21:
 
-1. Confirm all suites green: `pnpm compile && pnpm test:noir && pnpm --filter @zswap/aggregator test && pnpm --filter @zswap/cli typecheck`
+1. Confirm all suites green: `pnpm compile && pnpm test:noir && pnpm --filter @quetzal/aggregator test && pnpm --filter @quetzal/cli typecheck`
 2. Update `README.md` status to "Sub-2 complete"; flag deferred-to-e2e items
 3. Memory note + MEMORY.md index entry for Sub-2
 4. (Deferred) Run the e2e in a live-stack session: `pnpm test --filter='./tests/**' -- --test-name-pattern='Sub-2 e2e'`

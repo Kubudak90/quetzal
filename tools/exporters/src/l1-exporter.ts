@@ -5,17 +5,17 @@ import { setupRegistry, startServer } from "./shared/promClient.js";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 9100);
-const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "zswap.config.json";
+const CONFIG_PATH = process.env.QUETZAL_CONFIG ?? "quetzal.config.json";
 
-interface ZswapConfigL1 {
+interface QuetzalConfigL1 {
   rpcUrl: string;
   usdcBridge: string;
   wethBridge: string;
   wbtcBridge?: string;
 }
-interface ZswapConfig { l1: ZswapConfigL1; }
+interface QuetzalConfig { l1: QuetzalConfigL1; }
 
-const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as ZswapConfig;
+const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as QuetzalConfig;
 
 const chain = cfg.l1.rpcUrl.includes("sepolia") ? sepolia : mainnet;
 const client = createPublicClient({ chain, transport: http(cfg.l1.rpcUrl) });
@@ -27,10 +27,10 @@ const TOKEN_BRIDGE_ABI = [
 ] as const;
 
 const reg = setupRegistry();
-const totalLockedG = new Gauge({ name: "zswap_bridge_total_locked",      help: "token amount locked in portal (native units)", labelNames: ["token"], registers: [reg] });
-const maxTvlG      = new Gauge({ name: "zswap_bridge_max_tvl",           help: "TVL cap (native units; 0 = unlimited)",      labelNames: ["token"], registers: [reg] });
-const tvlUtilG     = new Gauge({ name: "zswap_bridge_tvl_utilization",   help: "locked / max ratio",                          labelNames: ["token"], registers: [reg] });
-const pausedG      = new Gauge({ name: "zswap_bridge_paused",            help: "1 if paused, 0 if active",                    labelNames: ["token"], registers: [reg] });
+const totalLockedG = new Gauge({ name: "quetzal_bridge_total_locked",      help: "token amount locked in portal (native units)", labelNames: ["token"], registers: [reg] });
+const maxTvlG      = new Gauge({ name: "quetzal_bridge_max_tvl",           help: "TVL cap (native units; 0 = unlimited)",      labelNames: ["token"], registers: [reg] });
+const tvlUtilG     = new Gauge({ name: "quetzal_bridge_tvl_utilization",   help: "locked / max ratio",                          labelNames: ["token"], registers: [reg] });
+const pausedG      = new Gauge({ name: "quetzal_bridge_paused",            help: "1 if paused, 0 if active",                    labelNames: ["token"], registers: [reg] });
 
 async function scrape(): Promise<void> {
   const portals: Array<[string, string]> = [

@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec MVP — Design Spec
+# Quetzal MVP — Design Spec
 
 **Status:** Draft, awaiting user review
 **Date:** 2026-05-14
@@ -9,11 +9,11 @@
 
 ## 1. Executive Summary
 
-ZSwap-on-Aztec is an MEV-resistant dark-pool DEX implemented as Noir smart contracts on the Aztec Network. Orders are submitted as encrypted private notes, batched per epoch, and cleared at a single uniform price determined by the AMM bonding curve and revealed order set. Frontrunning and sandwich attacks are mathematically impossible because all orders within an epoch settle simultaneously at one price.
+Quetzal is an MEV-resistant dark-pool DEX implemented as Noir smart contracts on the Aztec Network. Orders are submitted as encrypted private notes, batched per epoch, and cleared at a single uniform price determined by the AMM bonding curve and revealed order set. Frontrunning and sandwich attacks are mathematically impossible because all orders within an epoch settle simultaneously at one price.
 
 This MVP delivers a single-pair, uniform-liquidity vertical slice: end-to-end private trade with private LP positions, swap fees accruing to LPs, FIFO-fair carryover for over-subscribed epochs, and order cancellation. The MVP runs against a single trusted aggregator; permissionless aggregation arrives in sub-project 3.
 
-The design is a faithful adaptation of Penumbra's ZSwap to Aztec's native private-note model. Penumbra solves the analogous problem on Cosmos via threshold encryption + DAR auctions; Aztec's per-user encrypted notes let us use a simpler user-PXE reveal channel in V1.
+The design is a faithful adaptation of Penumbra's Quetzal to Aztec's native private-note model. Penumbra solves the analogous problem on Cosmos via threshold encryption + DAR auctions; Aztec's per-user encrypted notes let us use a simpler user-PXE reveal channel in V1.
 
 ---
 
@@ -63,7 +63,7 @@ A possible later refactor: collapse `OrderbookContract` and `ClearingContract` i
 |---|---|---|
 | Aggregator client | TypeScript (Node 22), `@aztec/aztec.js`, Noir.js | Watches the chain for `close_epoch_and_clear` opportunities. Collects user reveals over the reveal channel. Computes clearing price. Generates the clearing proof. Submits the clearing transaction. |
 | Reveal collector | TypeScript, part of aggregator | Receives signed reveal payloads from user PXEs over a simple WebSocket relay. MVP-only minimum-viable channel; sub-project 3 replaces this with threshold encryption + DKG committee. |
-| CLI | TypeScript, `commander` + `@aztec/aztec.js` | `zswap deposit`, `zswap order`, `zswap cancel`, `zswap withdraw`, `zswap claim`. Thin wrapper over wallet + contract calls. Also publishes the user's order reveal to the reveal collector. |
+| CLI | TypeScript, `commander` + `@aztec/aztec.js` | `quetzal deposit`, `quetzal order`, `quetzal cancel`, `quetzal withdraw`, `quetzal claim`. Thin wrapper over wallet + contract calls. Also publishes the user's order reveal to the reveal collector. |
 
 ### 3.3 Data flow — one epoch
 

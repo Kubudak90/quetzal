@@ -3,27 +3,27 @@ import { setupRegistry, startServer } from "./shared/promClient.js";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 9101);
-const CONFIG_PATH = process.env.ZSWAP_CONFIG ?? "zswap.config.json";
+const CONFIG_PATH = process.env.QUETZAL_CONFIG ?? "quetzal.config.json";
 
-interface ZswapPool {
+interface QuetzalPool {
   pool_id: number;
   address: string;
   token_a: string;
   token_b: string;
 }
 
-interface ZswapConfig {
+interface QuetzalConfig {
   nodeUrl: string;
   orderbook: string;
   treasury?: string;
   aggregatorRegistry?: string;
-  pools: ZswapPool[];
+  pools: QuetzalPool[];
   tUSDC: string;
   tETH: string;
   tBTC?: string;
 }
 
-const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as ZswapConfig;
+const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as QuetzalConfig;
 
 const reg = setupRegistry();
 
@@ -34,26 +34,26 @@ const reg = setupRegistry();
 // ---------------------------------------------------------------------------
 
 const lastClearingG = new Gauge({
-  name: "zswap_l2_orderbook_last_clearing_timestamp",
+  name: "quetzal_l2_orderbook_last_clearing_timestamp",
   help: "unix seconds of most recent close_epoch_and_clear_verified",
   registers: [reg],
 });
 
 const treasuryBalanceG = new Gauge({
-  name: "zswap_l2_treasury_balance",
+  name: "quetzal_l2_treasury_balance",
   help: "Treasury tracked_balance (bond token native units)",
   labelNames: ["token"],
   registers: [reg],
 });
 
 const registrySizeG = new Gauge({
-  name: "zswap_l2_aggregator_registry_size",
+  name: "quetzal_l2_aggregator_registry_size",
   help: "Number of currently-bonded aggregators (highest-ever-allocated id; may include holes)",
   registers: [reg],
 });
 
 const poolReserveG = new Gauge({
-  name: "zswap_l2_pool_reserve",
+  name: "quetzal_l2_pool_reserve",
   help: "Pool reserve (token native units)",
   labelNames: ["pool_id", "token"],
   registers: [reg],

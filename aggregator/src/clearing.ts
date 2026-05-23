@@ -1,5 +1,5 @@
 /**
- * Frequent-batch-auction clearing for ZSwap. Pure computation - given a pool
+ * Frequent-batch-auction clearing for Quetzal. Pure computation - given a pool
  * snapshot and a set of orders, `computeClearing` produces the uniform clearing
  * price, the per-order fills, the post-clearing reserves, and the LP fee accrual.
  *
@@ -104,7 +104,7 @@ export interface NetSwap {
  * Swap the signed net imbalance through the constant-product pool.
  * `netA > 0`: token A flows in. `netA < 0`: token B flows in (sized via `p`).
  * `netA == 0`: no swap. The 0.3% fee is WITHHELD from the swap input and reported
- * in `feeAmount*` - it is NOT added to the reserves (ZSwap tracks fees in a
+ * in `feeAmount*` - it is NOT added to the reserves (Quetzal tracks fees in a
  * separate per-share counter; see the spec, Step 4).
  */
 export function simulateNet(

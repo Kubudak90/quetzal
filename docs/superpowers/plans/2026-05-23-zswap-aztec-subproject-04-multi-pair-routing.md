@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Generalize ZSwap from single-pair (tUSDC/tETH) to multi-pair with explicit 2-hop maker-specified routing — same single Orderbook serves N pools (MAX_ACTIVE_POOLS_PER_EPOCH=3), per-pair P\* with composite pricing for 2-hop orders, atomic both-or-neither leg execution.
+**Goal:** Generalize Quetzal from single-pair (tUSDC/tETH) to multi-pair with explicit 2-hop maker-specified routing — same single Orderbook serves N pools (MAX_ACTIVE_POOLS_PER_EPOCH=3), per-pair P\* with composite pricing for 2-hop orders, atomic both-or-neither leg execution.
 
 **Architecture:** Existing Orderbook + circuit are extended (not replaced). The Orderbook gains `pools` + `pool_tokens` storage maps in place of the single `pool_addr` / `token_a_addr` / `token_b_addr` fields; the OrderNote gains `path_len` + `path[3]` private fields; the clearing circuit's `fn main` grows to ~114-field public input with `[PoolClearing; 3]` instead of a single ClearingSwap; the aggregator's `computeClearingV2` is wrapped by a new `computeClearingMultiPair` that runs per-pool clearings + composite eligibility + fixed-point convergence. Merkle fills tree doubles to 64 leaves with `(nonce, hop_index, amount_out, pool_id)` format.
 
@@ -33,7 +33,7 @@
 
 **Files created:**
 
-- `cli/src/commands/pools.ts` — `zswap pools` inspection command
+- `cli/src/commands/pools.ts` — `quetzal pools` inspection command
 - `aggregator/src/path.ts` — canonical path validation + pool-id resolution helpers (shared with circuit-side helpers)
 
 ---
@@ -350,15 +350,15 @@ Expected: 0 errors.
 ```bash
 cd /Users/huseyinarslan/Desktop/aztec-project
 git add cli/src/path.ts cli/src/path.test.ts cli/src/commands/order.ts
-git commit -m "feat(cli): --path option for zswap order with token-alias parsing
+git commit -m "feat(cli): --path option for quetzal order with token-alias parsing
 
 cli/src/path.ts parses comma-separated token aliases against a
 config-driven alias map; emits {path_len, path: [hex; 3]} ready
 to feed submit_order. Canonical lex-ordering helper provided for
 later use in pool-id resolution.
 
-zswap order --path tUSDC,tETH (1-hop, default) or
-zswap order --path tUSDC,tETH,tBTC (2-hop) both work.
+quetzal order --path tUSDC,tETH (1-hop, default) or
+quetzal order --path tUSDC,tETH,tBTC (2-hop) both work.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -664,21 +664,21 @@ Replace `cli/src/config.ts` content with:
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export interface ZswapPool {
+export interface QuetzalPool {
   pool_id: number;
   token_a: string;     // canonical (lex-ordered) lower hex address
   token_b: string;     // canonical (lex-ordered) higher hex address
   address: string;     // Pool contract address
 }
 
-export interface ZswapConfig {
+export interface QuetzalConfig {
   nodeUrl: string;
   // Token aliases for CLI --path lookup
   tUSDC: string;
   tETH: string;
   tBTC?: string;
   // Sub-4: multi-pool registry
-  pools: ZswapPool[];
+  pools: QuetzalPool[];
   orderbook: string;
   admin: string;
   aggregatorRegistry?: string;
@@ -687,13 +687,13 @@ export interface ZswapConfig {
   bucketGrowthNum?: string;
 }
 
-const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin", "pools"];
+const REQUIRED: (keyof QuetzalConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin", "pools"];
 
-export function loadConfig(path = "zswap.config.json"): ZswapConfig {
+export function loadConfig(path = "quetzal.config.json"): QuetzalConfig {
   const abs = resolve(process.cwd(), path);
-  let parsed: Partial<ZswapConfig>;
+  let parsed: Partial<QuetzalConfig>;
   try {
-    parsed = JSON.parse(readFileSync(abs, "utf8")) as Partial<ZswapConfig>;
+    parsed = JSON.parse(readFileSync(abs, "utf8")) as Partial<QuetzalConfig>;
   } catch (e) {
     throw new Error(`could not read config at ${abs}: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -705,7 +705,7 @@ export function loadConfig(path = "zswap.config.json"): ZswapConfig {
   if (!Array.isArray(parsed.pools) || parsed.pools.length === 0) {
     throw new Error(`config at ${abs}: pools must be a non-empty array`);
   }
-  return parsed as ZswapConfig;
+  return parsed as QuetzalConfig;
 }
 ```
 
@@ -720,7 +720,7 @@ Replace the body of `scripts/deploy-tokens.ts` (after the imports, the `main()` 
 5. 4-deploy circular-dep dance for Orderbook + Treasury (carryover Sub-3 wart): Orderbook takes `pool_count=3, pool_addrs=[p1, p2, p3, ZERO], pool_token_a_addrs=[a, b, c, ZERO], pool_token_b_addrs=[...]`.
 6. For each pool: `pool.set_orderbook(orderbook_addr)`.
 7. Mint treasury seed.
-8. Write `zswap.config.json` with the `pools[]` array.
+8. Write `quetzal.config.json` with the `pools[]` array.
 
 The full updated body is:
 
@@ -807,7 +807,7 @@ async function main() {
     bucketPMinSqrt: P_MIN_SQRT.toString(),
     bucketGrowthNum: GROWTH.toString(),
   };
-  writeFileSync("zswap.config.json", JSON.stringify(cfg, null, 2));
+  writeFileSync("quetzal.config.json", JSON.stringify(cfg, null, 2));
   console.log(JSON.stringify(cfg, null, 2));
   await wallet.stop();
 }
@@ -829,7 +829,7 @@ tETH, tBTC) + 3 LiquidityPools (canonical pairs) + Orderbook with
 multi-pool constructor (pool_count=3, pool_addrs/token_a/token_b
 arrays of length 4 with admin as padding sentinel).
 
-zswap.config.json schema gains tBTC + pools[] array; each entry has
+quetzal.config.json schema gains tBTC + pools[] array; each entry has
 {pool_id, token_a (lower hex), token_b (higher hex), address}.
 cli/src/config.ts loadConfig() validates pools as non-empty array.
 
@@ -2289,7 +2289,7 @@ Expected: 0 TS errors; Noir tests pass.
 git add cli/src/commands/claim.ts contracts/orderbook/src/main.nr
 git commit -m "feat(claim): --hop option + 64-leaf Merkle proof verification
 
-Sub-4 Task E1: zswap claim --hop 0|1|all. For 2-hop orders the maker
+Sub-4 Task E1: quetzal claim --hop 0|1|all. For 2-hop orders the maker
 runs claim --hop 0 then claim --hop 1 (or --hop all to do both in
 sequence).
 
@@ -2300,7 +2300,7 @@ hop_fill_leaf format. Sibling proof depth = 6 (64-leaf tree).
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task E2: zswap pools inspection command
+### Task E2: quetzal pools inspection command
 
 **Files:**
 - Create: `cli/src/commands/pools.ts`
@@ -2346,10 +2346,10 @@ Expected: 0 errors.
 
 ```bash
 git add cli/src/commands/pools.ts cli/src/index.ts
-git commit -m "feat(cli): zswap pools inspection command
+git commit -m "feat(cli): quetzal pools inspection command
 
 Sub-4 Task E2: list all configured pools with id + canonical token
-pair + address. Reads from zswap.config.json.
+pair + address. Reads from quetzal.config.json.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -2514,19 +2514,19 @@ Create `/Users/huseyinarslan/.claude/projects/-Users-huseyinarslan-Desktop-aztec
 ```markdown
 ---
 name: subproject4-complete
-description: "Sub-project 4 of ZSwap-on-Aztec (multi-pair routing with 2-hop explicit-path orders) code-complete YYYY-MM-DD; single Orderbook + 3 Pools (triangle), 114-field ClearingPublic, fills tree grows to 64 leaves"
+description: "Sub-project 4 of Quetzal (multi-pair routing with 2-hop explicit-path orders) code-complete YYYY-MM-DD; single Orderbook + 3 Pools (triangle), 114-field ClearingPublic, fills tree grows to 64 leaves"
 metadata:
   type: project
 ---
 
-Sub-project 4 of ZSwap-on-Aztec — **multi-pair routing with 2-hop explicit-path orders** — code-complete YYYY-MM-DD.
+Sub-project 4 of Quetzal — **multi-pair routing with 2-hop explicit-path orders** — code-complete YYYY-MM-DD.
 
 **Delivered (15-17 tasks across 6 phases):**
 - OrderNote gains path_len + path[3] private fields; submit_order validates path against pools (Phase A, 2 tasks)
 - Orderbook generalized to multi-pool: pools + pool_token_a/b maps replace single pool_addr; constructor takes (count, addrs[4], ta[4], tb[4]); 4-deploy circular-dep wart preserved (Phase B, 4 tasks)
 - Aggregator computeClearingMultiPair with composite eligibility + fixed-point iteration (Phase C, 4 tasks)
 - Circuit fn main rewritten to 114-field shape (6 scalar + 3 PoolClearing × 36 fields); per-fill per-hop eligibility + 2-hop atomicity assertions + 64-leaf Merkle (Phase D, 3 tasks)
-- CLI --path option + --hop claim flow + zswap pools inspection command (Phase E, 3 tasks)
+- CLI --path option + --hop claim flow + quetzal pools inspection command (Phase E, 3 tasks)
 - bb prove against new circuit; bridge constants (500/115) confirmed; deploy script multi-pool (Phase F, 2 tasks)
 
 **Known limitations (carry-over from Sub-3 + design):**

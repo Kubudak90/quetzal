@@ -1,8 +1,8 @@
-# ZSwap-on-Aztec L1 Bridge — Audit Brief
+# Quetzal L1 Bridge — Audit Brief
 
 **Audit target commit:** `2747700e48fc0eb8d84a489afdd4c4468d5918a9` (git tag `sub5c-audit-snapshot`)
 **Audit window opens:** 2026-05-23 (Sub-5c code-complete)
-**Scope owner:** ZSwap-on-Aztec core team
+**Scope owner:** Quetzal core team
 **Audit scope:** L1 portal contracts (`contracts-l1/`)
 
 ## Scope (in-scope contracts)
@@ -16,10 +16,10 @@
 
 ## Out-of-scope
 
-- `@aztec/l1-artifacts@4.2.1` Inbox.sol + Outbox.sol implementations — the live Aztec rollup contracts on L1. ZSwap depends on these existing + behaving correctly; auditing them is Aztec's responsibility.
+- `@aztec/l1-artifacts@4.2.1` Inbox.sol + Outbox.sol implementations — the live Aztec rollup contracts on L1. Quetzal depends on these existing + behaving correctly; auditing them is Aztec's responsibility.
 - Aztec L2 Noir contracts (`contracts/token/src/main.nr`, `contracts/orderbook/`, `contracts/pool/`, etc.) — separate Noir audit recommended (Aztec's `aztec-nr` is itself under continuous review).
 - L2 ↔ L1 client integration (`cli/`, `aggregator/`, `tools/outbox-proof/`) — JS/TS code; safety surface limited to what L1 contracts enforce.
-- OpenZeppelin v5.0.2 itself — pinned + vendored as `contracts-l1/lib/openzeppelin-contracts/` and `contracts-l1/lib/openzeppelin-contracts-upgradeable/`. Auditor reviews ZSwap's usage of OZ, not OZ's own code.
+- OpenZeppelin v5.0.2 itself — pinned + vendored as `contracts-l1/lib/openzeppelin-contracts/` and `contracts-l1/lib/openzeppelin-contracts-upgradeable/`. Auditor reviews Quetzal's usage of OZ, not OZ's own code.
 
 ## Trust model
 
@@ -35,7 +35,7 @@
 
 ## Known issues (operator-acknowledged carryforwards)
 
-1. **Fee-on-transfer / deflationary token incompatibility.** `_enforceTvlCap` projects post-deposit total as `balanceOf + amount`. This assumes a standard ERC20 where `amount` is exactly what arrives. Fee-on-transfer tokens would underflow the projection. **Mitigation:** ZSwap launches with USDC + WETH + wBTC — all standard ERC20s. Adding any non-standard token requires reviewing this assumption. Flagged in `setMaxTvl` NatSpec.
+1. **Fee-on-transfer / deflationary token incompatibility.** `_enforceTvlCap` projects post-deposit total as `balanceOf + amount`. This assumes a standard ERC20 where `amount` is exactly what arrives. Fee-on-transfer tokens would underflow the projection. **Mitigation:** Quetzal launches with USDC + WETH + wBTC — all standard ERC20s. Adding any non-standard token requires reviewing this assumption. Flagged in `setMaxTvl` NatSpec.
 
 2. **`recoverDeposit`'s off-chain L2-consumption check.** Phase 2 (`approveRecovery`) requires the governance multisig to manually verify on L2 that the corresponding L1→L2 message has NOT been consumed. There is no on-chain L1 way to read L2 nullifier state directly. If governance approves a recovery for a deposit that WAS already consumed on L2, the maker double-spends. **Mitigation:** 90-day waiting period (`block.timestamp >= d.timestamp + 90 days`) gives operators ample time + observability. The audit should confirm the on-chain logic correctly prevents same-key replay (state clearing on execute) and that there is no race window across phases.
 

@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec Week 5c — On-chain trusted clearing
+# Quetzal Week 5c — On-chain trusted clearing
 
 **Status:** design
 **Date:** 2026-05-19
@@ -26,7 +26,7 @@ replaces that trust with a verified proof.
   `clearing_authority`; the Pool gains a one-shot `set_orderbook` and a gated
   `apply_clearing`.
 - **`deploy-tokens.ts`** updated for the new deploy order and constructor args.
-- A **`zswap claim`** CLI command.
+- A **`quetzal claim`** CLI command.
 
 ## 2. Non-goals (deferred)
 
@@ -36,7 +36,7 @@ replaces that trust with a verified proof.
 | Merkle settlement root (constant-size fill state) | Week 5d |
 | A persisted `CLOSING` epoch state | Week 5d |
 | Partial / remnant fills | not planned (the aggregator is full-fill) |
-| An aggregator daemon / a `zswap clear` CLI command | a later slice |
+| An aggregator daemon / a `quetzal clear` CLI command | a later slice |
 
 Clearing is **trusted** this week: `close_epoch_and_clear` relays the
 aggregator's numbers (fills, the net-swap amounts, the fee increments) without
@@ -118,7 +118,7 @@ No circular dependency - only the Pool needs a post-deploy setter:
 ```
 
 `deploy-tokens.ts` performs all four steps and records every address in
-`zswap.config.json`. `clearing_authority` in tests/deploys is a test account
+`quetzal.config.json`. `clearing_authority` in tests/deploys is a test account
 (the stand-in for the off-chain aggregator).
 
 ---
@@ -373,15 +373,15 @@ freeze deposits/withdraws during clearing) remove this window.
 
 ## 9. CLI
 
-One new command, `zswap claim`:
+One new command, `quetzal claim`:
 
 | Command | Flags | Action |
 |---|---|---|
-| `zswap claim` | `--nonce <field>` | calls `claim_fill(order_nonce, 0)` for the account's filled order; prints the claimed amount on success. |
+| `quetzal claim` | `--nonce <field>` | calls `claim_fill(order_nonce, 0)` for the account's filled order; prints the claimed amount on success. |
 
 Driving `close_epoch_and_clear` is the off-chain aggregator's job (a future
-aggregator-daemon slice), so no `zswap clear` command this week - the
-integration test drives `close_epoch_and_clear` directly. `zswap.config.json`
+aggregator-daemon slice), so no `quetzal clear` command this week - the
+integration test drives `close_epoch_and_clear` directly. `quetzal.config.json`
 already carries every contract address; no new field beyond what section 4 adds
 (`pool` is already recorded as of Week 5).
 
@@ -401,7 +401,7 @@ contracts/pool/src/test.nr        ~ + set_orderbook / apply_clearing TXE tests
 tests/integration/clearing.test.ts + new: the full close_epoch_and_clear -> claim round trip
 tests/integration/orderbook.test.ts ~ update Orderbook deploys for the new constructor
 tests/integration/pool.test.ts     ~ (pool deploy unchanged; set_orderbook wiring as needed)
-tests/integration/cli.test.ts      ~ update deploys; + zswap claim smoke case
+tests/integration/cli.test.ts      ~ update deploys; + quetzal claim smoke case
 cli/src/commands/claim.ts          + new
 cli/src/index.ts                   ~ register claim
 scripts/deploy-tokens.ts           ~ new deploy order + Orderbook constructor args
@@ -421,7 +421,7 @@ the first plan task, as in Week 4.
    tests for the gates).
 4. Orderbook: `claim_fill` + `_assert_fill` + the `get_fill` getter (+ TXE tests).
 5. Integration: the full clear -> claim round trip (`clearing.test.ts`).
-6. CLI `zswap claim` + `deploy-tokens.ts` + the CLI smoke case.
+6. CLI `quetzal claim` + `deploy-tokens.ts` + the CLI smoke case.
 7. Final clean rebuild + smoke; README; milestone commit + tag `week-05c-onchain-clearing`.
 
 ## 12. Risks specific to Week 5c
@@ -452,7 +452,7 @@ the first plan task, as in Week 4.
   authority, the Pool's reserves + `cum_fee_*` move as the aggregator computed,
   filled makers `claim_fill` and receive their output in their private balance,
   an unfilled order remains cancellable.
-- `zswap claim` works against the dev stack.
+- `quetzal claim` works against the dev stack.
 - `git tag` shows `week-05c-onchain-clearing`.
 
 ## 14. Open questions deferred to implementation

@@ -2,27 +2,27 @@
 
 **Status:** Design
 **Date:** 2026-05-23
-**Parent project:** [ZSwap-on-Aztec](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (split into 5a / 5b / 5c)
+**Parent project:** [Quetzal](2026-05-14-zswap-aztec-mvp-design.md) — sub-project 5 (split into 5a / 5b / 5c)
 **Predecessor specs:**
 - [Sub-5a Deterministic Addresses + Carryforward Fixes](2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses-design.md) — must ship first; provides the 3-deploy ceremony + per-hop nullifier scheme that Sub-5b consumes unchanged.
 
 ## Goal
 
-Replace ZSwap-on-Aztec's test tokens (tUSDC, tETH) with bridge-aware Token contracts (aUSDC, aWETH) that lock canonical L1 ERC20s (USDC, WETH) and mint matching L2 supply via the Aztec L1↔L2 messaging primitives. End-to-end maker journey: deposit canonical USDC on L1 → claim aUSDC on Aztec L2 → trade through ZSwap (Sub-1 through Sub-5a unchanged) → exit aUSDC back to canonical USDC on L1. L1 portals are owned by a 3-of-5 multisig behind a 7-day TimelockController; same code deploys to Sepolia (testnet) and mainnet, parametrized at deploy time.
+Replace Quetzal's test tokens (tUSDC, tETH) with bridge-aware Token contracts (aUSDC, aWETH) that lock canonical L1 ERC20s (USDC, WETH) and mint matching L2 supply via the Aztec L1↔L2 messaging primitives. End-to-end maker journey: deposit canonical USDC on L1 → claim aUSDC on Aztec L2 → trade through Quetzal (Sub-1 through Sub-5a unchanged) → exit aUSDC back to canonical USDC on L1. L1 portals are owned by a 3-of-5 multisig behind a 7-day TimelockController; same code deploys to Sepolia (testnet) and mainnet, parametrized at deploy time.
 
 ## Non-Goals
 
 - A third bridged asset (wBTC, DAI, etc.) — Sub-5b's MVP locks at 2. Adding a third asset is mechanical but requires its own audit + runbook entry; defer.
 - L1 audit + formal verification — Sub-5b ships portal source code + Foundry tests + governance topology. The audit / mainnet deployment is a Sub-5c concern.
 - Statistical privacy leak mitigation (deposit-claim temporal linkage, withdraw amount-pattern fingerprinting) — Sub-6 dummy-order territory.
-- Cross-chain bridges to non-Ethereum L1s (Polygon, Arbitrum, BNB, etc.) — explicit never-do; ZSwap is Aztec-on-Ethereum-only.
+- Cross-chain bridges to non-Ethereum L1s (Polygon, Arbitrum, BNB, etc.) — explicit never-do; Quetzal is Aztec-on-Ethereum-only.
 - L1 portal v2 (post-launch upgrades) — Sub-5b ships v1; v2 is its own project.
 - L1 portal monitoring infrastructure (Prometheus exporters, alerting) — Sub-5c.
 - Sponsored-bridge integration (LayerZero, Wormhole, etc.) — explicitly rejected during brainstorm; canonical Aztec portal pattern only.
 
 ## Section 1 — Architecture + 2-portal topology
 
-ZSwap-on-Aztec operates in three environments after Sub-5b lands:
+Quetzal operates in three environments after Sub-5b lands:
 
 | Environment | L2 Token contracts | `is_bridged` flag | L1 token contracts bridged |
 |---|---|---|---|
@@ -268,11 +268,11 @@ cast send $USDC_BRIDGE "depositToL2Private(uint256,bytes32)" 1000000000 $SECRET_
 # ~5-15 min wait for L1→L2.
 
 # L2 side:
-pnpm --filter @zswap/cli zswap bridge claim \
+pnpm --filter @quetzal/cli quetzal bridge claim \
   --token aUSDC --amount 1000000000 --secret $SECRET --message-index $LEAF_INDEX
 ```
 
-New CLI command `zswap bridge claim` ships in Phase D.
+New CLI command `quetzal bridge claim` ships in Phase D.
 
 **Edge cases:**
 
@@ -330,7 +330,7 @@ New CLI command `zswap bridge claim` ships in Phase D.
 
 ```bash
 # L2 side — emit the exit message:
-pnpm --filter @zswap/cli zswap bridge exit \
+pnpm --filter @quetzal/cli quetzal bridge exit \
   --token aUSDC --amount 500000000 --l1-recipient 0xMyEthAddress
 
 # Output:
@@ -345,7 +345,7 @@ pnpm --filter @zswap/cli zswap bridge exit \
 cast send $USDC_BRIDGE "withdraw(...)" ...
 ```
 
-A helper `zswap bridge claim-l1 --l2-tx <hash>` will extract the Outbox proof + emit the ready-to-run `cast send` block.
+A helper `quetzal bridge claim-l1 --l2-tx <hash>` will extract the Outbox proof + emit the ready-to-run `cast send` block.
 
 **Privacy semantics:**
 
@@ -365,7 +365,7 @@ A helper `zswap bridge claim-l1 --l2-tx <hash>` will extract the Outbox proof + 
 | Portal paused on L1 | `withdraw()` reverts "portal paused". L2→L1 messages safe in Outbox; claimable once unpaused. **Funds are NOT permanently locked** — pause is recoverable. |
 | Multisig submits a portal upgrade during a pending withdraw | 7-day timelock buffer (mainnet) lets the maker race their `withdraw()` against the upgrade. Testnet has delay=0 so dev-cycle upgrades happen immediately. |
 
-**Security boundary clarification:** the bridge is fundamentally semi-public at the in/out points — L1 actions are public on Ethereum and L2 exit-messages contain enough metadata (amount + L1 recipient) to be linkable to L1 events. Privacy is preserved during ZSwap trading on L2; bridge crossings are where the privacy boundary breaks. This is inherent to L2 ↔ L1 messaging, not a ZSwap design choice.
+**Security boundary clarification:** the bridge is fundamentally semi-public at the in/out points — L1 actions are public on Ethereum and L2 exit-messages contain enough metadata (amount + L1 recipient) to be linkable to L1 events. Privacy is preserved during Quetzal trading on L2; bridge crossings are where the privacy boundary breaks. This is inherent to L2 ↔ L1 messaging, not a Quetzal design choice.
 
 ## Section 5 — Governance, testing, phasing, success criteria
 
@@ -435,7 +435,7 @@ contracts-l1/                       ← NEW directory: L1 Solidity
     ├── TokenBridge.t.sol
     └── BridgeFlow.t.sol
 
-cli/src/commands/bridge.ts          ← NEW: zswap bridge claim/exit subcommands
+cli/src/commands/bridge.ts          ← NEW: quetzal bridge claim/exit subcommands
 cli/src/bridge-helpers.ts           ← NEW: L1 proof construction + Outbox traversal
 
 scripts/deploy-bridge.ts            ← NEW: deploys 2 portals (USDC + WETH) on L1 + 2 aTokens on L2
@@ -459,7 +459,7 @@ docs/superpowers/specs/sub5b-runbook.md ← NEW: mainnet deployment runbook
 | **A — L1 portal scaffolding (3)** | A1: Foundry project + reference fork import; A2: parametric `TokenBridge.sol` + governance wiring; A3: Foundry unit tests | L1 portal contract |
 | **B — L2 Token bridge mode (3)** | B1: Storage + constructor extension (`is_bridged` + `portal_addr` + domain-tag globals); B2: `claim_public/private` + `exit_to_l1_public/private`; B3: TXE tests | L2 contract changes |
 | **C — Aztec messaging integration (2)** | C1: `context.consume_l1_to_l2_message` wiring + content-hash format alignment; C2: `context.message_portal` wiring + Outbox content hash format | L1 ↔ L2 wire format |
-| **D — CLI + helpers (2)** | D1: `zswap bridge claim` + secret/secret_hash management; D2: `zswap bridge exit` + L1 proof helper | UX |
+| **D — CLI + helpers (2)** | D1: `quetzal bridge claim` + secret/secret_hash management; D2: `quetzal bridge exit` + L1 proof helper | UX |
 | **E — Deploy + governance (3)** | E1: `deploy-bridge.ts` (USDC + WETH portals + L2 aTokens); E2: TimelockController + multisig deploy on Sepolia; E3: governance integration tests | Deploy ceremony |
 | **F — Integration tests (2)** | F1: `tests/integration/bridge-e2e.test.ts` (local dev stack); F2: `scripts/testnet-sub5b-bridge.ts` scaffold | E2E |
 | **G — Runbook + close (1-2)** | G1: `sub5b-runbook.md` (mainnet deployment, monitoring, incident response); G2: memory note + README + spec/plan links | Operator-ready |
@@ -468,7 +468,7 @@ docs/superpowers/specs/sub5b-runbook.md ← NEW: mainnet deployment runbook
 
 1. **L1 portal:** USDCBridge + WETHBridge deployed on Sepolia; Foundry tests 100% pass; governance topology verified (multisig owns timelock, timelock owns portal).
 2. **L2 Token:** aUSDC + aWETH deployed on Aztec testnet with `is_bridged=true`; admin `mint_to_*` calls revert; only portal-flow `claim_*` / `exit_to_l1_*` work.
-3. **Bridge happy path:** maker deposits 100 Sepolia USDC → 100 aUSDC on Aztec testnet → uses in a 1-hop trade through ZSwap Sub-1/2.5/3/4/5a stack → withdraws remaining aUSDC back to Sepolia USDC. End-to-end tx hashes documented.
+3. **Bridge happy path:** maker deposits 100 Sepolia USDC → 100 aUSDC on Aztec testnet → uses in a 1-hop trade through Quetzal Sub-1/2.5/3/4/5a stack → withdraws remaining aUSDC back to Sepolia USDC. End-to-end tx hashes documented.
 4. **Governance:** pause attempted by non-owner reverts; multisig-proposed pause queued + executable on testnet (delay=0) and observable as pending-for-7-days on mainnet (delay=7d); non-timelocked critical-function call reverts.
 5. **Sub-5a integration:** `scripts/testnet-sub5a.ts` step 3 (Token deploy) and step 9 (alice private mints) are replaced with Sub-5b bridge ceremony calls. The full 17-step runner now exercises the bridge alongside the Sub-5a deterministic-address ceremony.
 

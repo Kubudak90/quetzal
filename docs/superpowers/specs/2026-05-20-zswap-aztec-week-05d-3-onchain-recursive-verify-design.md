@@ -32,7 +32,7 @@ The Week 5d-2 wrap-up flagged a real constraint: the production N=128 clearing c
 - TS proof-parsing helper at `tests/integration/helpers/proof.ts`: reads `bb prove`'s binary proof file, returns `[Fr; 456]`.
 - TXE schema tests + integration tests (E1 happy-path, E2 tampering rejection, E3 replay rejection).
 - `scripts/deploy-tokens.ts`: read `circuits/clearing/target/vk/vk` and `target/vk/vk_hash`, pass to orderbook constructor.
-- CLI: new `zswap close-epoch-verified <proof-path>` command; existing `zswap close-epoch` stays as the no-clear fallback.
+- CLI: new `quetzal close-epoch-verified <proof-path>` command; existing `quetzal close-epoch` stays as the no-clear fallback.
 
 **Out of scope (deferred):**
 
@@ -46,7 +46,7 @@ The Week 5d-2 wrap-up flagged a real constraint: the production N=128 clearing c
 ### 4.1 Flow
 
 ```
-zswap close-epoch-verified (CLI)
+quetzal close-epoch-verified (CLI)
   ↓
 private fn close_epoch_and_clear_verified(public_inputs, proof)
   ├─ flat = flatten_clearing_public(public_inputs)               // [Field; 83]

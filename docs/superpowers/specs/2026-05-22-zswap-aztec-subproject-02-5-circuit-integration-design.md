@@ -2,7 +2,7 @@
 
 **Status:** Design
 **Date:** 2026-05-22
-**Parent project:** [ZSwap-on-Aztec](../specs/2026-05-14-zswap-aztec-mvp-design.md) — sub-project 2 follow-up
+**Parent project:** [Quetzal](../specs/2026-05-14-zswap-aztec-mvp-design.md) — sub-project 2 follow-up
 **Predecessor specs:**
 - [Sub-2 (Concentrated Liquidity LP-side)](2026-05-22-zswap-aztec-subproject-02-concentrated-liquidity-design.md)
 - [Sub-1 (5d-4 Merkle Settlement Root)](2026-05-21-zswap-aztec-week-05d-4-merkle-settlement-root-design.md)

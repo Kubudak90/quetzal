@@ -1,4 +1,4 @@
-// Shared types for the ZSwap clearing circuit. Matches:
+// Shared types for the Quetzal clearing circuit. Matches:
 // - contracts/pool/src/main.nr's ClearingSwap (10 u128 fields).
 // - contracts/orderbook/src/main.nr's FillEntry (order_nonce + amount_out).
 // - contracts/orderbook/src/main.nr's OrderNote (the per-order preimage).

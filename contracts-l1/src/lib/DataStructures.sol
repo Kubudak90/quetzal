@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 /**
  * @title Data Structures Library
- * @notice Mirrors @aztec/l1-artifacts@4.2.1 DataStructures + adds ZSwap-Sub-5b
+ * @notice Mirrors @aztec/l1-artifacts@4.2.1 DataStructures + adds Quetzal Sub-5b
  *         domain-separator tag constants for the four bridge flow content hashes.
  */
 library DataStructures {
@@ -31,7 +31,7 @@ library DataStructures {
         bytes32 content;
     }
 
-    /// @notice ZSwap-Sub-5b domain-separation tags for the four bridge flow
+    /// @notice Quetzal Sub-5b domain-separation tags for the four bridge flow
     ///         content hashes. MUST be kept in sync byte-for-byte with
     ///         contracts/token/src/main.nr globals DEPOSIT_PUBLIC_TAG /
     ///         DEPOSIT_PRIVATE_TAG / WITHDRAW_PUBLIC_TAG / WITHDRAW_PRIVATE_TAG.

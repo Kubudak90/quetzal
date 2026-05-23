@@ -1,4 +1,4 @@
-# ZSwap on Aztec — Week 5d-4 Design: Merkle Settlement Root + Inclusion-Proof `claim_fill`
+# Quetzal on Aztec — Week 5d-4 Design: Merkle Settlement Root + Inclusion-Proof `claim_fill`
 
 **Status:** spec
 **Date:** 2026-05-21
@@ -346,7 +346,7 @@ Just before invoking `bb prove`, after constructing the fills array:
 New flag: `--epoch <N>` (optional). If omitted, CLI scans `aggregator/snapshots/*.json` for an entry containing `order_nonce`.
 
 ```bash
-zswap claim --nonce 0x... [--epoch 42]
+quetzal claim --nonce 0x... [--epoch 42]
 ```
 
 Internally:
@@ -373,7 +373,7 @@ const clearing_vk_hash = poseidon2Hash(vkFields);
 await Orderbook.deploy(wallet, tokenA, tokenB, epoch_length, pool.address, clearing_vk_hash);
 ```
 
-The old hardcoded `clearing_vk_hash` in `zswap.config.json` is invalidated; deploys must refresh.
+The old hardcoded `clearing_vk_hash` in `quetzal.config.json` is invalidated; deploys must refresh.
 
 ## 10. Test plan
 
@@ -399,7 +399,7 @@ The old hardcoded `clearing_vk_hash` in `zswap.config.json` is invalidated; depl
 
 ### 10.4 TS integration — `tests/integration/`
 
-- **T11: Full e2e Merkle claim.** `tests/integration/claim-merkle.test.ts` — alice + bob submit; admin closes epoch via `close_epoch_and_clear_verified` with new Merkle-shape public inputs + real bb proof; alice and bob each call `zswap claim` with computed paths; assert their private balances increase by the expected amounts.
+- **T11: Full e2e Merkle claim.** `tests/integration/claim-merkle.test.ts` — alice + bob submit; admin closes epoch via `close_epoch_and_clear_verified` with new Merkle-shape public inputs + real bb proof; alice and bob each call `quetzal claim` with computed paths; assert their private balances increase by the expected amounts.
 - **T12: 5d-3 happy-path regression.** Update `tests/integration/clearing.test.ts` E1 to the new shape — same E2E mechanics, just the public-inputs structure changes. E2 + E3 (tampering, replay-at-verifier) stay `it.skip`'d for the same TXE-defers-verify reason documented in [`memory/reference_aztec_txe_recursive_verify.md`](../../../.claude/projects/-Users-huseyinarslan-Desktop-aztec-project/memory/reference_aztec_txe_recursive_verify.md).
 
 ### 10.5 Testnet (deferred)
@@ -409,7 +409,7 @@ The Week 5d-3 testnet validation gap (close_epoch_and_clear_verified never reach
 ## 11. Migration notes
 
 - **Existing deploys are not migration-compatible.** The Orderbook storage layout changed (Map<Field, u128> removed, Map<u32, Field> added). Fresh deploy required. Acceptable for pre-mainnet.
-- **`clearing_vk_hash` refresh required.** All deploy artifacts that hardcode the hash (zswap.config.json, deploy scripts) must regenerate.
+- **`clearing_vk_hash` refresh required.** All deploy artifacts that hardcode the hash (quetzal.config.json, deploy scripts) must regenerate.
 - **Aggregator snapshot directory.** New runtime requirement: `aggregator/snapshots/` must be writable. Add to `.gitignore` (snapshots are runtime state, not source).
 
 ## 12. Success criteria

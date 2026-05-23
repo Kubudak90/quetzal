@@ -43,7 +43,7 @@ export async function buildServer(queue: RevealQueue): Promise<FastifyInstance> 
   return app;
 }
 
-/** Stand-alone entrypoint (used by `pnpm --filter @zswap/aggregator start`). */
+/** Stand-alone entrypoint (used by `pnpm --filter @quetzal/aggregator start`). */
 export async function startServer(port: number = Number(process.env.PORT) || 3000): Promise<void> {
   const queue = new RevealQueue();
   const app = await buildServer(queue);

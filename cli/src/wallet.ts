@@ -5,18 +5,18 @@ import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/test
 import { OrderbookContract } from "../../tests/integration/generated/Orderbook.js";
 import { LiquidityPoolContract } from "../../tests/integration/generated/LiquidityPool.js";
 import { TokenContract } from "../../tests/integration/generated/Token.js";
-import type { ZswapConfig } from "./config.js";
+import type { QuetzalConfig } from "./config.js";
 
 export interface CliContext {
   wallet: EmbeddedWallet;
   account: AztecAddress;
-  config: ZswapConfig;
+  config: QuetzalConfig;
   stop: () => Promise<void>;
 }
 
 /**
  * Connect to the Aztec node from `config`, build an ephemeral wallet, register the
- * local-network test accounts, register the deployed ZSwap contracts, and select
+ * local-network test accounts, register the deployed Quetzal contracts, and select
  * account `accountIndex` as the actor.
  *
  * A fresh PXE syncs contract classes/instances from the node but NOT their artifacts
@@ -26,7 +26,7 @@ export interface CliContext {
  * are registered too because `submit_order` / `cancel_order` make nested calls into
  * them that the PXE must be able to simulate.
  */
-export async function openCli(config: ZswapConfig, accountIndex: number): Promise<CliContext> {
+export async function openCli(config: QuetzalConfig, accountIndex: number): Promise<CliContext> {
   const node = createAztecNodeClient(config.nodeUrl);
   await waitForNode(node);
 

@@ -46,7 +46,7 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     ///
     ///      IMPORTANT: `_enforceTvlCap` reads `l1Token.balanceOf(address(this))` and
     ///      projects the post-deposit total assuming the token transfers `amount`
-    ///      exactly. Not safe with fee-on-transfer / deflationary tokens. ZSwap
+    ///      exactly. Not safe with fee-on-transfer / deflationary tokens. Quetzal
     ///      launches with USDC + WETH which are standard ERC20s. Adding any
     ///      non-standard token requires reviewing this assumption.
     uint256 public maxTvl;

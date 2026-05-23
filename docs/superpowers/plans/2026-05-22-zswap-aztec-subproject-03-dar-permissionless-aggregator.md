@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace ZSwap's trusted singleton aggregator with a permissionless bonded-race role: anyone holding a tUSDC bond can submit clearings, first valid wins, the winner is paid a flat per-clearing fee from a treasury contract.
+**Goal:** Replace Quetzal's trusted singleton aggregator with a permissionless bonded-race role: anyone holding a tUSDC bond can submit clearings, first valid wins, the winner is paid a flat per-clearing fee from a treasury contract.
 
-**Architecture:** Two new Aztec contracts (`AggregatorRegistry`, `Treasury`); one diff on `Orderbook` adding a registration gate to `close_epoch_and_clear_verified`. New aggregator HTTP server (Fastify) + clearing daemon. New CLI commands `zswap aggregator {register,list,unregister}` and a reveal broadcaster invoked from `zswap order`. Off-chain `aggregator-manifest.json` maps addresses to HTTPS endpoints, hash-verified against on-chain.
+**Architecture:** Two new Aztec contracts (`AggregatorRegistry`, `Treasury`); one diff on `Orderbook` adding a registration gate to `close_epoch_and_clear_verified`. New aggregator HTTP server (Fastify) + clearing daemon. New CLI commands `quetzal aggregator {register,list,unregister}` and a reveal broadcaster invoked from `quetzal order`. Off-chain `aggregator-manifest.json` maps addresses to HTTPS endpoints, hash-verified against on-chain.
 
 **Tech Stack:** Aztec 4.2.1, aztec-nr 4.2.0, Noir 1.0.0-beta.19, `noir-lang/poseidon` v0.3.0, TypeScript 5.6+, Fastify 4.x, zod 3.x, `@aztec/foundation/crypto/poseidon`, Node 22's `node:test` runner via `tsx`.
 
@@ -44,7 +44,7 @@
 - `cli/aggregator-manifest.json` — initial empty curated manifest (`{}`)
 - `cli/src/index.ts` — adds `registerAggregator(program)`
 - `cli/src/commands/order.ts` — invokes `broadcastReveal()` after successful submit
-- `cli/src/config.ts` — `ZswapConfig` gains `aggregatorRegistry` and `treasury` fields
+- `cli/src/config.ts` — `QuetzalConfig` gains `aggregatorRegistry` and `treasury` fields
 
 **New e2e + ops:**
 - `tests/integration/aggregator-race.test.ts` — E1 (two-aggregator race), E2 (validation discards corrupted reveal)
@@ -67,7 +67,7 @@
 [package]
 name = "aggregator_registry"
 type = "contract"
-authors = ["ZSwap"]
+authors = ["Quetzal"]
 compiler_version = ">=1.0.0"
 
 [dependencies]
@@ -837,7 +837,7 @@ git commit -m "test(aggregator-registry): R6 count tracks registers + unregister
 [package]
 name = "treasury"
 type = "contract"
-authors = ["ZSwap"]
+authors = ["Quetzal"]
 compiler_version = ">=1.0.0"
 
 [dependencies]
@@ -1705,7 +1705,7 @@ describe("RevealQueue", () => {
 - [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error (`queue.js` does not exist).
@@ -1770,7 +1770,7 @@ export class RevealQueue {
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: all 5 queue tests PASS.
@@ -1928,7 +1928,7 @@ describe("validate.validateReveals", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error (`validate.js` does not exist).
@@ -2040,7 +2040,7 @@ export async function validateReveals(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: all 5 validate tests PASS.
@@ -2139,7 +2139,7 @@ describe("aggregator/server", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error (`server.js` does not exist).
@@ -2192,7 +2192,7 @@ export async function buildServer(queue: RevealQueue): Promise<FastifyInstance> 
   return app;
 }
 
-// Stand-alone entrypoint (used by `pnpm --filter @zswap/aggregator start`):
+// Stand-alone entrypoint (used by `pnpm --filter @quetzal/aggregator start`):
 // imports + boots a queue + listens on $PORT (default 3000).
 export async function startServer(port: number = Number(process.env.PORT) || 3000): Promise<void> {
   const queue = new RevealQueue();
@@ -2205,7 +2205,7 @@ export async function startServer(port: number = Number(process.env.PORT) || 300
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: 4 new server tests PASS.
@@ -2323,7 +2323,7 @@ describe("daemon.runOneClearingCycle", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: import error (`daemon.js` does not exist).
@@ -2520,7 +2520,7 @@ export async function runDaemon(ctx: DaemonContext, intervalMs = 2000): Promise<
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-pnpm --filter @zswap/aggregator test 2>&1 | tail -15
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -15
 ```
 
 Expected: 2 new daemon tests PASS.
@@ -2534,19 +2534,19 @@ git commit -m "feat(aggregator): daemon.ts — runOneClearingCycle + runDaemon (
 
 ---
 
-### Task 16: CLI `zswap aggregator {register, list, unregister}`
+### Task 16: CLI `quetzal aggregator {register, list, unregister}`
 
 **Files:**
 - Create: `cli/src/commands/aggregator.ts`
 - Modify: `cli/src/index.ts` — register the new command
-- Modify: `cli/src/config.ts` — add `aggregatorRegistry` and `treasury` to `ZswapConfig`
+- Modify: `cli/src/config.ts` — add `aggregatorRegistry` and `treasury` to `QuetzalConfig`
 
-- [ ] **Step 1: Extend `ZswapConfig`**
+- [ ] **Step 1: Extend `QuetzalConfig`**
 
-In `cli/src/config.ts`, add to the `ZswapConfig` interface and JSON schema:
+In `cli/src/config.ts`, add to the `QuetzalConfig` interface and JSON schema:
 
 ```ts
-export interface ZswapConfig {
+export interface QuetzalConfig {
   nodeUrl: string;
   tUSDC: string;
   tETH: string;
@@ -2688,7 +2688,7 @@ registerAggregator(program);
 - [ ] **Step 4: Run CLI typecheck**
 
 ```bash
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -10
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -10
 ```
 
 Expected: clean typecheck. The dynamic `await import(...)` for the generated `AggregatorRegistryContract` ensures the file resolves at runtime after codegen.
@@ -2697,7 +2697,7 @@ Expected: clean typecheck. The dynamic `await import(...)` for the generated `Ag
 
 ```bash
 git add cli/src/commands/aggregator.ts cli/src/index.ts cli/src/config.ts
-git commit -m "feat(cli): zswap aggregator {register,list,unregister} commands"
+git commit -m "feat(cli): quetzal aggregator {register,list,unregister} commands"
 ```
 
 ---
@@ -2857,7 +2857,7 @@ The exact integration depends on `order.ts`'s current shape — the implementer 
 - [ ] **Step 4: Typecheck**
 
 ```bash
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -10
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -10
 ```
 
 Expected: clean.
@@ -2875,12 +2875,12 @@ git commit -m "feat(cli): broadcastReveal post-submit + aggregator-manifest.json
 
 **Files:**
 - Create: `tests/integration/aggregator-race.test.ts`
-- Modify: `scripts/deploy-tokens.ts` — deploys Treasury + AggregatorRegistry, seeds treasury 1000 tUSDC, persists addresses to zswap.config.json
+- Modify: `scripts/deploy-tokens.ts` — deploys Treasury + AggregatorRegistry, seeds treasury 1000 tUSDC, persists addresses to quetzal.config.json
 - Modify: `README.md` — operator runbook section
 
 - [ ] **Step 1: Update `scripts/deploy-tokens.ts`**
 
-After the existing Orderbook deploy line and before `writeFileSync("zswap.config.json", ...)`, insert:
+After the existing Orderbook deploy line and before `writeFileSync("quetzal.config.json", ...)`, insert:
 
 ```ts
 import { AggregatorRegistryContract } from "../tests/integration/generated/AggregatorRegistry.js";
@@ -2941,7 +2941,7 @@ const treasuryFinal = await TreasuryContract.deploy(
 // Phase 5: seed treasuryFinal.
 await tokenA.contract.methods.mint_to_public(treasuryFinal.contract.address, TREASURY_SEED).send().wait();
 
-// Update zswap.config.json with the new addresses:
+// Update quetzal.config.json with the new addresses:
 const result = {
   nodeUrl: NODE_URL,
   tUSDC: tokenA.contract.address.toString(),
@@ -2952,7 +2952,7 @@ const result = {
   aggregatorRegistry: registry.contract.address.toString(),
   treasury: treasuryFinal.contract.address.toString(),
 };
-writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));
+writeFileSync("quetzal.config.json", JSON.stringify(result, null, 2));
 ```
 
 The 4-deploy sequence is an MVP wart; flag it as a follow-up for Sub-5.
@@ -3041,24 +3041,24 @@ To run as a permissionless aggregator:
 1. Acquire tUSDC ≥ the registry's `bond_amount` (default 1000 tUSDC = 1e9 units).
 2. Register on-chain:
    ```bash
-   pnpm --filter @zswap/cli zswap aggregator register --bond 1000000000 --url https://my-aggregator.example.com
+   pnpm --filter @quetzal/cli quetzal aggregator register --bond 1000000000 --url https://my-aggregator.example.com
    ```
 3. Add your address+URL to `cli/aggregator-manifest.json` via a PR.
 4. Run the aggregator HTTP server:
    ```bash
-   pnpm --filter @zswap/aggregator start
+   pnpm --filter @quetzal/aggregator start
    ```
    This boots `aggregator/src/server.ts` on port 3000 (override via `PORT=<n>`).
 5. Run the clearing daemon separately:
    ```bash
-   pnpm --filter @zswap/aggregator daemon
+   pnpm --filter @quetzal/aggregator daemon
    ```
    (See `aggregator/scripts/daemon.ts` for the entrypoint; it wires `runDaemon`
    to your wallet + node URL.)
 
 To unregister and reclaim your bond:
 ```bash
-pnpm --filter @zswap/cli zswap aggregator unregister
+pnpm --filter @quetzal/cli quetzal aggregator unregister
 ```
 ```
 
@@ -3067,8 +3067,8 @@ pnpm --filter @zswap/cli zswap aggregator unregister
 ```bash
 pnpm compile 2>&1 | tail -5
 pnpm test:noir 2>&1 | tail -10
-pnpm --filter @zswap/aggregator test 2>&1 | tail -10
-pnpm --filter @zswap/cli typecheck 2>&1 | tail -5
+pnpm --filter @quetzal/aggregator test 2>&1 | tail -10
+pnpm --filter @quetzal/cli typecheck 2>&1 | tail -5
 ```
 
 Expected: all green. The e2e test stays dormant unless dev stack is up (per its `process.env.SKIP_E2E` guard).

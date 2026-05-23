@@ -1,4 +1,4 @@
-# ZSwap-on-Aztec — Week 2: Token Unification + Orderbook `submit_order` Implementation Plan
+# Quetzal — Week 2: Token Unification + Orderbook `submit_order` Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -371,7 +371,7 @@ Wait for the sequencer-started log line (~30–60s).
 In another terminal:
 
 ```bash
-pnpm --filter @zswap/tests test
+pnpm --filter @quetzal/tests test
 ```
 
 Expected: 2 tests pass.
@@ -1273,7 +1273,7 @@ All checkboxes above are checked, and:
 
 ## Hand-off to Week 3
 
-Week 3 plan (`docs/superpowers/plans/2026-05-14-zswap-aztec-week-03-orderbook-cancel.md`) will be written after Week 2 is complete. Week 3 covers `cancel_order` (escrow return), epoch state transitions (`_advance_epoch` gated public function called by ClearingContract), and the `zswap order` CLI scaffold. Week 2's `submit_order` and Token-unification work are the foundations Week 3 builds on.
+Week 3 plan (`docs/superpowers/plans/2026-05-14-zswap-aztec-week-03-orderbook-cancel.md`) will be written after Week 2 is complete. Week 3 covers `cancel_order` (escrow return), epoch state transitions (`_advance_epoch` gated public function called by ClearingContract), and the `quetzal order` CLI scaffold. Week 2's `submit_order` and Token-unification work are the foundations Week 3 builds on.
 
 ---
 

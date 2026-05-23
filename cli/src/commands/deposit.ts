@@ -14,7 +14,7 @@ export function registerDeposit(program: Command): void {
     .requiredOption("--amount-a <n>", "token A amount (smallest unit)")
     .option("--amount-b <n>", "token B amount; omit with --auto-b")
     .option("--auto-b", "auto-derive amount_b from bucket's current ratio")
-    .option("--pool-id <n>", "Pool ID from zswap pools list", "0")
+    .option("--pool-id <n>", "Pool ID from quetzal pools list", "0")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const bucketId = Number(opts.bucket);
@@ -66,7 +66,7 @@ export function registerDeposit(program: Command): void {
 
         console.log(`liquidity deposited to bucket ${bucketId} (A=${amountA}, B=${amountB})`);
         console.log(`position nonce: 0x${positionNonce.toString(16)}`);
-        console.log(`withdraw later with: zswap withdraw --nonce 0x${positionNonce.toString(16)}`);
+        console.log(`withdraw later with: quetzal withdraw --nonce 0x${positionNonce.toString(16)}`);
       } finally {
         await ctx.stop();
       }

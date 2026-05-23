@@ -1,6 +1,6 @@
 # Sub-5c Mainnet Deployment + Operations Runbook
 
-Operator walkthrough for deploying the ZSwap-on-Aztec L1↔L2 bridge to
+Operator walkthrough for deploying the Quetzal L1↔L2 bridge to
 Ethereum mainnet + Aztec mainnet. Estimated walltime: 1-2 working days
 excluding multisig signer coordination + the 7-day timelock window.
 
@@ -20,7 +20,7 @@ excluding multisig signer coordination + the 7-day timelock window.
 - [ ] L1 deployer wallet funded with ~1 ETH (deploy gas budget).
 - [ ] Aztec mainnet deployer Schnorr account funded with fee-juice
       (via Aztec's mainnet bridge from L1 ETH).
-- [ ] `zswap.config.json` populated with mainnet addresses:
+- [ ] `quetzal.config.json` populated with mainnet addresses:
       `l1.{usdc, weth, inbox, outbox, multisig}` + `nodeUrl`.
 - [ ] Bug bounty active (Immunefi or equivalent, ≥$100k pool).
 - [ ] Monitoring infrastructure ready: TVL dashboard, L1↔L2 message-queue
@@ -58,7 +58,7 @@ forge script script/DeployAllBridges.s.sol:DeployAllBridges \
   604800 10000000000
 ```
 
-The script prints 3 addresses to capture for `zswap.config.json`:
+The script prints 3 addresses to capture for `quetzal.config.json`:
 - `TimelockController:` 0x...
 - `USDCBridge:` 0x...
 - `WETHBridge:` 0x...
@@ -134,10 +134,10 @@ Also verify on L2:
 
 ```bash
 # Inspect aUSDC: is_bridged should be true, portal_addr should be USDCBridge
-pnpm zswap --config zswap.config.json inspect-token aUSDC
+pnpm quetzal --config quetzal.config.json inspect-token aUSDC
 ```
 
-(`zswap inspect-token` is a Sub-5c CLI follow-up; for now, use the
+(`quetzal inspect-token` is a Sub-5c CLI follow-up; for now, use the
 Aztec dev tools or aztec.js directly to query the token's storage.)
 
 ## EmergencyPauser usage
@@ -262,14 +262,14 @@ separator (vs the public-tag default).
 
 1. **L2 exit (private mode):**
    ```bash
-   pnpm zswap bridge exit --token aWETH --amount 100000000000000000 \
+   pnpm quetzal bridge exit --token aWETH --amount 100000000000000000 \
      --l1-recipient 0xRecipient... \
      --private
    ```
 
 2. **L1 claim (after 1-2 hours, the L2 epoch settles to L1 outbox):**
    ```bash
-   pnpm zswap bridge claim-l1 --l2-tx 0xL2_TX_HASH... \
+   pnpm quetzal bridge claim-l1 --l2-tx 0xL2_TX_HASH... \
      --l1-recipient 0xRecipient... \
      --amount 100000000000000000 \
      --bridge $WETH_BRIDGE \
@@ -286,7 +286,7 @@ If you don't want to wait + submit the L1 tx yourself, add `--relayer-fee`
 to step 1:
 
 ```bash
-pnpm zswap bridge exit --token aWETH --amount 100000000000000000 \
+pnpm quetzal bridge exit --token aWETH --amount 100000000000000000 \
   --l1-recipient 0xRecipient... \
   --private \
   --relayer-fee 500000000000000  # 0.5% of amount in WETH wei
@@ -341,7 +341,7 @@ To add a new asset (e.g., DAI) post-Sub-5c:
 
 4. **Wire setL2TokenAddress via governance timelock** (7-day delay).
 
-5. **Update zswap.config.json** with the new bridge + L2 addresses.
+5. **Update quetzal.config.json** with the new bridge + L2 addresses.
 
 6. **Update Prometheus exporter** — `tools/exporters/src/l1-exporter.ts`
    auto-discovers via the config's `l1.daiBridge` etc., but the metric
@@ -359,10 +359,10 @@ The Prometheus + Grafana + Alertmanager stack runs on VPS `194.163.136.1`.
 
 ```bash
 ssh root@194.163.136.1
-mkdir -p /root/zswap-ops && cd /root/zswap-ops
-git clone https://github.com/<org>/zswap-aztec.git .
+mkdir -p /root/quetzal-ops && cd /root/quetzal-ops
+git clone https://github.com/<org>/quetzal.git .
 
-# Set env vars (write to /root/zswap-ops/.env, NOT committed):
+# Set env vars (write to /root/quetzal-ops/.env, NOT committed):
 cat > .env <<EOF
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 PAGERDUTY_ROUTING_KEY=...
@@ -378,7 +378,7 @@ docker compose --env-file ../../.env up -d
 - Prometheus UI: http://194.163.136.1:9090/targets — all 2 exporters UP
 - Alertmanager UI: http://194.163.136.1:9093 — 4 alerts loaded, 0 firing
 - Grafana UI: http://194.163.136.1:3000 (admin / $GRAFANA_ADMIN_PASSWORD)
-  — 3 dashboards auto-loaded under ZSwap folder
+  — 3 dashboards auto-loaded under Quetzal folder
 
 ### Test the alert pipeline
 
@@ -403,7 +403,7 @@ On the aggregator's daemon host (e.g., VPS):
 export RELAYER_MODE=1
 export L1_RPC_URL=https://eth-mainnet...
 export L1_PRIVATE_KEY=0x...  # relayer's L1 funding wallet (must hold ETH for gas)
-pnpm --filter @zswap/aggregator daemon
+pnpm --filter @quetzal/aggregator daemon
 ```
 
 The daemon now polls Treasury.pending_relayer_claims every 60s.
@@ -417,7 +417,7 @@ The daemon now polls Treasury.pending_relayer_claims every 60s.
 ### Inspect queue
 
 ```bash
-pnpm zswap aggregator inspect-relayer-queue  # (CLI cmd added in Sub-5d)
+pnpm quetzal aggregator inspect-relayer-queue  # (CLI cmd added in Sub-5d)
 ```
 
 For now, query directly:
@@ -476,8 +476,8 @@ steps:
 
 ### Aggregator recovery (SEV1/SEV2, OrderbookStalled alert)
 
-1. SSH to aggregator host. `docker logs --tail 200 zswap-aggregator-1`.
-2. If crashed: `docker restart zswap-aggregator-1`.
+1. SSH to aggregator host. `docker logs --tail 200 quetzal-aggregator-1`.
+2. If crashed: `docker restart quetzal-aggregator-1`.
 3. If repeated crashes: spin up backup aggregator on standby VPS + update
    registered aggregator address via governance.
 
@@ -488,7 +488,7 @@ steps:
 3. Check Outbox.consume gas usage on L1 (may need cap adjustment if
    siblingPath is unusually deep).
 4. Encourage makers to self-claim via the manual cast-send template
-   (CLI's `zswap bridge claim-l1` output).
+   (CLI's `quetzal bridge claim-l1` output).
 
 ## L1 portal upgrade (UUPS, 7-day timelock)
 

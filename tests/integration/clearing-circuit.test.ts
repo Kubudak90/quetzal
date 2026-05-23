@@ -50,7 +50,7 @@ import {
 // Use the smaller test circuit (MAX_ORDERS_PER_EPOCH=4) to stay within VPS memory limits.
 // The full circuit (MAX=128, ~904K gates) requires >8GB RAM to prove; the test circuit
 // (MAX=4, ~13K gates) is structurally identical and proves in seconds.
-const CIRCUIT_DIR = "/root/zswap-aztec/circuits/clearing-test";
+const CIRCUIT_DIR = "/root/quetzal/circuits/clearing-test";
 const CIRCUIT_MAX_ORDERS = 4;  // Must match clearing-test/src/types.nr MAX_ORDERS_PER_EPOCH
 // The host-installed bb binary (amd64-linux, no Docker overhead).
 const BB_BIN =
@@ -329,7 +329,7 @@ describe(
           "/bin/bash",
           [
             "-c",
-            `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
+            `source /root/.quetzal-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
           ],
           { encoding: "utf8", timeout: 5 * 60 * 1_000 },
         );
@@ -629,7 +629,7 @@ describe(
           "/bin/bash",
           [
             "-c",
-            `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
+            `source /root/.quetzal-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
           ],
           { encoding: "utf8", timeout: 5 * 60 * 1_000 },
         );

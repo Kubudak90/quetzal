@@ -19,7 +19,7 @@ function makeCtx(
   blockNow: number,
 ): DaemonContext & { submitted: SubmitProbe; tmpDir: string } {
   const submitted: SubmitProbe = { calls: 0, lastArgs: null };
-  const tmpDir = mkdtempSync(join(tmpdir(), "zswap-daemon-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "quetzal-daemon-test-"));
   return {
     queue: new RevealQueue(),
     snapshotsDir: tmpDir,

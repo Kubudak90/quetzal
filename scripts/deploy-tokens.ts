@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
-// Deploy ZSwap-on-Aztec stack to a running Aztec local-network and write
-// resulting contract addresses to zswap.config.json.
+// Deploy Quetzal stack to a running Aztec local-network and write
+// resulting contract addresses to quetzal.config.json.
 //
 // Sub-4 deploys (3-pool):
 //   - tUSDC (Token, 6 decimals) + tETH (Token, 18 decimals) + tBTC (Token, 8 decimals)
@@ -168,7 +168,7 @@ async function main() {
     .seed_public(TREASURY_SEED)
     .send({ from: admin });
 
-  // ===== 7. Write zswap.config.json =====
+  // ===== 7. Write quetzal.config.json =====
   const result = {
     nodeUrl: NODE_URL,
     tUSDC: tUSDC.address.toString(),
@@ -202,7 +202,7 @@ async function main() {
     bucketGrowthNum: BUCKET_GROWTH_NUM.toString(),
   };
 
-  writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));
+  writeFileSync("quetzal.config.json", JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 
   await wallet.stop();

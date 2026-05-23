@@ -11,10 +11,10 @@
  *       Maker approves USDCBridge to spend 100 Sepolia USDC (or anvil-mock),
  *       calls depositToL2Private(amount, secretHash), waits for the L1→L2
  *       message to land on Aztec, calls aUSDC.claim_private with the secret
- *       preimage and message_leaf_index. Maker then submits a 1-hop ZSwap
+ *       preimage and message_leaf_index. Maker then submits a 1-hop Quetzal
  *       order swapping aUSDC → aWETH. After epoch_close + clearing, maker
  *       claims the hop fill, calls aWETH.exit_to_l1_public(amount, l1_recipient),
- *       waits for the L2→L1 epoch finalization, runs zswap bridge claim-l1
+ *       waits for the L2→L1 epoch finalization, runs quetzal bridge claim-l1
  *       to produce a cast send command, then runs withdraw on L1 to release
  *       the WETH. Assertion: maker's L1 USDC balance went down by 100, L1
  *       WETH balance went up by the post-trade amount.
@@ -47,6 +47,6 @@ describe("Sub-5b bridge e2e", { skip: true }, () => {
     // Mirror of E1: WETHBridge.depositToL2Private -> aWETH.claim_private ->
     // submit_order (aWETH -> aUSDC) -> epoch_close + clearing -> hop fill
     // claim -> aUSDC.exit_to_l1_public -> L2->L1 finalization ->
-    // zswap bridge claim-l1 -> USDC withdraw on L1.
+    // quetzal bridge claim-l1 -> USDC withdraw on L1.
   });
 });

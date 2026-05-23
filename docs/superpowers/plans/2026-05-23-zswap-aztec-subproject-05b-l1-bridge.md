@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace ZSwap-on-Aztec's test tokens (tUSDC, tETH) with bridge-aware Token contracts (aUSDC, aWETH) that lock canonical L1 ERC20s (USDC, WETH) and mint matching L2 supply via Aztec's L1↔L2 messaging primitives. End-to-end maker journey: deposit canonical USDC on L1 → claim aUSDC on Aztec L2 → trade through ZSwap → exit aUSDC back to canonical USDC on L1.
+**Goal:** Replace Quetzal's test tokens (tUSDC, tETH) with bridge-aware Token contracts (aUSDC, aWETH) that lock canonical L1 ERC20s (USDC, WETH) and mint matching L2 supply via Aztec's L1↔L2 messaging primitives. End-to-end maker journey: deposit canonical USDC on L1 → claim aUSDC on Aztec L2 → trade through Quetzal → exit aUSDC back to canonical USDC on L1.
 
-**Architecture:** Phase A scaffolds the L1 Solidity portal contracts (Foundry; OpenZeppelin TimelockController + UUPS; 3-of-5 Gnosis Safe owner). Phase B extends `contracts/token/src/main.nr` with `is_bridged` + `portal_addr` immutable fields + four new claim/exit functions; existing `mint_to_*` functions revert in bridge mode. Phase C wires Aztec's `consume_l1_to_l2_message` + `message_portal` primitives with deterministic content-hash format. Phase D ships `zswap bridge claim/exit` CLI commands. Phase E adds the deploy ceremony (2 portals + 2 aTokens) parameterized for testnet vs mainnet governance. Phase F builds local + Sepolia integration tests. Phase G writes the operator runbook + closes with memory + README.
+**Architecture:** Phase A scaffolds the L1 Solidity portal contracts (Foundry; OpenZeppelin TimelockController + UUPS; 3-of-5 Gnosis Safe owner). Phase B extends `contracts/token/src/main.nr` with `is_bridged` + `portal_addr` immutable fields + four new claim/exit functions; existing `mint_to_*` functions revert in bridge mode. Phase C wires Aztec's `consume_l1_to_l2_message` + `message_portal` primitives with deterministic content-hash format. Phase D ships `quetzal bridge claim/exit` CLI commands. Phase E adds the deploy ceremony (2 portals + 2 aTokens) parameterized for testnet vs mainnet governance. Phase F builds local + Sepolia integration tests. Phase G writes the operator runbook + closes with memory + README.
 
 **Tech Stack:** Solidity 0.8.27 + Foundry + OpenZeppelin v5 (`TimelockController`, UUPS upgradeable, Gnosis Safe-compatible owner). Noir 1.0.0-beta.19 + aztec-nr 4.2.0 (`context.consume_l1_to_l2_message`, `context.message_portal`). TypeScript + tsx + node:test. Sub-5a (HEAD 5285f36) consumed unchanged.
 
@@ -29,7 +29,7 @@ contracts-l1/                                   ← NEW: L1 Solidity directory
     ├── TokenBridge.t.sol                       ← Foundry unit tests
     └── BridgeFlow.t.sol                        ← e2e (mocked Aztec Inbox/Outbox)
 
-cli/src/commands/bridge.ts                      ← NEW: zswap bridge claim/exit
+cli/src/commands/bridge.ts                      ← NEW: quetzal bridge claim/exit
 cli/src/bridge-helpers.ts                       ← NEW: L1 proof + Outbox traversal
 
 scripts/deploy-bridge.ts                        ← NEW: deploys 2 portals + 2 aTokens
@@ -1079,7 +1079,7 @@ git commit -m "feat(cli): C2 bridge-helpers.ts scaffold — Outbox proof interfa
 
 ## Phase D — CLI + helpers (2 tasks)
 
-### Task D1: `zswap bridge` subcommands
+### Task D1: `quetzal bridge` subcommands
 
 **Files:**
 - Create: `cli/src/commands/bridge.ts`
@@ -1159,7 +1159,7 @@ export function registerBridgeCommand(parent: Command) {
         const token = await TokenContract.at(Fr.fromString(tokenAddress), ctx.wallet);
         const fn = opts.private ? "exit_to_l1_private" : "exit_to_l1_public";
         await (token.methods as any)[fn](amount, l1RecipientFr).send({ from: ctx.account });
-        console.log(`${fn} submitted; query Outbox proof via 'zswap bridge claim-l1'`);
+        console.log(`${fn} submitted; query Outbox proof via 'quetzal bridge claim-l1'`);
       } finally {
         await ctx.stop();
       }
@@ -1204,7 +1204,7 @@ Expected: 0 errors.
 ```
 cd /Users/huseyinarslan/Desktop/aztec-project
 git add cli/src/commands/bridge.ts cli/src/index.ts
-git commit -m "feat(cli): D1 zswap bridge claim/exit/claim-l1 subcommands"
+git commit -m "feat(cli): D1 quetzal bridge claim/exit/claim-l1 subcommands"
 ```
 
 ### Task D2: Outbox proof retrieval (real implementation)
@@ -1376,7 +1376,7 @@ Create `scripts/deploy-bridge.ts`:
 //   L1_MULTISIG_ADDR     existing Gnosis Safe (deployer for testnet)
 //   DEPLOYER_PK          L1 deployer private key (Foundry needs)
 //
-// Output: writes zswap.config.json with new aUSDC/aWETH/portal addresses.
+// Output: writes quetzal.config.json with new aUSDC/aWETH/portal addresses.
 
 import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -1491,7 +1491,7 @@ async function main() {
   console.log(`aUSDC: ${aUSDC}`);
   console.log(`aWETH: ${aWETH}`);
 
-  const configPath = "zswap.config.json";
+  const configPath = "quetzal.config.json";
   const existing = existsSync(configPath)
     ? (JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>)
     : {};
@@ -1817,13 +1817,13 @@ Create `scripts/testnet-sub5b-bridge.ts`:
 //
 // Steps:
 //   1. Verify env (AZTEC_NODE_URL must include 'testnet', L1_RPC_URL must include 'sepolia')
-//   2. Verify L1 bridges + L2 aTokens are deployed (read zswap.config.json)
+//   2. Verify L1 bridges + L2 aTokens are deployed (read quetzal.config.json)
 //   3. Maker wallet bootstrap (faucet drip for Aztec; Sepolia ETH from L1 faucet)
 //   4. L1: approve USDCBridge to spend maker's Sepolia USDC
 //   5. L1: USDCBridge.depositToL2Private(amount, secret_hash)
 //   6. Wait 4-15 min for L1→L2 bridge
 //   7. L2: aUSDC.claim_private(maker, amount, secret, message_index)
-//   8. L2: 1-hop trade through ZSwap (aUSDC → aWETH)
+//   8. L2: 1-hop trade through Quetzal (aUSDC → aWETH)
 //   9. L2: aWETH.exit_to_l1_public(amount, l1_recipient)
 //   10. Wait 30 min - 2 hr for L2→L1 rollup proof
 //   11. L1: WETHBridge.withdraw(amount, l1_recipient, l2_block, leaf_idx, sibling_path)
@@ -1863,7 +1863,7 @@ async function step1VerifyEnv(state: State) {
 }
 async function step2VerifyDeploys(state: State) {
   if (state.step >= 2) return;
-  // Read zswap.config.json; assert l1.usdcBridge + l1.wethBridge + tUSDC + tETH present.
+  // Read quetzal.config.json; assert l1.usdcBridge + l1.wethBridge + tUSDC + tETH present.
   state.step = 2; saveState(state);
 }
 async function step3MakerWallet(state: State) {
@@ -1889,17 +1889,17 @@ async function step6BridgeWait(state: State) {
 }
 async function step7L2Claim(state: State) {
   if (state.step >= 7) return;
-  // CLI: zswap bridge claim --token aUSDC --secret ... --message-index ...
+  // CLI: quetzal bridge claim --token aUSDC --secret ... --message-index ...
   state.step = 7; saveState(state);
 }
 async function step8L2Trade(state: State) {
   if (state.step >= 8) return;
-  // Submit 1-hop trade on ZSwap; wait epoch_length; close_epoch_and_clear_verified.
+  // Submit 1-hop trade on Quetzal; wait epoch_length; close_epoch_and_clear_verified.
   state.step = 8; saveState(state);
 }
 async function step9L2Exit(state: State) {
   if (state.step >= 9) return;
-  // CLI: zswap bridge exit --token aWETH --amount ... --l1-recipient ...
+  // CLI: quetzal bridge exit --token aWETH --amount ... --l1-recipient ...
   state.step = 9; saveState(state);
 }
 async function step10RollupWait(state: State) {
@@ -1983,7 +1983,7 @@ Create `docs/superpowers/specs/sub5b-runbook.md`:
 ```markdown
 # Sub-5b Mainnet Deployment Runbook
 
-Operator walkthrough for deploying the ZSwap-on-Aztec L1↔L2 bridge to
+Operator walkthrough for deploying the Quetzal L1↔L2 bridge to
 Ethereum mainnet + Aztec mainnet. Estimated total walltime: 1-2 working
 days excluding multisig signer coordination.
 
@@ -1994,7 +1994,7 @@ days excluding multisig signer coordination.
 - [ ] 3-of-5 Gnosis Safe deployed on mainnet; signer identities documented
 - [ ] L1 deployer wallet funded (~1 ETH for deploy gas)
 - [ ] Aztec mainnet deployer Schnorr account funded with fee-juice
-- [ ] zswap.config.json updated with mainnet addresses (USDC, WETH, Inbox, Outbox)
+- [ ] quetzal.config.json updated with mainnet addresses (USDC, WETH, Inbox, Outbox)
 - [ ] Bug bounty active (Immunefi or similar, $100k+ pool)
 
 ## Deploy sequence (~3-4 hours active time)
@@ -2153,7 +2153,7 @@ metadata:
 ---
 
 Sub-project 5b — second of the Sub-5 split (5a/5b/5c) — **code-complete <YYYY-MM-DD>**.
-Built the L1↔L2 token bridge for canonical USDC + WETH; ZSwap now operates on
+Built the L1↔L2 token bridge for canonical USDC + WETH; Quetzal now operates on
 real-asset wrapped tokens (aUSDC + aWETH) instead of test tokens (tUSDC + tETH).
 
 **Delivered (~15 tasks across 7 phases):**
@@ -2173,7 +2173,7 @@ real-asset wrapped tokens (aUSDC + aWETH) instead of test tokens (tUSDC + tETH).
   - C2: cli/src/bridge-helpers.ts scaffold (OutboxProof + buildOutboxProof + formatProofForCastSend)
 
 - **Phase D (2 tasks):** CLI + helpers
-  - D1: `zswap bridge claim` + `zswap bridge exit` + `zswap bridge claim-l1` subcommands
+  - D1: `quetzal bridge claim` + `quetzal bridge exit` + `quetzal bridge claim-l1` subcommands
   - D2: buildOutboxProof aztec.js wiring (L2→L1 membership witness)
 
 - **Phase E (3 tasks):** Deploy + governance
@@ -2232,7 +2232,7 @@ TokenBridge.sol (UUPS + Pausable) + 3-of-5 multisig + 7-day TimelockController
 owns 2 portal proxies. Token.nr extended with `is_bridged` + `portal_addr`
 immutable fields + four new external functions (`claim_public`, `claim_private`,
 `exit_to_l1_public`, `exit_to_l1_private`); existing `mint_to_*` revert in
-bridge mode. ZSwap operates on aUSDC/aWETH on Aztec testnet + mainnet;
+bridge mode. Quetzal operates on aUSDC/aWETH on Aztec testnet + mainnet;
 local dev stack keeps tUSDC/tETH (`is_bridged=false`). L1 Foundry tests 15
 pass; bridge-mode TXE tests committed. Testnet bridge runner + mainnet
 deployment runbook ready; live testnet bridge execution + mainnet deploy

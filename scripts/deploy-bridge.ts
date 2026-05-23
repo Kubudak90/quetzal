@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// Sub-5c A4: end-to-end deploy ceremony for ZSwap's L1↔L2 bridge.
+// Sub-5c A4: end-to-end deploy ceremony for Quetzal's L1↔L2 bridge.
 //
 // One command:
 //   pnpm tsx scripts/deploy-bridge.ts
@@ -11,7 +11,7 @@
 //   - L2 aztec.js: deploys aUSDC + aWETH + aWBTC Token contracts
 //                  (constructor_with_minter_bridged, portal_addr = corresponding L1 bridge)
 //   - L1 cast: schedule+execute setL2TokenAddress on each portal via governance timelock
-//   - Output: writes/updates zswap.config.json
+//   - Output: writes/updates quetzal.config.json
 //
 // Required env:
 //   NETWORK                       testnet | mainnet | local
@@ -24,7 +24,7 @@
 //   DEPLOYER_PK                   L1 deployer private key
 //
 // Optional env:
-//   SKIP_L1=1                     reuse zswap.config.json's l1 addresses (post-failure resume)
+//   SKIP_L1=1                     reuse quetzal.config.json's l1 addresses (post-failure resume)
 //
 
 import { spawn } from "node:child_process";
@@ -265,8 +265,8 @@ async function main() {
 
   let l1: DeployedL1;
   if (process.env.SKIP_L1 === "1") {
-    console.log("SKIP_L1=1; reading L1 addresses from zswap.config.json");
-    const cfgRaw = JSON.parse(readFileSync("zswap.config.json", "utf8")) as Record<string, unknown>;
+    console.log("SKIP_L1=1; reading L1 addresses from quetzal.config.json");
+    const cfgRaw = JSON.parse(readFileSync("quetzal.config.json", "utf8")) as Record<string, unknown>;
     const l1Cfg = cfgRaw.l1 as DeployedL1 | undefined;
     if (
       !l1Cfg?.governanceTimelock ||
@@ -276,7 +276,7 @@ async function main() {
       !l1Cfg.wbtcBridge
     ) {
       throw new Error(
-        "SKIP_L1=1 set but zswap.config.json is missing one or more of: " +
+        "SKIP_L1=1 set but quetzal.config.json is missing one or more of: " +
         "l1.{governanceTimelock, emergencyTimelock, usdcBridge, wethBridge, wbtcBridge}",
       );
     }
@@ -316,8 +316,8 @@ async function main() {
   await wirePortalL2Token(l1.governanceTimelock, l1.wethBridge, aWETHBytes32, "WETH");
   await wirePortalL2Token(l1.governanceTimelock, l1.wbtcBridge, aWBTCBytes32, "wBTC");
 
-  // Write zswap.config.json
-  const cfgPath = "zswap.config.json";
+  // Write quetzal.config.json
+  const cfgPath = "quetzal.config.json";
   const existing = existsSync(cfgPath)
     ? (JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>)
     : {};

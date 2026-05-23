@@ -78,7 +78,7 @@ import {
 // ---------------------------------------------------------------------------
 
 // Production circuit (MAX_ORDERS_PER_EPOCH = 32, set by Task 1).
-const CIRCUIT_DIR = "/root/zswap-aztec/circuits/clearing";
+const CIRCUIT_DIR = "/root/quetzal/circuits/clearing";
 const CIRCUIT_MAX_ORDERS = 32;
 // Host-installed bb binary (amd64-linux, no Docker overhead).
 const BB_BIN =
@@ -416,7 +416,7 @@ describe(
         "/bin/bash",
         [
           "-c",
-          `source /root/.zswap-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
+          `source /root/.quetzal-env && cd ${CIRCUIT_DIR} && nargo execute --silence-warnings`,
         ],
         { encoding: "utf8", timeout: 5 * 60 * 1_000 },
       );

@@ -32,7 +32,7 @@ Gap 2 cannot be solved at clearing time because orders are private notes; the co
 - The Noir clearing circuit and its proof generation (Week 5d-2).
 - Recursive verification inside the Orderbook contract; the `CLOSING` epoch state (Week 5d-3).
 - Merkle settlement root / inclusion-proof claims (Week 5d-4).
-- Aggregator changes — `clearing.ts`, `clearing.test.ts`, the `@zswap/aggregator` package are untouched.
+- Aggregator changes — `clearing.ts`, `clearing.test.ts`, the `@quetzal/aggregator` package are untouched.
 - CLI changes, integration tests against a live stack.
 
 ## 4. Data Model
