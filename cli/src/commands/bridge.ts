@@ -392,35 +392,143 @@ export function registerBridge(program: Command): void {
         for (const exit of state.scheduledExits as ScheduledExit[]) {
           if (exit.status === "pending" && exit.submitAfterUnix <= now) {
             console.log(`Submitting L2 exit for ${exit.id} (${exit.amount} ${exit.token})...`);
-            // SCAFFOLD: implementer wires the actual L2 send.
-            // Pattern reference: the existing 'bridge exit' single-exit path
-            // already resolves the token alias + builds Fr for l1Recipient + calls
-            // TokenContract.at(...).methods.exit_to_l1_public(amount, l1Recipient).send(...).
-            // Copy that block here, parameterized by exit.token + exit.amount +
-            // exit.l1Recipient.
-            //
-            // After successful send:
-            //   const receipt = await tx.wait();
-            //   exit.status = "submitted";
-            //   exit.l2TxHash = receipt.txHash.toString();
-            //   exit.l2EpochAtSubmit = <captured>;  // from receipt or node query
-            //   changed = true;
-            console.warn(`  [scaffold] L2 send not yet wired; operator session fills in.`);
+            try {
+              // Resolve token alias to L2 deployed address (mirrors single-exit path).
+              const tokenL2Addr = resolveTokenAddress(config, exit.token);
+              const token = await TokenContract.at(AztecAddress.fromString(tokenL2Addr), ctx.wallet);
+              const tokenDyn = token as unknown as {
+                methods: {
+                  exit_to_l1_public: (
+                    amount: bigint, l1Recipient: Fr,
+                  ) => { send: (args: { from: AztecAddress }) => { wait: () => Promise<{ txHash: { toString: () => string }; blockNumber?: number }> } };
+                };
+              };
+
+              // L1 recipient encoded into a Field (mirrors single-exit path).
+              const l1RecipientFr = new Fr(BigInt(exit.l1Recipient));
+              const amountBig = BigInt(exit.amount);
+
+              // Scheduled multi-hop split is a privacy tool itself; use exit_to_l1_public
+              // (the default non-private exit). An additional private leg would interact
+              // non-trivially with the bridge state machine and is out of scope.
+              const tx = tokenDyn.methods.exit_to_l1_public(amountBig, l1RecipientFr).send({ from: ctx.account });
+              const receipt = await tx.wait();
+              const txHash = receipt.txHash.toString();
+
+              exit.status = "submitted";
+              exit.l2TxHash = txHash;
+              // Capture the blockNumber for later L1 claim epoch lookup.
+              exit.l2EpochAtSubmit = receipt.blockNumber ?? null;
+              changed = true;
+              console.log(`  -> submitted (l2_tx ${txHash})`);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`  -> FAILED: ${msg}`);
+              // Leave status=pending so a later tick retries on transient failure.
+            }
           } else if (exit.status === "submitted" && opts.autoClaim === true) {
             console.log(`Checking L1 claim eligibility for ${exit.id}...`);
-            // SCAFFOLD: implementer wires the L1 claim check + cast send.
-            // Pattern reference: Sub-5c D2's relayer-mode loop + Sub-5b D2's
-            // buildOutboxProof (cli/src/bridge-helpers.ts).
-            // Flow:
-            //   1. Query Aztec node: has epoch exit.l2EpochAtSubmit settled to L1 outbox?
-            //   2. If yes: build outbox proof via Sub-5c A3's zswap-outbox-proof binary
-            //      (now quetzal-outbox-proof; see scripts/measure-* for the spawn pattern)
-            //   3. Call viem writeContract on TokenBridge.withdraw or withdrawPrivate
-            //      with the proof + recipient + amount
-            //   4. On L1 receipt:
-            //        exit.status = "done";
-            //        changed = true;
-            console.warn(`  [scaffold] L1 claim not yet wired; operator session fills in.`);
+            try {
+              if (!exit.l2TxHash || exit.l2EpochAtSubmit === null) {
+                console.warn(`  -> no l2TxHash/epoch captured; skip`);
+                continue;
+              }
+
+              // Derive the expectedContent hash (mirrors single-exit path's relayerFee logic).
+              // Scheduled tick always uses exit_to_l1_public → isPrivate=false.
+              const { computeWithdrawContent } = await import("../sha256-content.js");
+              const expectedContent = computeWithdrawContent(exit.l1Recipient, BigInt(exit.amount), false);
+
+              // Build outbox proof via the Sub-5c A3 subprocess binary.
+              const { buildOutboxProof } = await import("../bridge-helpers.js");
+              let proof: Awaited<ReturnType<typeof buildOutboxProof>>;
+              try {
+                proof = await buildOutboxProof(config.nodeUrl, exit.l2TxHash, expectedContent);
+              } catch (proofErr) {
+                const pmsg = proofErr instanceof Error ? proofErr.message : String(proofErr);
+                console.log(`  -> not yet claimable (proof error: ${pmsg}); will retry on next tick`);
+                continue;
+              }
+
+              // Resolve L1 bridge address for this token alias.
+              const l1Cfg = config.l1;
+              if (!l1Cfg) {
+                console.warn(`  -> config.l1 not set; cannot auto-claim L1 withdrawal`);
+                continue;
+              }
+              const bridgeMap: Record<string, string | undefined> = {
+                tUSDC: l1Cfg.usdcBridge,
+                aUSDC: l1Cfg.usdcBridge,
+                tETH:  l1Cfg.wethBridge,
+                aWETH: l1Cfg.wethBridge,
+                tBTC:  l1Cfg.wbtcBridge,
+                aWBTC: l1Cfg.wbtcBridge,
+              };
+              const l1BridgeAddr = bridgeMap[exit.token];
+              if (!l1BridgeAddr) {
+                console.warn(`  -> no L1 bridge address for token '${exit.token}' in config.l1; skip`);
+                continue;
+              }
+
+              const l1Pk = process.env.L1_PRIVATE_KEY;
+              if (!l1Pk) {
+                console.warn(`  -> L1_PRIVATE_KEY env var unset; cannot claim L1 withdrawal`);
+                continue;
+              }
+
+              // Submit L1 withdraw via viem writeContract.
+              // ABI: withdraw(uint256 amount, address recipient, uint256 l2Epoch, uint256 leafIndex, bytes32[] siblingPath)
+              // (matches contracts-l1/out/TokenBridge.sol/TokenBridge.json).
+              const { createWalletClient, http, parseAbi } = await import("viem");
+              const { privateKeyToAccount } = await import("viem/accounts");
+              const { mainnet, sepolia } = await import("viem/chains");
+
+              const l1RpcUrl = l1Cfg.rpcUrl ?? "";
+              if (!l1RpcUrl) {
+                console.warn(`  -> config.l1.rpcUrl not set; cannot submit L1 tx`);
+                continue;
+              }
+
+              const chain = l1RpcUrl.includes("sepolia") ? sepolia : mainnet;
+              const pkHex = (l1Pk.startsWith("0x") ? l1Pk : `0x${l1Pk}`) as `0x${string}`;
+              const account = privateKeyToAccount(pkHex);
+              const walletClient = createWalletClient({
+                account,
+                chain,
+                transport: http(l1RpcUrl),
+              });
+
+              const tokenBridgeAbi = parseAbi([
+                "function withdraw(uint256 amount, address recipient, uint256 l2Epoch, uint256 leafIndex, bytes32[] siblingPath)",
+                "function withdrawPrivate(uint256 amount, address recipient, uint256 l2Epoch, uint256 leafIndex, bytes32[] siblingPath)",
+              ]);
+
+              // siblingPath from buildOutboxProof is string[]; cast to bytes32[] for viem.
+              const siblingPathBytes = proof.siblingPath.map(
+                (h) => (h.startsWith("0x") ? h : `0x${h}`) as `0x${string}`,
+              );
+
+              const l1TxHash = await walletClient.writeContract({
+                address: l1BridgeAddr as `0x${string}`,
+                abi: tokenBridgeAbi,
+                functionName: "withdraw",
+                args: [
+                  BigInt(exit.amount),
+                  exit.l1Recipient as `0x${string}`,
+                  proof.l2Epoch,
+                  proof.leafIndex,
+                  siblingPathBytes,
+                ],
+              });
+
+              exit.status = "done";
+              changed = true;
+              console.log(`  -> claimed on L1 (l1_tx ${l1TxHash})`);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`  -> L1 claim FAILED: ${msg}; will retry on next tick`);
+              // Leave status=submitted so a later tick retries.
+            }
           }
         }
 
