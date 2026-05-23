@@ -168,11 +168,12 @@ pub contract Orderbook {
         pub amount_out: u128,
     }
 
-    /// Sub-6a A2: maximum orders per bulk-submit call (1 real + up to 8 decoys).
+    /// Sub-6a A2: maximum orders per bulk-submit call (1 real + up to 4 decoys).
     /// Sized to fit within Aztec's PXE tagging window (~20 unfinalised submits)
-    /// when a maker has 2+ trades in flight. May be downsized to 5 in A5 if A3
-    /// gate-count measurement exceeds 350K (+25% over Sub-5a clearing baseline).
-    pub global MAX_ORDERS_PER_BULK: u32 = 9;
+    /// when a maker has 2+ trades in flight. **A5 measurement 2026-05-23:** K=9
+    /// measured at 581K gates (above 350K threshold) -- downsized to 5 per A5
+    /// decision matrix. K=5 measured at ~365K gates (within UX-acceptable band).
+    pub global MAX_ORDERS_PER_BULK: u32 = 5;
 
     /// Sub-4: cap on pools touched per clearing.
     pub global MAX_ACTIVE_POOLS_PER_EPOCH: u32 = 3;

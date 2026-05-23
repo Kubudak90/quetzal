@@ -1123,13 +1123,13 @@ unconstrained fn sub6a_bulk_submit_k0_only_real() {
     let pool  = env.create_light_account();
     let ob_addr = deploy_orderbook(&mut env, deployer, tok_a, tok_b, 100, pool, 0);
 
-    let mut sides        = [false; 9];
-    let mut amounts      = [0 as u128; 9];
-    let mut limits       = [0 as u128; 9];
-    let mut nonces       = [0 as Field; 9];
-    let mut order_nonces = [0 as Field; 9];
-    let mut plens        = [0 as u8; 9];
-    let mut paths        = [[0 as Field; 3]; 9];
+    let mut sides        = [false; 5];
+    let mut amounts      = [0 as u128; 5];
+    let mut limits       = [0 as u128; 5];
+    let mut nonces       = [0 as Field; 5];
+    let mut order_nonces = [0 as Field; 5];
+    let mut plens        = [0 as u8; 5];
+    let mut paths        = [[0 as Field; 3]; 5];
 
     // Slot 0: real bid order (side=false -> input = token_a = path[0]).
     sides[0]        = false;
@@ -1156,13 +1156,13 @@ unconstrained fn sub6a_bulk_submit_all_slots_zero_is_noop() {
     let ob_addr = deploy_orderbook(&mut env, deployer, deployer, deployer, 100, deployer, 0);
     let maker = env.create_light_account();
 
-    let sides = [false; 9];
-    let amounts = [0 as u128; 9];
-    let limits = [0 as u128; 9];
-    let nonces = [0 as Field; 9];
-    let order_nonces = [0 as Field; 9];
-    let plens = [0 as u8; 9];
-    let paths = [[0 as Field; 3]; 9];
+    let sides = [false; 5];
+    let amounts = [0 as u128; 5];
+    let limits = [0 as u128; 5];
+    let nonces = [0 as Field; 5];
+    let order_nonces = [0 as Field; 5];
+    let plens = [0 as u8; 5];
+    let paths = [[0 as Field; 3]; 5];
 
     // Must not revert: all slots are skipped, no helper called.
     env.call_private(maker, Orderbook::at(ob_addr).submit_order_bulk(
@@ -1182,13 +1182,13 @@ unconstrained fn sub6a_bulk_submit_rejects_zero_limit_price() {
     let tok_a = env.create_light_account();
     let tok_b = env.create_light_account();
 
-    let mut sides = [false; 9];
-    let mut amounts = [0 as u128; 9];
-    let mut limits = [0 as u128; 9];
-    let mut nonces = [0 as Field; 9];
-    let mut order_nonces = [0 as Field; 9];
-    let mut plens = [2 as u8; 9];
-    let mut paths = [[0 as Field; 3]; 9];
+    let mut sides = [false; 5];
+    let mut amounts = [0 as u128; 5];
+    let mut limits = [0 as u128; 5];
+    let mut nonces = [0 as Field; 5];
+    let mut order_nonces = [0 as Field; 5];
+    let mut plens = [2 as u8; 5];
+    let mut paths = [[0 as Field; 3]; 5];
 
     amounts[0] = 1_000_000 as u128;
     limits[0] = 0 as u128; // triggers "limit_price must be positive" in helper
@@ -1222,13 +1222,13 @@ unconstrained fn sub6a_bulk_submit_k3_real_plus_3_decoys() {
     let pool  = env.create_light_account();
     let ob_addr = deploy_orderbook(&mut env, deployer, tok_a, tok_b, 100, pool, 0);
 
-    let mut sides        = [false; 9];
-    let mut amounts      = [0 as u128; 9];
-    let mut limits       = [0 as u128; 9];
-    let mut nonces       = [0 as Field; 9];
-    let mut order_nonces = [0 as Field; 9];
-    let mut plens        = [0 as u8; 9];
-    let mut paths        = [[0 as Field; 3]; 9];
+    let mut sides        = [false; 5];
+    let mut amounts      = [0 as u128; 5];
+    let mut limits       = [0 as u128; 5];
+    let mut nonces       = [0 as Field; 5];
+    let mut order_nonces = [0 as Field; 5];
+    let mut plens        = [0 as u8; 5];
+    let mut paths        = [[0 as Field; 3]; 5];
 
     // Slot 0: real order (fillable limit_price).
     sides[0]        = false;
@@ -1279,13 +1279,13 @@ unconstrained fn sub6a_bulk_submit_k8_max() {
 
     // All 9 slots active: uniform escrow amount per slot.
     // Slot 0: real (fillable limit_price); slots 1-8: decoys (u128::MAX = unfillable).
-    let mut sides        = [false; 9];
-    let mut amounts      = [1_000_000 as u128; 9];
-    let mut limits       = [0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF as u128; 9];
-    let mut nonces       = [0 as Field; 9];
-    let mut order_nonces = [0 as Field; 9];
-    let mut plens        = [2 as u8; 9];
-    let mut paths        = [[0 as Field; 3]; 9];
+    let mut sides        = [false; 5];
+    let mut amounts      = [1_000_000 as u128; 5];
+    let mut limits       = [0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF as u128; 5];
+    let mut nonces       = [0 as Field; 5];
+    let mut order_nonces = [0 as Field; 5];
+    let mut plens        = [2 as u8; 5];
+    let mut paths        = [[0 as Field; 3]; 5];
 
     // Populate paths and nonces for all 9 slots.
     for i in 0..9 {
@@ -1315,13 +1315,13 @@ unconstrained fn sub6a_bulk_submit_skip_semantics_slot0_zero_slot1_active() {
     let tok_a = env.create_light_account();
     let tok_b = env.create_light_account();
 
-    let mut sides = [false; 9];
-    let mut amounts = [0 as u128; 9];
-    let mut limits = [0 as u128; 9];
-    let mut nonces = [0 as Field; 9];
-    let mut order_nonces = [0 as Field; 9];
-    let mut plens = [0 as u8; 9];
-    let mut paths = [[0 as Field; 3]; 9];
+    let mut sides = [false; 5];
+    let mut amounts = [0 as u128; 5];
+    let mut limits = [0 as u128; 5];
+    let mut nonces = [0 as Field; 5];
+    let mut order_nonces = [0 as Field; 5];
+    let mut plens = [0 as u8; 5];
+    let mut paths = [[0 as Field; 3]; 5];
 
     // Slot 0: amount_in=0 -> skipped.
     // Slot 1: active with valid scalar params but unregistered path -> pool-lookup fires.

@@ -68,19 +68,19 @@ The following threats were considered during design. Each lists the mitigation i
 | **T-10** | Initialize race (impl init before proxy points at it) | `_disableInitializers()` in implementation constructor blocks any direct initialize on the implementation; only the proxy's delegated initialize works |
 | **T-11** | Emergency-role takeover via governance | `EMERGENCY_PAUSER_ROLE` self-admin invariant set at initialize; governance cannot reach the role |
 | **T-12** | Stale codegen → CLI misinvocation | Operator concern; runbook documents `pnpm codegen` step pre-deploy. Defense-in-depth: every contract function uses custom errors + revert messages so a wrong-ABI call returns a structured error, not silent corruption |
-| **T-13** | Bulk-submit gate-budget exhaustion | `MAX_ORDERS_PER_BULK = 9` hard cap in `contracts/orderbook/src/main.nr`; A5 carry-forward measures actual gate count + downsizes to 5 if needed. Per-tx gas pricing on Aztec L2 provides natural rate limiting |
+| **T-13** | Bulk-submit gate-budget exhaustion | `MAX_ORDERS_PER_BULK = 5` hard cap (downsized from 9 after A5 2026-05-23 measurement showed K=9 = 581K gates, K=5 = 312K gates). Per-tx gas pricing on Aztec L2 provides natural rate limiting |
 | **T-14** | Decoy-registry corruption attack | Accepted limitation — registry is intentionally local + unprivileged; attacker needs maker-machine filesystem access (at which point private keys are also exposed). Cancel path still requires the legitimate signing key; fund loss is not possible |
 | **T-15** | Bridge round-trip advisory bypass via amount fuzzing | Maker uses `--split-into N` (multi-hop split) + amount perturbation (`--ack-round` prompt) + non-default `--recipient` address. Advisory is warn-only; `--ack-delay` disables the heuristic if the maker's use case requires the deposit pattern |
 
 ### T-13 detail — Bulk-submit gate-budget exhaustion
 
-A maker submitting `submit_order_bulk` with all 9 slots filled performs K=9 internal calls, each enqueueing 2 public enqueues (escrow + epoch-state mutation), for 18 public enqueues per private tx. If the operator's Aztec node is under pressure, this is the largest single-tx gate budget any Quetzal user can exercise. Sub-6a A3 gates this at 350K gates as a safety threshold.
+A maker submitting `submit_order_bulk` with all 5 slots filled performs K=5 internal calls, each enqueueing 3 public enqueues (escrow + epoch-state mutation + `_assert_path_pools_registered` callback), for 15 public enqueues per private tx. Measured circuit_size = 312,538 gates at K=5 (within the 350K UX-acceptable threshold). The previous K=9 design measured at 581,228 gates -- above threshold -- and was downsized in A5.
 
 - **Impact:** Medium. A malicious maker can attempt to spam bulk submissions to DoS the public queue. Per-tx gas pricing on the Aztec L2 side is the natural rate limit.
 - **Likelihood:** Low under normal load; high under coordinated spam.
-- **Mitigation:** `MAX_ORDERS_PER_BULK = 9` hard cap in `contracts/orderbook/src/main.nr`. A5 carry-forward measures actual gate count + downsizes to 5 if needed (provisional KEEP at 9 pending bb CLI install).
-- **Status:** Open (Sub-6a A5 operator follow-up pending live measurement).
-- **Notes:** Decoy registry is a maker-side privacy tool; the contract treats all 9 slots identically. Any maker can spam at the gas cost of 9 escrows.
+- **Mitigation:** `MAX_ORDERS_PER_BULK = 5` hard cap in `contracts/orderbook/src/main.nr`. See `docs/superpowers/specs/sub6a-gate-measurement.md` for the full per-K table.
+- **Status:** Resolved as of 2026-05-23 A5 measurement run.
+- **Notes:** Decoy registry is a maker-side privacy tool; the contract treats all 5 slots identically. Any maker can spam at the gas cost of 5 escrows.
 
 ### T-14 detail — Decoy-registry corruption attack
 

@@ -21,9 +21,10 @@ export function registerOrder(program: Command): void {
     .option("--ack-round", "acknowledge round-amount fingerprint warning + proceed with order")
     .option(
       "--decoys <n>",
-      "number of decoy orders to submit alongside the real order (0-8; default 0 = no privacy padding). " +
+      "number of decoy orders to submit alongside the real order (0-4; default 0 = no privacy padding). " +
         "Each decoy escrows the same amount but uses an unfillable limit_price so it doesn't fill at clearing. " +
-        "Anonymity set per real order = decoys+1.",
+        "Anonymity set per real order = decoys+1. " +
+        "Range capped at 4 per A5 (2026-05-23) gate measurement; K=5 = 312K gates.",
       "0",
     )
     .action(async (_opts, cmd: Command) => {
@@ -80,14 +81,16 @@ export function registerOrder(program: Command): void {
         ];
 
         // Sub-6a B2: --decoys bulk-submit path
+        // A5 (2026-05-23): MAX_ORDERS_PER_BULK downsized 9 -> 5 after gate
+        // measurement (K=9 was 581K, exceeded 350K threshold; K=5 = 312K).
         const decoyCount = Number(opts.decoys);
-        if (!Number.isInteger(decoyCount) || decoyCount < 0 || decoyCount > 8) {
-          throw new Error(`--decoys must be an integer in [0, 8], got: ${opts.decoys}`);
+        if (!Number.isInteger(decoyCount) || decoyCount < 0 || decoyCount > 4) {
+          throw new Error(`--decoys must be an integer in [0, 4], got: ${opts.decoys}`);
         }
 
         if (decoyCount > 0) {
-          // Build 9 parallel arrays (MAX_ORDERS_PER_BULK = 9)
-          const SLOTS = 9;
+          // Build 5 parallel arrays (MAX_ORDERS_PER_BULK = 5)
+          const SLOTS = 5;
           const sides: boolean[] = new Array(SLOTS).fill(false);
           const amounts: bigint[] = new Array(SLOTS).fill(0n);
           const limits: bigint[] = new Array(SLOTS).fill(0n);
