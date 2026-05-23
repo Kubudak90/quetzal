@@ -1,0 +1,76 @@
+'forge clean' running (wd: /Users/huseyinarslan/Desktop/aztec-project/contracts-l1)
+'forge config --json' running
+'forge build --build-info --skip ./test/** ./script/** --force' running (wd: /Users/huseyinarslan/Desktop/aztec-project/contracts-l1)
+INFO:Detectors:
+Detector: incorrect-equality
+TokenBridge.requestRecovery(bytes32) (src/TokenBridge.sol#336-343) uses a dangerous strict equality:
+	- d.amount == 0 (src/TokenBridge.sol#339)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+INFO:Detectors:
+Detector: reentrancy-benign
+Reentrancy in TokenBridge.depositToL2Private(uint256,bytes32) (src/TokenBridge.sol#232-258):
+	External calls:
+	- l1Token.safeTransferFrom(msg.sender,address(this),amount) (src/TokenBridge.sol#240)
+	- (messageHash,messageIndex) = inbox.sendL2Message(recipient,content,secretHash) (src/TokenBridge.sol#247)
+	State variables written after the call(s):
+	- deposits[trackKey] = Deposit({amount:uint128(amount),timestamp:uint64(block.timestamp),isPrivate:true}) (src/TokenBridge.sol#252-256)
+Reentrancy in TokenBridge.depositToL2Public(uint256,bytes32,bytes32) (src/TokenBridge.sol#191-222):
+	External calls:
+	- l1Token.safeTransferFrom(msg.sender,address(this),amount) (src/TokenBridge.sol#200)
+	- (messageHash,messageIndex) = inbox.sendL2Message(recipient,content,secretHash) (src/TokenBridge.sol#207)
+	State variables written after the call(s):
+	- deposits[trackKey] = Deposit({amount:uint128(amount),timestamp:uint64(block.timestamp),isPrivate:false}) (src/TokenBridge.sol#216-220)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-3
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in TokenBridge.depositToL2Private(uint256,bytes32) (src/TokenBridge.sol#232-258):
+	External calls:
+	- l1Token.safeTransferFrom(msg.sender,address(this),amount) (src/TokenBridge.sol#240)
+	- (messageHash,messageIndex) = inbox.sendL2Message(recipient,content,secretHash) (src/TokenBridge.sol#247)
+	Event emitted after the call(s):
+	- DepositInitiated(msg.sender,bytes32(0),amount,secretHash,messageIndex,true) (src/TokenBridge.sol#249)
+	- DepositTracked(msg.sender,secretHash,uint128(amount),true) (src/TokenBridge.sol#257)
+Reentrancy in TokenBridge.depositToL2Public(uint256,bytes32,bytes32) (src/TokenBridge.sol#191-222):
+	External calls:
+	- l1Token.safeTransferFrom(msg.sender,address(this),amount) (src/TokenBridge.sol#200)
+	- (messageHash,messageIndex) = inbox.sendL2Message(recipient,content,secretHash) (src/TokenBridge.sol#207)
+	Event emitted after the call(s):
+	- DepositInitiated(msg.sender,l2Recipient,amount,secretHash,messageIndex,false) (src/TokenBridge.sol#209)
+	- DepositTracked(msg.sender,secretHash,uint128(amount),false) (src/TokenBridge.sol#221)
+Reentrancy in TokenBridge.executeRecovery(bytes32,address) (src/TokenBridge.sol#360-370):
+	External calls:
+	- l1Token.safeTransfer(l1Recipient,amount) (src/TokenBridge.sol#368)
+	Event emitted after the call(s):
+	- RecoveryExecuted(msg.sender,secretHash,l1Recipient,amount) (src/TokenBridge.sol#369)
+Reentrancy in TokenBridge.withdraw(uint256,address,uint256,uint256,bytes32[]) (src/TokenBridge.sol#270-291):
+	External calls:
+	- outbox.consume(message,Epoch.wrap(l2Epoch),leafIndex,siblingPath) (src/TokenBridge.sol#287)
+	- l1Token.safeTransfer(recipient,amount) (src/TokenBridge.sol#289)
+	Event emitted after the call(s):
+	- WithdrawCompleted(recipient,amount,l2Epoch,leafIndex) (src/TokenBridge.sol#290)
+Reentrancy in TokenBridge.withdrawPrivate(uint256,address,uint256,uint256,bytes32[]) (src/TokenBridge.sol#298-317):
+	External calls:
+	- outbox.consume(message,Epoch.wrap(l2Epoch),leafIndex,siblingPath) (src/TokenBridge.sol#314)
+	- l1Token.safeTransfer(recipient,amount) (src/TokenBridge.sol#315)
+	Event emitted after the call(s):
+	- WithdrawCompleted(recipient,amount,l2Epoch,leafIndex) (src/TokenBridge.sol#316)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: timestamp
+TokenBridge.requestRecovery(bytes32) (src/TokenBridge.sol#336-343) uses timestamp for comparisons
+	Dangerous comparisons:
+	- d.amount == 0 (src/TokenBridge.sol#339)
+	- block.timestamp < uint256(d.timestamp) + 7776000 (src/TokenBridge.sol#340)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: naming-convention
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._l1Token (src/TokenBridge.sol#144) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._l2TokenAddress (src/TokenBridge.sol#145) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._l2Version (src/TokenBridge.sol#146) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._inbox (src/TokenBridge.sol#147) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._outbox (src/TokenBridge.sol#148) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._governanceTimelock (src/TokenBridge.sol#149) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._emergencyTimelock (src/TokenBridge.sol#150) is not in mixedCase
+Parameter TokenBridge.initialize(IERC20,bytes32,uint256,IInbox,IOutbox,address,address,uint256)._maxTvl (src/TokenBridge.sol#151) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Slither:. analyzed (20 contracts with 101 detectors), 17 result(s) found
