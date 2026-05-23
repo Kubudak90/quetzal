@@ -43,6 +43,13 @@
 
 4. **`exit_to_l1_private` ↔ `withdrawPrivate` pairing.** Sub-5b shipped `exit_to_l1_private` on L2 with a banner that "no L1 consumer exists yet." Sub-5c B3 ships `withdrawPrivate`. Both directions use `WITHDRAW_PRIVATE_TAG` content; cross-mode confusion impossible (different content hash from PUBLIC_TAG flow). Audit should confirm the byte-for-byte alignment between L1 + L2 reconstructions.
 
+5. **PXE tagging window caps anonymity-set growth.** Aztec PXE has a hard limit of ~20 unfinalized private submits per wallet. A maker who pushes `submit_order_bulk` with K=9 decoys consumes 9 slots of the tagging window per bulk tx. After ~2 bulk submissions the wallet stalls until earlier txs finalize. The anonymity set per epoch is therefore bounded by the wallet's tagging capacity, not by Sub-6a's design parameters.
+   - **Impact:** Low. Performance bound, not a correctness bug.
+   - **Likelihood:** N/A (architectural constraint).
+   - **Mitigation:** Wait for tx finalization, OR use a second wallet, OR reduce decoys to K=4 to fit 4 bulks per tagging window.
+   - **Status:** Known. Documented as architectural limitation, not a Sub-6a bug.
+   - **Notes:** Aztec 4.2.1 specific. Future Aztec releases may relax this; re-evaluate on each Aztec upgrade.
+
 ## Threat model
 
 The following threats were considered during design. Each lists the mitigation in place; auditor verifies sufficiency.
@@ -61,6 +68,39 @@ The following threats were considered during design. Each lists the mitigation i
 | **T-10** | Initialize race (impl init before proxy points at it) | `_disableInitializers()` in implementation constructor blocks any direct initialize on the implementation; only the proxy's delegated initialize works |
 | **T-11** | Emergency-role takeover via governance | `EMERGENCY_PAUSER_ROLE` self-admin invariant set at initialize; governance cannot reach the role |
 | **T-12** | Stale codegen → CLI misinvocation | Operator concern; runbook documents `pnpm codegen` step pre-deploy. Defense-in-depth: every contract function uses custom errors + revert messages so a wrong-ABI call returns a structured error, not silent corruption |
+| **T-13** | Bulk-submit gate-budget exhaustion | `MAX_ORDERS_PER_BULK = 9` hard cap in `contracts/orderbook/src/main.nr`; A5 carry-forward measures actual gate count + downsizes to 5 if needed. Per-tx gas pricing on Aztec L2 provides natural rate limiting |
+| **T-14** | Decoy-registry corruption attack | Accepted limitation — registry is intentionally local + unprivileged; attacker needs maker-machine filesystem access (at which point private keys are also exposed). Cancel path still requires the legitimate signing key; fund loss is not possible |
+| **T-15** | Bridge round-trip advisory bypass via amount fuzzing | Maker uses `--split-into N` (multi-hop split) + amount perturbation (`--ack-round` prompt) + non-default `--recipient` address. Advisory is warn-only; `--ack-delay` disables the heuristic if the maker's use case requires the deposit pattern |
+
+### T-13 detail — Bulk-submit gate-budget exhaustion
+
+A maker submitting `submit_order_bulk` with all 9 slots filled performs K=9 internal calls, each enqueueing 2 public enqueues (escrow + epoch-state mutation), for 18 public enqueues per private tx. If the operator's Aztec node is under pressure, this is the largest single-tx gate budget any Quetzal user can exercise. Sub-6a A3 gates this at 350K gates as a safety threshold.
+
+- **Impact:** Medium. A malicious maker can attempt to spam bulk submissions to DoS the public queue. Per-tx gas pricing on the Aztec L2 side is the natural rate limit.
+- **Likelihood:** Low under normal load; high under coordinated spam.
+- **Mitigation:** `MAX_ORDERS_PER_BULK = 9` hard cap in `contracts/orderbook/src/main.nr`. A5 carry-forward measures actual gate count + downsizes to 5 if needed (provisional KEEP at 9 pending bb CLI install).
+- **Status:** Open (Sub-6a A5 operator follow-up pending live measurement).
+- **Notes:** Decoy registry is a maker-side privacy tool; the contract treats all 9 slots identically. Any maker can spam at the gas cost of 9 escrows.
+
+### T-14 detail — Decoy-registry corruption attack
+
+`~/.quetzal/decoy-registry-<wallet>.json` is unsigned local state. If a maker's filesystem is compromised, an attacker can flip `isDecoy: true` → `false` for a real order, causing the maker's claim command to not skip-filter that nonce, leaking the claim back into the on-chain settlement set. The reverse attack (flip `false` → `true`) causes the maker to lose access to a real fill by treating it as a decoy and canceling it.
+
+- **Impact:** Low. The attacker needs maker-machine filesystem access, at which point they have private keys anyway.
+- **Likelihood:** Low (defense in depth).
+- **Mitigation:** None at contract layer (registry is intentionally local + unprivileged). Documented as a known limitation in Sub-6a README. Operator follow-up: signed JSON or HMAC-on-disk if real-world attestation needs emerge.
+- **Status:** Open (accepted limitation; mitigation deferred).
+- **Notes:** This is a privacy degradation, not a fund loss — the `cancel_order` path still requires the legitimate signing key.
+
+### T-15 detail — Bridge round-trip advisory bypass via amount fuzzing
+
+C2's `isRoundTripRisk` flags 5%-tolerance amount matches between an L1 deposit and a subsequent L1 exit-claim. An attacker observing the deposit can predict the maker's likely exit amount and deliberately match it with a different L1 EOA to dilute the privacy signal. The advisory is a maker-side hint, not a contract enforcement; an adversary cannot trigger a false-positive ack on the maker's machine but can amplify the natural matching probability by colluding with multiple deposits around the same amount.
+
+- **Impact:** Low. Maker can perturb amount + use `--split-into` to defeat.
+- **Likelihood:** Low (adversary must observe + predict before the maker exits).
+- **Mitigation:** Maker uses `--split-into N` (multi-hop split, C3) + amount perturbation (`--ack-round` prompt, D2) + non-default `--recipient` address. The advisory itself is warn-only; the maker can also disable the heuristic with `--ack-delay` if their use case requires the deposit pattern.
+- **Status:** Open (defense-in-depth; not a single-point fix).
+- **Notes:** Bridge surfaces leak more information than orderbook surfaces because L1 is fully public. The advisory is meant to inform, not block.
 
 ## Dependencies + supply chain
 
@@ -91,7 +131,7 @@ Post-Sub-5c numbers (run from `contracts-l1/`):
 The audit firm should produce:
 
 1. **Findings report** — Critical / High / Medium / Low / Informational categorization. Each finding with: location (file:line), description, impact, recommended fix.
-2. **Threat model coverage** — confirmation each T-1..T-12 mitigation is sufficient, OR new threats identified.
+2. **Threat model coverage** — confirmation each T-1..T-15 mitigation is sufficient, OR new threats identified.
 3. **Code recommendations** — non-blocking improvements (style, gas, naming, NatSpec) at any severity.
 4. **Sign-off statement** — text usable in a public bug-bounty announcement.
 
