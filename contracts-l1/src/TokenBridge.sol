@@ -290,6 +290,32 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         emit WithdrawCompleted(recipient, amount, l2Epoch, leafIndex);
     }
 
+    /// @notice Sub-5c B3: L2→L1 message consumer for WITHDRAW_PRIVATE_TAG content
+    ///         emitted by the L2 Token's exit_to_l1_private path. Identical to
+    ///         withdraw() except the content-hash domain tag is the PRIVATE
+    ///         variant, so the L2-emitted message can only be consumed via
+    ///         this entry point (no cross-mode confusion).
+    function withdrawPrivate(
+        uint256 amount,
+        address recipient,
+        uint256 l2Epoch,
+        uint256 leafIndex,
+        bytes32[] calldata siblingPath
+    ) external whenNotPaused {
+        if (amount == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+
+        bytes32 content = _withdrawContent(recipient, amount, DataStructures.WITHDRAW_PRIVATE_TAG);
+        DataStructures.L2ToL1Msg memory message = DataStructures.L2ToL1Msg({
+            sender: DataStructures.L2Actor({actor: l2TokenAddress, version: l2Version}),
+            recipient: DataStructures.L1Actor({actor: address(this), chainId: block.chainid}),
+            content: content
+        });
+        outbox.consume(message, Epoch.wrap(l2Epoch), leafIndex, siblingPath);
+        l1Token.safeTransfer(recipient, amount);
+        emit WithdrawCompleted(recipient, amount, l2Epoch, leafIndex);
+    }
+
     /// @return The current L1 token balance held in escrow by this bridge contract.
     function totalLocked() external view returns (uint256) {
         return l1Token.balanceOf(address(this));
@@ -400,12 +426,9 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         return _sha256ToField(abi.encode(l2Recipient, amount, secretHash, tag));
     }
 
-    // NOTE: only WITHDRAW_PUBLIC_TAG is consumed here. exit_to_l1_private on L2
-    //       emits WITHDRAW_PRIVATE_TAG, but the resulting Outbox content hash
-    //       is bound to whichever tag the L2 side used. This portal accepts the
-    //       public-tagged path; supporting private-tagged exits would require
-    //       a parallel _withdrawContentPrivate + an opt-in withdraw variant.
-    //       Sub-5c follow-up if needed.
+    // Generic content-hash helper used by both withdraw() (PUBLIC tag) and
+    // withdrawPrivate() (PRIVATE tag). The tag parameter is the only
+    // distinguishing factor between the two L2→L1 paths.
     function _withdrawContent(address recipient, uint256 amount, bytes32 tag)
         internal pure returns (bytes32)
     {

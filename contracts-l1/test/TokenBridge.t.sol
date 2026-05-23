@@ -410,4 +410,23 @@ contract TokenBridgeTest is Test {
         vm.expectRevert();  // OZ AccessControlUnauthorizedAccount(alice, GOVERNANCE_ROLE)
         bridge.approveRecovery(key);
     }
+
+    // ── Sub-5c B3: withdrawPrivate tests ──────────────────────────────────────────
+
+    function test_withdrawPrivate_releasesTokensOnValidProof() public {
+        token.mint(address(bridge), 100_000_000);
+        bytes32[] memory proof = new bytes32[](6);
+        uint256 balanceBefore = token.balanceOf(alice);
+        bridge.withdrawPrivate(50_000_000, alice, uint256(54321), uint256(3), proof);
+        assertEq(token.balanceOf(alice), balanceBefore + 50_000_000, "alice received private withdraw");
+        assertEq(token.balanceOf(address(bridge)), 50_000_000, "bridge debited by half");
+    }
+
+    function test_withdrawPrivate_revertsWhenPaused() public {
+        vm.prank(emergencyTimelock);
+        bridge.pause();
+        bytes32[] memory proof = new bytes32[](6);
+        vm.expectRevert();  // PausableUpgradeable: EnforcedPause()
+        bridge.withdrawPrivate(50_000_000, alice, uint256(54321), uint256(3), proof);
+    }
 }
