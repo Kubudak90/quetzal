@@ -39,11 +39,13 @@ contract DeployAllBridges is Script {
         timelock = address(tlc);
 
         // 2. USDC + WETH portal proxies. l2TokenAddress = bytes32(0) placeholder.
+        // Transitional: both governanceTl + emergencyTl set to same timelock.
+        // A4 will properly separate them with a dedicated emergency TimelockController.
         usdcBridge = _deployBridgeProxy(
-            IERC20(l1Usdc), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, maxTvl
+            IERC20(l1Usdc), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, timelock, maxTvl
         );
         wethBridge = _deployBridgeProxy(
-            IERC20(l1Weth), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, maxTvl
+            IERC20(l1Weth), bytes32(0), 1, IInbox(l1Inbox), IOutbox(l1Outbox), timelock, timelock, maxTvl
         );
 
         vm.stopBroadcast();
@@ -59,13 +61,15 @@ contract DeployAllBridges is Script {
         uint256 l2Version,
         IInbox inbox,
         IOutbox outbox,
-        address owner,
+        address governanceTl,
+        address emergencyTl,
         uint256 maxTvl
     ) internal returns (address) {
         TokenBridge impl = new TokenBridge();
         bytes memory init = abi.encodeWithSelector(
             TokenBridge.initialize.selector,
-            token, l2Token, l2Version, inbox, outbox, owner, maxTvl
+            token, l2Token, l2Version, inbox, outbox,
+            governanceTl, emergencyTl, maxTvl
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
         return address(proxy);

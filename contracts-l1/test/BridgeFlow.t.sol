@@ -48,87 +48,99 @@ contract BridgeFlowTest is Test {
     MockERC20 token;
     MockInbox inbox;
     MockOutbox outbox;
-    TimelockController timelock;
+    TimelockController governanceTimelock;
+    TimelockController emergencyTimelock;
     address multisig = address(0xA11CE);
+    address emergencyMultisig = address(0xE000);
     bytes32 constant L2_TOKEN = bytes32(uint256(0xa2c7e9));
 
     function setUp() public {
-        // Warp past timestamp=1 (_DONE_TIMESTAMP sentinel in TimelockController).
-        // Without this, schedule() with delay=0 sets _timestamps[id] = block.timestamp = 1,
-        // which equals _DONE_TIMESTAMP, making the operation appear Done before execute() runs.
-        vm.warp(100);
+        vm.warp(100);  // avoid OZ TimelockController _DONE_TIMESTAMP=1 collision
 
         token = new MockERC20();
         inbox = new MockInbox();
         outbox = new MockOutbox();
 
-        // TimelockController: 0 delay (testnet), multisig as proposer + admin,
-        // executors = [address(0)] = anyone-can-execute-after-delay.
+        // Governance timelock: 0 delay (testnet) for test ergonomics
         address[] memory proposers = new address[](1); proposers[0] = multisig;
         address[] memory executors = new address[](1); executors[0] = address(0);
-        timelock = new TimelockController(0, proposers, executors, multisig);
+        governanceTimelock = new TimelockController(0, proposers, executors, multisig);
 
-        // Bridge proxy owned by the timelock (production topology).
+        // Emergency timelock: 0 delay, separate multisig
+        address[] memory emProposers = new address[](1); emProposers[0] = emergencyMultisig;
+        address[] memory emExecutors = new address[](1); emExecutors[0] = address(0);
+        emergencyTimelock = new TimelockController(0, emProposers, emExecutors, emergencyMultisig);
+
+        // Bridge proxy
         TokenBridge impl = new TokenBridge();
         bytes memory init = abi.encodeWithSelector(
             TokenBridge.initialize.selector,
             IERC20(address(token)), L2_TOKEN, uint256(1),
             IInbox(address(inbox)), IOutbox(address(outbox)),
-            address(timelock), uint256(0)
+            address(governanceTimelock), address(emergencyTimelock), uint256(0)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
         bridge = TokenBridge(address(proxy));
     }
 
-    // ── 1. pause via timelock ─────────────────────────────────────────────────
+    // ── 1. pause via emergency timelock ──────────────────────────────────────
     function test_pause_throughTimelock_succeeds() public {
         bytes memory data = abi.encodeWithSignature("pause()");
-        vm.prank(multisig);
-        timelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
-
-        vm.prank(multisig);
-        timelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
-
-        assertTrue(bridge.paused(), "bridge should be paused after timelock execution");
+        vm.prank(emergencyMultisig);
+        emergencyTimelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
+        vm.prank(emergencyMultisig);
+        emergencyTimelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
+        assertTrue(bridge.paused());
     }
 
-    // ── 2. direct pause from any address (not owner) reverts ─────────────────
+    // ── 2. direct pause from any address (no role) reverts ───────────────────
     function test_pause_byNonOwner_reverts() public {
-        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(address)
+        // OZ AccessControl: AccessControlUnauthorizedAccount(address,bytes32)
         vm.expectRevert();
         bridge.pause();
     }
 
-    // ── 3. setL2TokenAddress via timelock succeeds + updates state ───────────
+    // ── 3. setL2TokenAddress via governance timelock succeeds + updates state ─
     function test_setL2TokenAddress_throughTimelock_succeeds() public {
         bytes32 newAddr = bytes32(uint256(0xbeefcafe));
         bytes memory data = abi.encodeWithSignature("setL2TokenAddress(bytes32)", newAddr);
 
         vm.prank(multisig);
-        timelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
+        governanceTimelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
         vm.prank(multisig);
-        timelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
+        governanceTimelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
 
         assertEq(bridge.l2TokenAddress(), newAddr);
     }
 
-    // ── 4. setMaxTvl via timelock succeeds + updates state ───────────────────
+    // ── 4. setMaxTvl via governance timelock succeeds + updates state ─────────
     function test_setMaxTvl_throughTimelock_succeeds() public {
         bytes memory data = abi.encodeWithSignature("setMaxTvl(uint256)", uint256(1_000_000_000_000));
         vm.prank(multisig);
-        timelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
+        governanceTimelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
         vm.prank(multisig);
-        timelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
+        governanceTimelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
         assertEq(bridge.maxTvl(), 1_000_000_000_000);
     }
 
     // ── 5. multisig calling bridge directly (bypassing timelock) reverts ─────
     function test_directPauseFromMultisig_reverts() public {
-        // Even multisig (the timelock's admin) cannot call bridge.pause() directly
-        // because the bridge's owner() is the TimelockController, not multisig.
-        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(multisig)
+        // Even multisig (the governance timelock's admin) cannot call bridge.pause()
+        // directly because multisig holds no role on the bridge — only the
+        // governance TimelockController holds GOVERNANCE_ROLE.
+        // OZ AccessControl: AccessControlUnauthorizedAccount(address,bytes32)
         vm.prank(multisig);
         vm.expectRevert();
         bridge.pause();
+    }
+
+    // ── 6. governance timelock cannot pause (lacks EMERGENCY_PAUSER_ROLE) ────
+    function test_governanceTimelockCannotPause() public {
+        bytes memory data = abi.encodeWithSignature("pause()");
+        vm.prank(multisig);
+        governanceTimelock.schedule(address(bridge), 0, data, bytes32(0), bytes32(0), 0);
+        vm.prank(multisig);
+        vm.expectRevert();  // bridge reverts: governanceTimelock lacks EMERGENCY_PAUSER_ROLE
+        governanceTimelock.execute(address(bridge), 0, data, bytes32(0), bytes32(0));
     }
 }

@@ -103,7 +103,8 @@ contract TokenBridgeTest is Test {
     MockERC20 token;
     MockInbox inbox;
     MockOutbox outbox;
-    address owner = address(0xA11CE);
+    address governanceTimelock = address(0xA11CE);
+    address emergencyTimelock  = address(0xE0E0);
     address alice = address(0xB0B);
     bytes32 constant L2_TOKEN = bytes32(uint256(0xa2c7e9));
 
@@ -121,7 +122,8 @@ contract TokenBridgeTest is Test {
             uint256(1),
             IInbox(address(inbox)),
             IOutbox(address(outbox)),
-            owner,
+            governanceTimelock,
+            emergencyTimelock,
             uint256(0) // unlimited TVL
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
@@ -167,7 +169,7 @@ contract TokenBridgeTest is Test {
 
     // 3. Paused portal blocks deposits
     function test_deposit_revertsWhenPaused() public {
-        vm.prank(owner);
+        vm.prank(emergencyTimelock);
         bridge.pause();
 
         vm.startPrank(alice);
@@ -180,7 +182,7 @@ contract TokenBridgeTest is Test {
 
     // 4. TVL cap is enforced (custom error TvlCapExceeded)
     function test_deposit_revertsOnTvlCap() public {
-        vm.prank(owner);
+        vm.prank(governanceTimelock);
         bridge.setMaxTvl(50_000_000);
 
         vm.startPrank(alice);
@@ -264,7 +266,7 @@ contract TokenBridgeTest is Test {
 
     // 7. Paused portal blocks withdraws
     function test_withdraw_revertsWhenPaused() public {
-        vm.prank(owner);
+        vm.prank(emergencyTimelock);
         bridge.pause();
 
         bytes32[] memory proof = new bytes32[](6);
@@ -273,17 +275,17 @@ contract TokenBridgeTest is Test {
         bridge.withdraw(50_000_000, alice, uint256(12345), uint256(7), proof);
     }
 
-    // 8. pause() requires ownership
-    function test_pause_onlyOwner() public {
-        // Called from address(this) which is NOT the owner.
-        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(address) — selector omitted
+    // 8. pause() requires EMERGENCY_PAUSER_ROLE
+    function test_pause_requiresEmergencyRole() public {
+        // Called from address(this) which holds no role.
+        // OZ AccessControl: AccessControlUnauthorizedAccount(address,bytes32) — selector omitted
         vm.expectRevert();
         bridge.pause();
     }
 
-    // 9. setMaxTvl() requires ownership
-    function test_setMaxTvl_onlyOwner() public {
-        // OZ OwnableUpgradeable: OwnableUnauthorizedAccount(address) — selector omitted
+    // 9. setMaxTvl() requires GOVERNANCE_ROLE
+    function test_setMaxTvl_requiresGovernanceRole() public {
+        // OZ AccessControl: AccessControlUnauthorizedAccount(address,bytes32) — selector omitted
         vm.expectRevert();
         bridge.setMaxTvl(123);
     }
@@ -291,14 +293,38 @@ contract TokenBridgeTest is Test {
     // 10. withdrawTreasuryDust cannot drain l1Token
     function test_withdrawTreasuryDust_cannotDrainL1Token() public {
         token.mint(address(bridge), 100);
-        vm.prank(owner);
+        vm.prank(governanceTimelock);
         vm.expectRevert(TokenBridge.CannotSweepL1Token.selector);
-        bridge.withdrawTreasuryDust(IERC20(address(token)), 100, owner);
+        bridge.withdrawTreasuryDust(IERC20(address(token)), 100, governanceTimelock);
     }
 
     // 11. totalLocked() reports the live ERC20 balance
     function test_totalLocked_reportsBalance() public {
         token.mint(address(bridge), 500);
         assertEq(bridge.totalLocked(), 500, "totalLocked reflects minted balance");
+    }
+
+    // 12. Role separation invariant: governance cannot pause; emergency cannot govern
+    function test_governanceCannotPause_emergencyCannotGovern() public {
+        // governanceTimelock holds GOVERNANCE_ROLE only; cannot pause
+        vm.prank(governanceTimelock);
+        vm.expectRevert();  // OZ AccessControl: AccessControlUnauthorizedAccount(governanceTimelock, EMERGENCY_PAUSER_ROLE)
+        bridge.pause();
+
+        // emergencyTimelock holds EMERGENCY_PAUSER_ROLE only; cannot setMaxTvl
+        vm.prank(emergencyTimelock);
+        vm.expectRevert();  // OZ AccessControl: AccessControlUnauthorizedAccount(emergencyTimelock, GOVERNANCE_ROLE)
+        bridge.setMaxTvl(123);
+    }
+
+    // 13. A1 self-admin invariant: governance CANNOT revoke emergency role
+    function test_governanceCannotRevokeEmergencyRole() public {
+        // governanceTimelock holds DEFAULT_ADMIN_ROLE but EMERGENCY_PAUSER_ROLE's
+        // admin role is EMERGENCY_PAUSER_ROLE itself (set in initialize).
+        // Pre-fetch the role before vm.expectRevert so the view call doesn't consume it.
+        bytes32 emergencyRole = bridge.EMERGENCY_PAUSER_ROLE();
+        vm.prank(governanceTimelock);
+        vm.expectRevert();  // AccessControlUnauthorizedAccount: governance lacks EMERGENCY_PAUSER_ROLE admin
+        bridge.revokeRole(emergencyRole, emergencyTimelock);
     }
 }
