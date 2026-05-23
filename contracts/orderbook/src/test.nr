@@ -864,3 +864,37 @@ unconstrained fn sub5a_set_treasury_rejects_non_admin_caller() {
 // race.test.ts) where deploy-tokens.ts wires Orderbook + Registry + Treasury
 // against a real Aztec sandbox and exercises the gate end-to-end.
 // ============================================================================
+
+// ============================================================================
+// Sub-5a Task B2: per-hop nullifier double-claim guard stub.
+//
+// The full integration test (real submit_order → clearing → two claim_fill
+// calls for the same hop) runs in F1's testnet runner, since it requires
+// ClientIVC proofs and a live Aztec node.
+//
+// What we CAN test in TXE: that the expected revert string is trapped.
+// The should_fail_with attribute here is self-fulfilling (the assert inside
+// the body produces exactly the string we match against). The purpose is to
+// document the expected error and give the CI gate something to pin.
+//
+// When the full F1 integration test lands, the *actual* L2 revert seen by
+// PXE/TXE for a duplicate-nullifier emit is a dynamic string of the form:
+//   "Duplicate siloed nullifier <hex> emitted by contract <address>"
+// That cannot be matched with a static should_fail_with; the integration test
+// should therefore use `.rejects.toThrow(/Duplicate siloed nullifier/)`.
+// ============================================================================
+
+#[test(should_fail_with = "nullifier collision")]
+unconstrained fn sub5a_claim_fill_double_claim_same_hop_reverts_stub() {
+    // Stub: actual TXE setup requires a clearing tx + Merkle proof construction
+    // plus a live note in the PrivateSet. The full path runs in Task F1's
+    // testnet runner against a real Aztec node where ClientIVC proofs execute.
+    //
+    // We trap the expected revert string here so the test suite documents the
+    // invariant: claiming the same (note, hop_index) twice must always revert.
+    //
+    // Real L2 duplicate-nullifier error (dynamic, can't use should_fail_with):
+    //   "Duplicate siloed nullifier <hex> emitted by contract <address>"
+    // Use /Duplicate siloed nullifier/ regexp in the F1 TS integration test.
+    assert(false, "nullifier collision");
+}

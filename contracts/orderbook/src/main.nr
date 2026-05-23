@@ -3,6 +3,7 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract Orderbook {
     use aztec::{
+        keys::getters::get_public_keys,
         macros::{
             functions::{external, initializer, only_self},
             notes::note,
@@ -10,6 +11,7 @@ pub contract Orderbook {
         },
         messages::message_delivery::MessageDelivery,
         note::{
+            ConfirmedNote,
             constants::MAX_NOTES_PER_PAGE,
             note_getter_options::NoteGetterOptions,
             note_interface::NoteProperties,
@@ -690,7 +692,7 @@ pub contract Orderbook {
 
     // ============================ CLAIM FILL ============================
 
-    /// Sub-4: maker claims their per-hop fill from a verified clearing.
+    /// Sub-5a B2: maker claims their per-hop fill from a verified clearing.
     ///
     /// The 64-leaf hop-fills Merkle tree stores leaves of the form:
     ///   poseidon2([order_nonce, hop_index, amount_out, pool_id])
@@ -705,13 +707,18 @@ pub contract Orderbook {
     /// - `leaf_index`: position of this leaf in the 64-leaf tree (0..63).
     /// - `sibling_path`: depth-6 sibling-hash sequence (log2(64) = 6 levels).
     ///
-    /// Double-claim protection: `pop_notes` nullifies the `OrderNote` on first claim.
-    /// For 2-hop orders the maker must call `claim_fill` twice (hop=0, hop=1) — the
-    /// first call consumes the note, so the second call must be issued by the same
-    /// maker against the same epoch but a different leaf (the hop=1 leaf).
-    /// NOTE: since `pop_notes` nullifies after hop=0, the hop=1 claim cannot look
-    /// up the note a second time. The payout token for hop=1 is derived from the
-    /// same path fields as hop=0, so the maker must pass both calls in sequence.
+    /// Double-claim protection (Sub-5a B2): each (note, hop_index) pair produces a
+    /// UNIQUE nullifier via `derive_per_hop_nullifier(note_hash, secret, hop_index)`.
+    /// This replaces the old `pop_notes` scheme which destroyed the OrderNote on
+    /// hop=0, preventing hop=1 from reading it.
+    ///
+    /// Flow:
+    ///   1. Verify the Merkle inclusion proof against the stored fills_root.
+    ///   2. Read (NOT pop) the maker's OrderNote via `get_notes` — note is preserved.
+    ///   3. Derive a per-hop nullifier: poseidon2([note_hash, nhk_app, hop_index, TAG]).
+    ///   4. Push the nullifier. A second call for the same hop reverts (duplicate).
+    ///   5. Derive the output token from the note's path + hop_index + side.
+    ///   6. Transfer the payout from orderbook public balance → maker private balance.
     #[external("private")]
     fn claim_fill(
         epoch_id: u32,
@@ -738,19 +745,43 @@ pub contract Orderbook {
         let computed_root = verify_merkle_proof_64(leaf, leaf_index, sibling_path);
         self.enqueue_self._assert_fill_root(epoch_id, computed_root);
 
-        // 3. Retrieve + nullify the maker's filled OrderNote (double-claim guard).
+        // 3. READ (not pop) the maker's OrderNote. get_notes returns ConfirmedNote
+        //    wrappers; the note itself is NOT nullified here — that is done explicitly
+        //    below with a per-hop nullifier. This lets hop=1 find the note after
+        //    hop=0 has already claimed.
         let maker = self.msg_sender();
         let options = NoteGetterOptions::new().select(
             OrderNote::properties().nonce,
             Comparator.EQ,
             order_nonce,
         ).set_limit(1);
-        let notes = self.storage.orders.at(maker).pop_notes(options);
-        assert(notes.len() == 1, "order not found");
-        let order = notes.get(0);
+        let confirmed_notes: BoundedVec<ConfirmedNote<OrderNote>, _> =
+            self.storage.orders.at(maker).get_notes(options);
+        assert(confirmed_notes.len() == 1, "order not found");
+        let confirmed = confirmed_notes.get(0);
+        let order = confirmed.note;
         assert(order.owner == maker, "not order owner");
 
-        // 4. Determine the OUTPUT token for this hop from the stored routing path.
+        // 4. Derive + emit a per-hop nullifier (Sub-5a B2).
+        //    nullifier = poseidon2([note_hash, nhk_app, hop_index, Z_HOP_CLAIM_TAG])
+        //
+        //    hop=0 and hop=1 produce DIFFERENT nullifiers from the same note because
+        //    hop_index is part of the preimage. A second call for the same hop will
+        //    attempt to push a duplicate nullifier and revert at the kernel level.
+        //
+        //    We use the nullifier hiding key (nhk_app) as the secret, matching the
+        //    canonical Aztec-nr note-nullifier derivation pattern from uint_note.
+        let note_hash = order.compute_note_hash(
+            confirmed.owner,
+            confirmed.storage_slot,
+            confirmed.randomness,
+        );
+        let owner_npk_m_hash = get_public_keys(maker).npk_m.hash();
+        let secret = self.context.request_nhk_app(owner_npk_m_hash);
+        let nullifier = derive_per_hop_nullifier(note_hash, secret, hop_index);
+        self.context.push_nullifier(nullifier);
+
+        // 5. Determine the OUTPUT token for this hop from the stored routing path.
         //
         //    Path encoding (OrderNote):
         //      path[0]             = input token  (what the maker escrowed)
@@ -788,7 +819,7 @@ pub contract Orderbook {
         };
         let token_out_addr = AztecAddress::from_field(output_token);
 
-        // 5. Transfer the payout from the Orderbook's public balance to the maker (private).
+        // 6. Transfer the payout from the Orderbook's public balance to the maker (private).
         self.call(Token::at(token_out_addr).transfer_public_to_private(
             self.address,
             maker,
