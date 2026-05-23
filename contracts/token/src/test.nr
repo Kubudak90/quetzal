@@ -3,7 +3,7 @@
 
 use crate::Token;
 use aztec::{
-    protocol::address::AztecAddress,
+    protocol::address::{AztecAddress, EthAddress},
     test::helpers::test_environment::TestEnvironment,
 };
 
@@ -19,7 +19,13 @@ global TETH_NAME: str<31> = "tETH000000000000000000000000000";
 global TETH_SYMBOL: str<31> = "tETH000000000000000000000000000";
 global TETH_DECIMALS: u8 = 18;
 
-// deploy helper
+// aUSDC bridged brand constants
+// "aUSDC" + 26 '0' chars = 31 ASCII chars.
+global AUSDC_NAME: str<31> = "aUSDC00000000000000000000000000";
+global AUSDC_SYMBOL: str<31> = "aUSDC00000000000000000000000000";
+global AUSDC_DECIMALS: u8 = 6;
+
+// deploy helpers
 
 unconstrained fn deploy_token(
     env: &mut TestEnvironment,
@@ -34,6 +40,25 @@ unconstrained fn deploy_token(
         symbol,
         decimals,
         minter,
+    );
+    env.deploy("@token/Token").with_public_initializer(deployer, initializer_call)
+}
+
+unconstrained fn deploy_bridged_token(
+    env: &mut TestEnvironment,
+    deployer: AztecAddress,
+    minter: AztecAddress,
+    name: str<31>,
+    symbol: str<31>,
+    decimals: u8,
+    portal_addr: EthAddress,
+) -> AztecAddress {
+    let initializer_call = Token::interface().constructor_with_minter_bridged(
+        name,
+        symbol,
+        decimals,
+        minter,
+        portal_addr,
     );
     env.deploy("@token/Token").with_public_initializer(deployer, initializer_call)
 }
@@ -122,4 +147,69 @@ unconstrained fn private_transfer_moves_balance_teth() {
 
     assert(alice_balance == mint_amount - transfer_amount, "alice should have 2.5 tETH left");
     assert(bob_balance == transfer_amount, "bob should have 2.5 tETH");
+}
+
+// -- Sub-5b: bridge-mode TXE tests --
+
+#[test(should_fail_with = "bridged token: use claim_public via portal flow")]
+unconstrained fn sub5b_mint_to_public_reverts_in_bridge_mode() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let portal_l1 = EthAddress::from_field(0xabcdef);
+
+    let token_address = deploy_bridged_token(
+        &mut env, admin, admin, AUSDC_NAME, AUSDC_SYMBOL, AUSDC_DECIMALS, portal_l1,
+    );
+
+    // Admin tries the legacy mint path - must revert in bridge mode
+    env.call_public(admin, Token::at(token_address).mint_to_public(admin, 100 as u128));
+}
+
+#[test(should_fail_with = "bridged token: use claim_private via portal flow")]
+unconstrained fn sub5b_mint_to_private_reverts_in_bridge_mode() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let portal_l1 = EthAddress::from_field(0xabcdef);
+
+    let token_address = deploy_bridged_token(
+        &mut env, admin, admin, AUSDC_NAME, AUSDC_SYMBOL, AUSDC_DECIMALS, portal_l1,
+    );
+
+    env.call_private(admin, Token::at(token_address).mint_to_private(admin, 100 as u128));
+}
+
+#[test(should_fail_with = "non-bridged token: use mint_to_public")]
+unconstrained fn sub5b_claim_public_reverts_in_non_bridge_mode() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+
+    // Default (non-bridged) constructor
+    let token_address = deploy_token(&mut env, admin, admin, TUSDC_NAME, TUSDC_SYMBOL, TUSDC_DECIMALS);
+
+    // claim_public should revert because is_bridged=false
+    env.call_public(
+        admin,
+        Token::at(token_address).claim_public(admin, 100 as u128, 0 as Field, 0 as Field),
+    );
+}
+
+#[test(should_fail_with = "bridged token requires non-zero portal_addr")]
+unconstrained fn sub5b_bridged_constructor_rejects_zero_portal() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let zero_portal = EthAddress::zero();
+
+    let _ = deploy_bridged_token(
+        &mut env, admin, admin, AUSDC_NAME, AUSDC_SYMBOL, AUSDC_DECIMALS, zero_portal,
+    );
+}
+
+#[test(should_fail_with = "non-bridged token: cannot exit_to_l1")]
+unconstrained fn sub5b_exit_to_l1_reverts_in_non_bridge_mode() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let token_address = deploy_token(&mut env, admin, admin, TUSDC_NAME, TUSDC_SYMBOL, TUSDC_DECIMALS);
+
+    let l1_recipient = EthAddress::from_field(0xdeadbeef);
+    env.call_public(admin, Token::at(token_address).exit_to_l1_public(100 as u128, l1_recipient));
 }
