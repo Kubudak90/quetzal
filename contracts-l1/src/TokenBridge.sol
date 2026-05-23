@@ -51,6 +51,26 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     ///      non-standard token requires reviewing this assumption.
     uint256 public maxTvl;
 
+    /// @notice Tracks a deposit for potential 90-day-windowed recovery.
+    struct Deposit {
+        uint128 amount;
+        uint64  timestamp;
+        bool    isPrivate;
+    }
+
+    /// @notice Per-deposit record keyed by keccak256(sender, secretHash). Lookup
+    ///         enables the 3-phase recoverDeposit flow: a maker who lost their L2
+    ///         wallet can request → governance approves → maker executes the
+    ///         on-L1 refund. Only the original depositor (msg.sender match) can
+    ///         recover, so secret-knowledge alone is insufficient.
+    mapping(bytes32 => Deposit) public deposits;
+
+    /// @notice Maker-flagged deposits awaiting governance review.
+    mapping(bytes32 => bool) public pendingRecoveries;
+
+    /// @notice Governance-approved deposits awaiting maker execution.
+    mapping(bytes32 => bool) public approvedRecoveries;
+
     /// @notice Role allowed to invoke governance functions (setMaxTvl,
     ///         setL2TokenAddress, withdrawTreasuryDust, _authorizeUpgrade).
     ///         In production this is the 7-day governance TimelockController.
@@ -81,6 +101,10 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     );
     event MaxTvlUpdated(uint256 oldCap, uint256 newCap);
     event L2TokenAddressUpdated(bytes32 oldAddr, bytes32 newAddr);
+    event DepositTracked(address indexed sender, bytes32 indexed secretHash, uint128 amount, bool isPrivate);
+    event RecoveryRequested(address indexed sender, bytes32 indexed secretHash, uint128 amount);
+    event RecoveryApproved(bytes32 indexed key);
+    event RecoveryExecuted(address indexed sender, bytes32 indexed secretHash, address indexed l1Recipient, uint128 amount);
 
     /// @notice Deposit would push the bridge's token balance above `maxTvl`.
     error TvlCapExceeded(uint256 attempted, uint256 cap);
@@ -90,6 +114,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     error ZeroAddress();
     /// @notice The bridge's primary `l1Token` cannot be swept via `withdrawTreasuryDust`.
     error CannotSweepL1Token();
+    /// @notice No deposit record found for (msg.sender, secretHash).
+    error NoSuchDeposit();
+    /// @notice 90-day waiting period has not elapsed since the deposit.
+    error DepositTooRecent();
+    /// @notice No pending recovery request found for the given key.
+    error NoSuchRequest();
+    /// @notice Recovery has not been approved by governance.
+    error NotApproved();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -175,6 +207,18 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         (messageHash, messageIndex) = inbox.sendL2Message(recipient, content, secretHash);
 
         emit DepositInitiated(msg.sender, l2Recipient, amount, secretHash, messageIndex, false);
+
+        // Track the deposit so the depositor may recover it via requestRecovery
+        // + governance approveRecovery + executeRecovery after 90 days if their
+        // L2 wallet becomes inaccessible. Key by (sender, secretHash) so only
+        // the original depositor can recover.
+        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        deposits[trackKey] = Deposit({
+            amount: uint128(amount),
+            timestamp: uint64(block.timestamp),
+            isPrivate: false
+        });
+        emit DepositTracked(msg.sender, secretHash, uint128(amount), false);
     }
 
     /// @notice Deposit `amount` tokens to a hidden (private) L2 recipient. The recipient
@@ -203,6 +247,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         (messageHash, messageIndex) = inbox.sendL2Message(recipient, content, secretHash);
 
         emit DepositInitiated(msg.sender, bytes32(0), amount, secretHash, messageIndex, true);
+
+        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        deposits[trackKey] = Deposit({
+            amount: uint128(amount),
+            timestamp: uint64(block.timestamp),
+            isPrivate: true
+        });
+        emit DepositTracked(msg.sender, secretHash, uint128(amount), true);
     }
 
     // ── Withdraw flow (L2 → L1) ───────────────────────────────────────────────
@@ -241,6 +293,27 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     /// @return The current L1 token balance held in escrow by this bridge contract.
     function totalLocked() external view returns (uint256) {
         return l1Token.balanceOf(address(this));
+    }
+
+    // ── Recovery flow (Sub-5c) ────────────────────────────────────────────────
+
+    /// @notice Sub-5c B2/B3: maker requests recovery of a deposit whose L2 claim
+    ///         path has been unreachable for 90+ days (lost L2 wallet, no PXE
+    ///         access, etc.). This creates an on-chain recovery request; phase 2
+    ///         (approveRecovery) requires governance multisig manual verification
+    ///         that the L2 message remains unconsumed; phase 3 (executeRecovery)
+    ///         releases funds back to the original depositor.
+    ///
+    ///         Only the original depositor (msg.sender match at deposit time) can
+    ///         call. The 90-day waiting period is enforced; the L2-consumption
+    ///         check happens off-chain at governance approval time.
+    function requestRecovery(bytes32 secretHash) external {
+        bytes32 key = keccak256(abi.encode(msg.sender, secretHash));
+        Deposit memory d = deposits[key];
+        if (d.amount == 0) revert NoSuchDeposit();
+        if (block.timestamp < uint256(d.timestamp) + 90 days) revert DepositTooRecent();
+        pendingRecoveries[key] = true;
+        emit RecoveryRequested(msg.sender, secretHash, d.amount);
     }
 
     // ── Governance ────────────────────────────────────────────────────────────
