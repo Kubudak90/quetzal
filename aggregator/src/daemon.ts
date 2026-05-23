@@ -271,3 +271,47 @@ export async function runDaemon(ctx: DaemonContext, intervalMs = 2000): Promise<
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
+
+// ── Optional relayer mode ──────────────────────────────────────────────────
+// Activated by RELAYER_MODE=1 env var. The daemon file is typically imported
+// as a library; this block runs only when the file is executed as the main
+// entry point (e.g. via `tsx src/daemon.ts`) AND RELAYER_MODE=1 is set.
+// The clearing loop (runDaemon) is NOT started here — the host binary is
+// responsible for calling runDaemon; this block only spawns the relayer loop
+// as a parallel side-effect.
+if (process.env.RELAYER_MODE === "1") {
+  // Use an async IIFE so we can await imports inside a module-level context.
+  (async () => {
+    console.log("daemon: RELAYER_MODE=1 → starting relayer loop");
+
+    const { runRelayerLoop } = await import("./relayer-mode.js");
+    const { loadConfig } = await import("../../cli/src/config.js");
+
+    if (!process.env.L1_RPC_URL) throw new Error("RELAYER_MODE requires L1_RPC_URL");
+    if (!process.env.L1_PRIVATE_KEY) throw new Error("RELAYER_MODE requires L1_PRIVATE_KEY");
+
+    const config = loadConfig();
+    if (!config.treasury) throw new Error("RELAYER_MODE requires config.treasury");
+
+    // Build bridgesByAddress from config.l1.{usdcBridge, wethBridge, wbtcBridge}.
+    // Keys are lowercased for case-insensitive matching at runtime.
+    const bridgesByAddress: Record<string, "USDC" | "WETH" | "wBTC"> = {};
+    if (config.l1?.usdcBridge) bridgesByAddress[config.l1.usdcBridge.toLowerCase()] = "USDC";
+    if (config.l1?.wethBridge) bridgesByAddress[config.l1.wethBridge.toLowerCase()] = "WETH";
+    if (config.l1?.wbtcBridge) bridgesByAddress[config.l1.wbtcBridge.toLowerCase()] = "wBTC";
+
+    runRelayerLoop({
+      aztecNodeUrl: config.nodeUrl,
+      l1RpcUrl: process.env.L1_RPC_URL,
+      l1PrivateKey: process.env.L1_PRIVATE_KEY as `0x${string}`,
+      treasuryAddr: config.treasury,
+      bridgesByAddress,
+    }).catch((e: unknown) => {
+      console.error("relayer-mode crashed:", e);
+      process.exit(1);
+    });
+  })().catch((e: unknown) => {
+    console.error("relayer-mode init failed:", e);
+    process.exit(1);
+  });
+}

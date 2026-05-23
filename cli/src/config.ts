@@ -8,6 +8,26 @@ export interface ZswapPool {
   address: string;     // Pool contract address
 }
 
+export interface ZswapConfigL1 {
+  rpcUrl?: string;
+  usdc?: string;
+  weth?: string;
+  wbtc?: string;
+  inbox?: string;
+  outbox?: string;
+  multisig?: string;
+  emergencyMultisig?: string;
+  governanceTimelock?: string;
+  emergencyTimelock?: string;
+  usdcBridge?: string;
+  wethBridge?: string;
+  wbtcBridge?: string;
+  timelockDelaySec?: number;
+  maxTvlUsdc?: string;
+  maxTvlWeth?: string;
+  maxTvlWbtc?: string;
+}
+
 export interface ZswapConfig {
   nodeUrl: string;
   tUSDC: string;
@@ -20,6 +40,8 @@ export interface ZswapConfig {
   treasury?: string;
   bucketPMinSqrt?: string;
   bucketGrowthNum?: string;
+  /** Sub-5c: L1 contract addresses + bridge/multisig/timelock config */
+  l1?: ZswapConfigL1;
 }
 
 const REQUIRED: (keyof ZswapConfig)[] = ["nodeUrl", "tUSDC", "tETH", "orderbook", "admin", "pools"];
