@@ -84,10 +84,17 @@ export function registerOrder(program: Command): void {
           pathArrays[0] = realPath;
 
           // Slots 1..decoyCount: decoys with unfillable limit_price
-          // buy (realSide=false): price=0 is unfillable (no one sells at 0)
           // sell (realSide=true): price=u128::MAX is unfillable (no one buys at MAX)
+          // buy (realSide=false): price=1 is unfillable in practice (pool sqrt_price >> 1
+          //   for any real pair, so the decoy's "1 wei per output unit" demand never
+          //   meets the market).
           const UNFILLABLE_HIGH = (1n << 128n) - 1n; // u128::MAX
-          const UNFILLABLE_LOW = 0n;
+          // UNFILLABLE_LOW = 1n (NOT 0n): the orderbook helper asserts
+          // limit_price > 0, so 0 would revert the bulk tx. 1 wei is the minimum
+          // positive value + unfillable in practice (pool sqrt_price >> 1 for
+          // any real pair, so the decoy's "1 wei per output unit" demand never
+          // meets the market).
+          const UNFILLABLE_LOW = 1n;
           for (let i = 1; i <= decoyCount; i++) {
             sides[i] = realSide;
             amounts[i] = realAmount;
