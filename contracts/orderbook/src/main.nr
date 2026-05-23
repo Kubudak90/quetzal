@@ -328,43 +328,16 @@ pub contract Orderbook {
 
     // ============================ ORDER SUBMISSION ============================
 
-    /// Submit a new private order to the orderbook.
-    ///
-    /// Flow:
-    /// 1. Validate inputs (`amount_in > 0`, `limit_price > 0`).
-    /// 2. Validate Sub-4 path: `path_len` in {2, 3}; all hops in the path must be distinct.
-    /// 3. Read the input token address from public-immutable storage (decided by `side`).
-    /// 4. Escrow the maker's tokens by calling `Token.transfer_private_to_public`, moving
-    ///    `amount_in` of the input token from the maker's private balance into the orderbook
-    ///    contract's PUBLIC balance. This contract becomes the custodian until the order is
-    ///    cancelled (Week 3) or cleared (Week 6+).
-    /// 5. Commit an encrypted `OrderNote` to the maker's private set so they can prove ownership
-    ///    later (for cancellation / clearing).
-    /// 6. Enqueue a public callback to assert the epoch is still OPEN at the time the tx is mined.
-    ///    Epoch state lives in a `PublicMutable`, which is not directly readable from private
-    ///    context in Aztec v4.2.0, so the check is deferred to public execution.
-    ///
-    /// # Arguments
-    /// - `side`: `false` = bid (deposit token A), `true` = ask (deposit token B).
-    /// - `amount_in`: amount of the input token to escrow (must be > 0).
-    /// - `limit_price`: quote-per-base price scaled to 18 decimals (must be > 0).
-    /// - `nonce`: authwit nonce for the inner `Token.transfer_private_to_public` call.
-    /// - `order_nonce`: per-order random salt embedded into the `OrderNote` for uniqueness.
-    /// - `path_len`: Sub-4 routing path length; must be 2 (1-hop) or 3 (2-hop).
-    /// - `path`: Sub-4 routing path as token addresses encoded as Fields (3 slots).
-    ///   path[0] = input token, path[path_len-1] = output token.
-    ///   For path_len == 2, path[2] MUST be 0 (sentinel).
-    ///
-    /// The `nonce` and `order_nonce` are intentionally distinct so the authwit nonce cannot
-    /// collide with the note-identity nonce.
-    #[external("private")]
-    fn submit_order(
+    /// Sub-6a A1: extracted body of submit_order for reuse by submit_order_bulk.
+    /// Performs validation, pool lookup, escrow, OrderNote build + insert.
+    /// Called from both the per-tx submit_order and the K-batch submit_order_bulk.
+    #[internal("private")]
+    fn _submit_one_order_internal(
         side: bool,
         amount_in: u128,
         limit_price: u128,
         nonce: Field,
         order_nonce: Field,
-        // Sub-4 NEW:
         path_len: u8,
         path: [Field; 3],
     ) {
@@ -472,6 +445,49 @@ pub contract Orderbook {
         // and the OrderNote together.
         self.enqueue_self._assert_epoch_open();
         self.enqueue_self._append_order(c_i);
+    }
+
+    /// Submit a new private order to the orderbook.
+    ///
+    /// Flow:
+    /// 1. Validate inputs (`amount_in > 0`, `limit_price > 0`).
+    /// 2. Validate Sub-4 path: `path_len` in {2, 3}; all hops in the path must be distinct.
+    /// 3. Read the input token address from public-immutable storage (decided by `side`).
+    /// 4. Escrow the maker's tokens by calling `Token.transfer_private_to_public`, moving
+    ///    `amount_in` of the input token from the maker's private balance into the orderbook
+    ///    contract's PUBLIC balance. This contract becomes the custodian until the order is
+    ///    cancelled (Week 3) or cleared (Week 6+).
+    /// 5. Commit an encrypted `OrderNote` to the maker's private set so they can prove ownership
+    ///    later (for cancellation / clearing).
+    /// 6. Enqueue a public callback to assert the epoch is still OPEN at the time the tx is mined.
+    ///    Epoch state lives in a `PublicMutable`, which is not directly readable from private
+    ///    context in Aztec v4.2.0, so the check is deferred to public execution.
+    ///
+    /// # Arguments
+    /// - `side`: `false` = bid (deposit token A), `true` = ask (deposit token B).
+    /// - `amount_in`: amount of the input token to escrow (must be > 0).
+    /// - `limit_price`: quote-per-base price scaled to 18 decimals (must be > 0).
+    /// - `nonce`: authwit nonce for the inner `Token.transfer_private_to_public` call.
+    /// - `order_nonce`: per-order random salt embedded into the `OrderNote` for uniqueness.
+    /// - `path_len`: Sub-4 routing path length; must be 2 (1-hop) or 3 (2-hop).
+    /// - `path`: Sub-4 routing path as token addresses encoded as Fields (3 slots).
+    ///   path[0] = input token, path[path_len-1] = output token.
+    ///   For path_len == 2, path[2] MUST be 0 (sentinel).
+    ///
+    /// The `nonce` and `order_nonce` are intentionally distinct so the authwit nonce cannot
+    /// collide with the note-identity nonce.
+    #[external("private")]
+    fn submit_order(
+        side: bool,
+        amount_in: u128,
+        limit_price: u128,
+        nonce: Field,
+        order_nonce: Field,
+        // Sub-4 NEW:
+        path_len: u8,
+        path: [Field; 3],
+    ) {
+        self.call_self._submit_one_order_internal(side, amount_in, limit_price, nonce, order_nonce, path_len, path);
     }
 
     /// Public callback used by `submit_order` / `cancel_order` to enforce that the
