@@ -893,27 +893,50 @@ pub contract Orderbook {
     fn cancel_order(order_nonce: Field, nonce: Field) {
         let maker = self.msg_sender();
 
-        // Retrieve + nullify the maker's resting order matching `order_nonce`. `pop_notes`
-        // both reads and nullifies in one constrained call, so a cancelled order can never
-        // be cancelled (or cleared) twice.
-        // `order_nonce` is a per-order unique salt, so at most one note can ever match
-        // the selector. `set_limit(1)` only bounds the query; the
-        // `assert(notes.len() == 1, ...)` below is what enforces "exactly one".
+        // 1. READ (not pop) the maker's OrderNote matching `order_nonce`.
+        //    We use get_notes (like claim_fill) rather than pop_notes, because
+        //    double-cancellation is blocked by the domain-separated cancel nullifier
+        //    we push below — not by removing the note from the PrivateSet.
+        //    Using get_notes also keeps the API surface consistent with B2 (claim_fill).
         let options = NoteGetterOptions::new().select(
             OrderNote::properties().nonce,
             Comparator.EQ,
             order_nonce,
         ).set_limit(1);
-        let notes = self.storage.orders.at(maker).pop_notes(options);
-        assert(notes.len() == 1, "order not found");
-        let order = notes.get(0);
+        let confirmed_notes: BoundedVec<ConfirmedNote<OrderNote>, _> =
+            self.storage.orders.at(maker).get_notes(options);
+        assert(confirmed_notes.len() == 1, "order not found");
+        let confirmed = confirmed_notes.get(0);
+        let order = confirmed.note;
 
         // Defence-in-depth: the per-owner PrivateSet already scopes retrieval to `maker`.
         assert(order.owner == maker, "not order owner");
 
-        // Sub-4 (B2): derive the escrowed token from the order's stored path.
-        // side == false (bid): input was path[0]
-        // side == true  (ask): input was path[path_len-1]
+        // 2. Derive + emit the CANCEL nullifier (Sub-5a B3).
+        //    nullifier = poseidon2([note_hash, nhk_app, Z_CANCEL_TAG])
+        //
+        //    This is domain-separated from claim_fill's per-hop nullifiers (which use
+        //    Z_HOP_CLAIM_TAG and include hop_index). A second cancel attempt on the same
+        //    OrderNote will push the same nullifier and revert at the kernel level.
+        //
+        //    The OrderNote itself remains in the PrivateSet — claim_fill's get_notes call
+        //    would still find it — but once cancelled the escrow (public balance) has been
+        //    refunded, so any subsequent fill-claim will underflow the token transfer and
+        //    atomically revert.
+        let note_hash = order.compute_note_hash(
+            confirmed.owner,
+            confirmed.storage_slot,
+            confirmed.randomness,
+        );
+        let owner_npk_m_hash = get_public_keys(maker).npk_m.hash();
+        let secret = self.context.request_nhk_app(owner_npk_m_hash);
+        let cancel_nullifier = derive_cancel_nullifier(note_hash, secret);
+        self.context.push_nullifier(cancel_nullifier);
+
+        // 3. Derive the escrowed token from the order's stored path (Sub-4 B2).
+        //    side == false (bid): maker escrowed path[0]  (input paid left→right)
+        //    side == true  (ask): maker escrowed path[path_len-1] (input paid right→left)
+        //    This must match submit_order's escrow direction exactly.
         let cancel_input_token: Field = if !order.side {
             order.path[0]
         } else {
@@ -921,10 +944,10 @@ pub contract Orderbook {
         };
         let token_addr: AztecAddress = AztecAddress::from_field(cancel_input_token);
 
-        // Recompute the same per-order commitment submit_order folded into order_acc.
-        // The popped OrderNote carries every preimage field, so this matches the original
-        // c_i exactly. Equality with the submit-side c_i is what makes the submit-cancel
-        // invariant (IT4) hold.
+        // 4. Recompute the same per-order commitment submit_order folded into order_acc.
+        //    The ConfirmedNote carries every preimage field, so this matches the original
+        //    c_i exactly. Equality with the submit-side c_i is what makes the submit-cancel
+        //    invariant (IT4) hold.
         let c_i: Field = poseidon2_hash(
             [
                 maker.to_field(),
@@ -936,17 +959,15 @@ pub contract Orderbook {
             ],
         );
 
-        // Gate cancellation to OPEN, then fold into cancel_acc, all BEFORE the
-        // escrow-return public call. The 5c _assert_not_filled guard is dropped in
-        // 5d-4: cancel-after-fill is now blocked at the token-contract level --
-        // _apply_verified_clearing moves filled amount_in to the pool, leaving the
-        // orderbook's public balance short, so the transfer_public_to_private call
-        // underflows and the whole tx (including the OrderNote nullification + the
-        // cancel_acc fold) atomically reverts. See specs/2026-05-21-...-design.md sec 6.5.
+        // 5. Gate cancellation to OPEN, fold into cancel_acc, BEFORE the escrow return.
+        //    The 5c _assert_not_filled guard is dropped in 5d-4: cancel-after-fill is
+        //    blocked at the token-contract level — _apply_verified_clearing moves filled
+        //    amount_in to the pool, leaving the orderbook public balance short, so
+        //    transfer_public_to_private underflows and the whole tx atomically reverts.
         self.enqueue_self._assert_epoch_open();
         self.enqueue_self._append_cancel(c_i);
 
-        // Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
+        // 6. Return the escrow: orderbook PUBLIC balance -> maker PRIVATE balance.
         self.call(Token::at(token_addr).transfer_public_to_private(
             self.address,
             maker,
