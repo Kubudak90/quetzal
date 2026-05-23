@@ -154,10 +154,16 @@ pub contract Orderbook {
         /// Sub-3: Treasury contract that holds the per-clearing fee pool. Called
         /// via Treasury.pay_aggregator(winner, aggregator_fee) at the end of
         /// _apply_verified_clearing.
-        treasury: PublicImmutable<AztecAddress, Context>,
+        /// Sub-5a A2: PublicMutable so set_treasury can wire the deployed Treasury
+        /// address one-shot after Orderbook deploy (resolves Sub-3 4-deploy wart).
+        treasury: PublicMutable<AztecAddress, Context>,
         /// Sub-3: flat fee (in bond_token's smallest unit) paid per successful
         /// clearing. Treasury silently partial-pays if its tracked_balance is short.
         aggregator_fee: PublicImmutable<u128, Context>,
+        /// Sub-5a A2 / D1: deploy-time admin that controls pool registration and
+        /// one-shot treasury wiring. Forward-added here (D1 needed for set_treasury
+        /// gate; D1 will add add_pool logic on top).
+        pool_registry_admin: PublicImmutable<AztecAddress, Context>,
     }
 
     /// Deploy-time initializer (Sub-4 form).
@@ -176,7 +182,6 @@ pub contract Orderbook {
         epoch_length: u32,
         clearing_vk_hash: Field,
         aggregator_registry: AztecAddress,
-        treasury: AztecAddress,
         aggregator_fee: u128,
         // Sub-4: deploy-time pool registry; up to 4 pools.
         // Each slot: (addr, token_a_canonical, token_b_canonical).
@@ -185,12 +190,19 @@ pub contract Orderbook {
         pool_addrs: [AztecAddress; 4],
         pool_token_a_addrs: [AztecAddress; 4],
         pool_token_b_addrs: [AztecAddress; 4],
+        // Sub-5a A2: pool_registry_admin gates set_treasury (one-shot after deploy)
+        // and will gate add_pool in Task D1. Treasury arg removed from constructor;
+        // Orderbook starts with treasury = ZERO; set_treasury() wires it post-deploy.
+        pool_registry_admin: AztecAddress,
     ) {
         self.storage.epoch_length.initialize(epoch_length);
         self.storage.clearing_vk_hash.initialize(clearing_vk_hash);
         self.storage.aggregator_registry.initialize(aggregator_registry);
-        self.storage.treasury.initialize(treasury);
+        // Sub-5a A2: treasury starts as ZERO; set_treasury() wires it once after
+        // Treasury is deployed with the real Orderbook address (3-deploy ceremony).
+        self.storage.treasury.write(AztecAddress::from_field(0));
         self.storage.aggregator_fee.initialize(aggregator_fee);
+        self.storage.pool_registry_admin.initialize(pool_registry_admin);
         // Sub-4 NEW
         assert((pool_count > 0 as u32) & (pool_count <= 4 as u32), "pool_count in [1, 4]");
         self.storage.pool_count.initialize(pool_count);
@@ -214,6 +226,19 @@ pub contract Orderbook {
             order_count: 0,
             cancel_count: 0,
         });
+    }
+
+    /// Sub-5a A2: one-shot setter for the Treasury address. Caller must be the
+    /// deploy-time pool_registry_admin (typically admin). Reverts after the first
+    /// non-ZERO write — preserving Sub-3's pay_aggregator gating integrity once set.
+    #[external("public")]
+    fn set_treasury(treasury_addr: AztecAddress) {
+        let caller = self.msg_sender();
+        let admin = self.storage.pool_registry_admin.read();
+        assert(caller == admin, "only pool_registry_admin");
+        let stored = self.storage.treasury.read();
+        assert(stored == AztecAddress::from_field(0), "treasury already set");
+        self.storage.treasury.write(treasury_addr);
     }
 
     /// Sub-4: resolve which pool_id matches an unordered (token_a, token_b) pair.

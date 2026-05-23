@@ -9,8 +9,9 @@
 //   - AggregatorRegistry (bonded race + tUSDC bond escrow)
 //   - Orderbook with multi-pool constructor (pool_count=3, pool_addrs/token_a/token_b
 //     arrays of length 4 with admin as padding sentinel for slot 3)
-//   - Treasury via the Sub-3 4-deploy circular-dep dance (Sub-5 will fix via
-//     deterministic address pre-computation)
+//   - Treasury via the Sub-5a 3-deploy fallback ceremony (Orderbook.treasury is
+//     PublicMutable; Orderbook deploys with ZERO treasury, Treasury deploys with
+//     real Orderbook addr, then orderbook.set_treasury() wires them one-shot)
 //   - pool.set_orderbook wiring for all 3 pools
 //   - Treasury.seed_public(initial_balance)
 //
@@ -108,9 +109,10 @@ async function main() {
     wallet, tUSDC.address, AGGREGATOR_BOND,
   ).send({ from: admin });
 
-  // ===== 4. Orderbook + Treasury 4-deploy circular-dep dance (Sub-3 wart preserved) =====
-  // Both Orderbook.treasury and Treasury.orderbook_addr are PublicImmutable — they can't
-  // be updated post-deploy. Sub-5 will fix via deterministic address pre-computation.
+  // ===== 4. Orderbook + Treasury 3-deploy ceremony (Sub-5a fallback) =====
+  // contractAddressSalt is args-dependent (Sub-5a A1), so we can't precompute
+  // Orderbook's address. Instead: deploy Orderbook with ZERO placeholder
+  // treasury, deploy Treasury with real Orderbook addr, then orderbook.set_treasury.
   const vkHash = readVkHash();
 
   // Padding sentinel: slot 3 (index 3) is unused — fill with admin to satisfy Noir's
@@ -119,40 +121,42 @@ async function main() {
   const pool_token_a_ar = [p_usdc_eth.lo,           p_usdc_btc.lo,           p_eth_btc.lo,           admin];
   const pool_token_b_ar = [p_usdc_eth.hi,           p_usdc_btc.hi,           p_eth_btc.hi,           admin];
 
-  // Phase 1: Orderbook with placeholder treasury=admin.
-  // NOTE: generated Orderbook.ts binding has the pre-B1 8-arg signature; the actual
-  // artifact on disk matches the new 10-arg Noir constructor. The TypeScript cast below
-  // is intentional — codegen will regenerate the binding on next `pnpm codegen`.
+  // Step 4a: deploy Orderbook with treasury = ZERO placeholder.
+  // NOTE: generated Orderbook.ts binding may not yet reflect the updated 10-arg
+  // constructor (treasury arg removed, pool_registry_admin arg appended); the
+  // TypeScript cast below is intentional — codegen will regenerate the binding
+  // on next `pnpm codegen`.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const orderbookPhase1 = await (OrderbookContract.deploy as any)(
+  const orderbook = await (OrderbookContract.deploy as any)(
     wallet,
     EPOCH_LENGTH,
     vkHash,
     deployedRegistry.contract.address,
-    admin,              // placeholder treasury (Sub-3 4-deploy wart)
     AGGREGATOR_FEE,
     3,                  // pool_count
     pool_addrs,
     pool_token_a_ar,
     pool_token_b_ar,
+    admin,              // pool_registry_admin (also gates set_treasury per Sub-5a A2)
+    // (NOTE: treasury arg removed from constructor — Orderbook starts with treasury = ZERO)
   ).send({ from: admin });
 
-  // Phase 2: throwaway Treasury pointing at Phase-1 Orderbook (needed to bootstrap
-  // the address; discarded after Phase 4).
-  await TreasuryContract.deploy(
-    wallet, tUSDC.address, orderbookPhase1.contract.address, admin,
-  ).send({ from: admin });
-
-  // Phase 4: final Treasury pointing at Phase-1 Orderbook.
-  // (Phase 3 = re-deploy Orderbook is skipped here; see Sub-3 wart commentary above.)
+  // Step 4b: deploy Treasury with the real Orderbook address.
   const finalTreasury = await TreasuryContract.deploy(
-    wallet, tUSDC.address, orderbookPhase1.contract.address, admin,
+    wallet, tUSDC.address, orderbook.contract.address, admin,
   ).send({ from: admin });
+
+  // Step 4c: one-shot wire Orderbook -> Treasury.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (orderbook.contract.methods as any)
+    .set_treasury(finalTreasury.contract.address)
+    .send({ from: admin });
+  console.log("Sub-5a fallback 3-deploy ceremony OK; Orderbook.treasury set once");
 
   // ===== 5. Wire all 3 pools to the orderbook =====
   for (const pp of [p_usdc_eth.pool, p_usdc_btc.pool, p_eth_btc.pool]) {
     await pp.methods
-      .set_orderbook(orderbookPhase1.contract.address)
+      .set_orderbook(orderbook.contract.address)
       .send({ from: admin });
   }
 
@@ -190,7 +194,7 @@ async function main() {
         address: p_eth_btc.pool.address.toString(),
       },
     ],
-    orderbook: orderbookPhase1.contract.address.toString(),
+    orderbook: orderbook.contract.address.toString(),
     admin: admin.toString(),
     aggregatorRegistry: deployedRegistry.contract.address.toString(),
     treasury: finalTreasury.contract.address.toString(),
@@ -200,9 +204,6 @@ async function main() {
 
   writeFileSync("zswap.config.json", JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
-  console.warn(
-    "WARN: orderbook.storage.treasury is the deploy admin (placeholder); see Sub-3 deploy script notes."
-  );
 
   await wallet.stop();
 }
