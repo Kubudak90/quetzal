@@ -146,79 +146,62 @@ async function fetchPendingClaims(
     ctx.wallet,
   );
 
-  // Cast through any: D1 added queue_relayer_claim + consume_relayer_claim +
-  // get_pending_relayer_claims_count but codegen bindings have not been
-  // regenerated yet (Treasury.ts still reflects the pre-D1 state).
+  // Cast through any: D1/D2 added queue_relayer_claim + consume_relayer_claim +
+  // get_pending_relayer_claims_count + get_pending_relayer_claim_at but codegen
+  // bindings have not been regenerated yet (Treasury.ts still reflects pre-D1).
   const treasuryDyn = treasury as unknown as {
     methods: {
       get_pending_relayer_claims_count: () => { simulate: () => Promise<bigint> };
+      get_pending_relayer_claim_at: (index: number) => {
+        simulate: () => Promise<{
+          id: bigint;
+          l2_tx_hash: bigint;
+          expected_content: bigint;
+          l1_recipient: { inner: bigint } | bigint;
+          amount: bigint;
+          fee: bigint;
+          requested_at_block: number;
+        }>;
+      };
     };
   };
 
   const count = await treasuryDyn.methods.get_pending_relayer_claims_count().simulate();
   if (count === 0n) return [];
 
-  // For each slot 0..count, read the claim via a per-slot view function.
-  // NOTE: if D1 didn't add `get_pending_relayer_claim_at(u32) -> RelayerClaim`
-  // to the Treasury contract, add it now:
-  //
-  //   #[aztec(public)] #[aztec(view)]
-  //   fn get_pending_relayer_claim_at(index: u32) -> RelayerClaim {
-  //     storage.pending_relayer_claims.at(index).read()
-  //   }
-  //
-  // Until that view function is present, we log a warning and idle harmlessly.
-  const treasuryWithSlot = treasury as unknown as {
-    methods: {
-      get_pending_relayer_claim_at: (index: bigint) => {
-        simulate: () => Promise<{
-          id: bigint;
-          l2_tx_hash: string;
-          expected_content: string;
-          l1_recipient: string;
-          amount: bigint;
-          fee: bigint;
-          bridge_addr: string;
-          is_private: boolean;
-        }>;
-      };
-    };
-  };
-
-  // Check whether the per-slot view exists by probing the methods object.
-  if (
-    !(
-      "get_pending_relayer_claim_at" in
-      (treasuryWithSlot.methods as unknown as Record<string, unknown>)
-    )
-  ) {
-    console.warn(
-      `relayer-mode: get_pending_relayer_claim_at(u32) view not yet wired in Treasury. ` +
-        `Queue has ${count} claim(s) but daemon cannot read details. ` +
-        `Add the view function in a follow-up + re-run.`,
-    );
-    return [];
-  }
-
   const claims: PendingClaim[] = [];
   for (let i = 0n; i < count; i++) {
     try {
-      const raw = await treasuryWithSlot.methods
-        .get_pending_relayer_claim_at(i)
+      const raw = await treasuryDyn.methods
+        .get_pending_relayer_claim_at(Number(i))
         .simulate();
+
+      // EthAddress is serialised as { inner: bigint } by the ABI codec; fall
+      // back to treating the value itself as a bigint if the wrapper is absent.
+      const recipientBigInt =
+        typeof (raw.l1_recipient as { inner?: bigint }).inner === "bigint"
+          ? (raw.l1_recipient as { inner: bigint }).inner
+          : (raw.l1_recipient as unknown as bigint);
+
       claims.push({
-        id: raw.id,
-        l2TxHash: raw.l2_tx_hash,
-        expectedContent: raw.expected_content,
-        l1Recipient: raw.l1_recipient,
-        amount: raw.amount,
-        fee: raw.fee,
-        bridgeAddr: raw.bridge_addr,
-        isPrivate: raw.is_private,
+        id: BigInt(raw.id),
+        l2TxHash:
+          "0x" + BigInt(raw.l2_tx_hash).toString(16).padStart(64, "0"),
+        expectedContent:
+          "0x" + BigInt(raw.expected_content).toString(16).padStart(64, "0"),
+        l1Recipient:
+          "0x" + recipientBigInt.toString(16).padStart(40, "0"),
+        amount: BigInt(raw.amount),
+        fee: BigInt(raw.fee),
+        // bridgeAddr is not bound in the on-chain RelayerClaim struct.
+        // Sub-5d follow-up: extend RelayerClaim to include the L1 portal
+        // address OR resolve via content-tag heuristic in the maker CLI (D3).
+        bridgeAddr: "",
+        isPrivate: false,
       });
     } catch (e) {
       console.error(
-        `relayer-mode: failed to read claim at slot ${i}:`,
+        `fetchPendingClaims: slot ${i} read failed:`,
         e instanceof Error ? e.message : String(e),
       );
     }
@@ -233,6 +216,17 @@ async function processClaim(
   walletClient: ReturnType<typeof createWalletClient>,
   ctx: Awaited<ReturnType<typeof openCli>>,
 ): Promise<void> {
+  // Guard: bridgeAddr is not bound in the on-chain RelayerClaim struct.
+  // Until Sub-5d extends RelayerClaim (or the maker CLI encodes the L1 portal
+  // address) we cannot submit the L1 withdraw — log and skip.
+  if (!claim.bridgeAddr) {
+    console.warn(
+      `  claim ${claim.id}: bridgeAddr unresolved (Treasury claim doesn't bind L1 portal). ` +
+        `Sub-5d follow-up: extend RelayerClaim to include bridgeAddr OR use content-tag heuristic.`,
+    );
+    return;
+  }
+
   // 1. Build outbox proof via the subprocess binary
   let proof: OutboxProof;
   try {

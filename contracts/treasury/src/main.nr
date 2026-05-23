@@ -243,5 +243,12 @@ pub contract Treasury {
         self.storage.pending_relayer_claims_count.read()
     }
 
+    /// Sub-5c D2 follow-up: read a single relayer claim by slot index.
+    /// The D2 relayer daemon walks slots [0, count) to enumerate the queue.
+    #[external("utility")]
+    unconstrained fn get_pending_relayer_claim_at(index: u32) -> pub RelayerClaim {
+        self.storage.pending_relayer_claims.at(index).read()
+    }
+
     pub mod test;
 }
