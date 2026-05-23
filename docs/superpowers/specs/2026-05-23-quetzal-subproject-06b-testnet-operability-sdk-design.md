@@ -77,7 +77,7 @@ For each runner: complete any deferred step bodies (Sub-5b D2 outbox proof + Sub
 
 - Complete the 8-step bodies in `scripts/testnet-sub6-anonymity.ts` (E2 shipped scaffolds with `console.warn` placeholders).
 - Execute K=5 bulk submit (1 real + 4 decoys; A5 downsize), registry round-trip, claim-fill with decoy filter, cancel-decoys batch reclaim, round-amount bridge advisory block + ack.
-- Validate: K=5 actually fits in PXE tagging window without stall (the original `submit_order_bulk` design at K=9 was a theoretical concern; K=5 reduces it but is unverified on testnet).
+- Validate: K=5 lets a maker submit at least 2 consecutive bulk-with-decoys without hitting tagging-window stall (PXE caps at ~20 unfinalised private submits per wallet; 2 bulks consume 10 slots, leaving ~10 for follow-up actions like `claim` and `cancel-decoys`).
 - Output: `docs/superpowers/runs/sub6b-phase1-sub6a.md`.
 - Walltime estimate: 1-2 hours.
 
@@ -91,7 +91,13 @@ For each runner: complete any deferred step bodies (Sub-5b D2 outbox proof + Sub
 
 ### Bug-fix bucket (Task 1.5)
 
-Any bugs surfaced in 1.1-1.4 get minimal CLI-side fixes (each in its own commit). Structural issues (e.g., contract semantics needing redeploy) get logged as a separate Sub-6c hotfix-issue, not blocking Phase 1.
+Any bugs surfaced in 1.1-1.4 get minimal CLI-side fixes (each in its own commit). Bug classification:
+
+- **Blocking** (a runner cannot reach green without the fix): fix in Task 1.5, runner re-executes.
+- **Non-blocking** (runner reaches green but a behavior is suboptimal, e.g., a logged warning, a non-critical step that times out gracefully): log to `docs/superpowers/specs/sub6b-followups.md` for Sub-6c review; runner is considered green.
+- **Structural** (requires contract redeploy or substantial Noir change): runner is marked yellow in Phase 1 summary; explicit user decision needed before Phase 2 starts.
+
+Phase 1 advances to Phase 2 only when all 4 runners are at least yellow (or green).
 
 ### Phase 1 close-out (Task 1.6)
 
@@ -236,7 +242,7 @@ All existing CLI tests still pass after the conversion (74/74 unit tests as base
 1. **Task 2.1** — `sdk/` scaffold: package.json, tsconfig, workspace wiring (`pnpm-workspace.yaml`), build script. Verify `pnpm -F @quetzal/sdk build` succeeds (empty package).
 2. **Task 2.2** — `sdk/src/types.ts` + `sdk/src/errors.ts` + `sdk/src/config.ts` — move types from `cli/src/types.ts` (if exists) + define `QuetzalError` hierarchy + `NetworkConfig` + `TokenAlias` resolver (the `resolveTokenDecimals` from D2 lives here).
 3. **Task 2.3** — `sdk/src/wallet/{schnorr,pxe,aztec-wallet}.ts` — three wallet adapters + shared `WalletAdapter` interface.
-4. **Task 2.4** — `sdk/src/client.ts` — `QuetzalClient.connect()` + lifecycle (stop, getAddress, etc.). Currently this work lives in `cli/src/client.ts`'s `openCli` / `openClient`.
+4. **Task 2.4** — `sdk/src/client.ts` — `QuetzalClient.connect()` + lifecycle (stop, getAddress, etc.). Currently this work lives in `cli/src/wallet.ts`'s `openCli(config, accountIndex)` (returns `CliContext` with `wallet`, `node`, contracts). Lift the contract-registration + node-wait + wallet-bootstrap into SDK; CLI keeps a thin `openClient` adapter that calls SDK's `QuetzalClient.connect()` and reshapes the result into `CliContext`.
 5. **Task 2.5** — `sdk/src/orders.ts` — extract `placeOrder` + `placeOrderBulk` + `claimFill` + `cancelOrder` from `cli/src/commands/order.ts` + `claim.ts` + `cancel.ts`.
 6. **Task 2.6** — `sdk/src/bridge.ts` — extract `bridgeDeposit` + `bridgeClaim` + `bridgeExit` + `bridgeTick` from `cli/src/commands/bridge.ts`. The C4 `bridge tick` body lifts cleanly here.
 7. **Task 2.7** — `sdk/src/reads.ts` + `sdk/src/aggregator.ts` + `sdk/src/privacy/*` — move read-only helpers + Sub-3 aggregator flows + privacy modules (`decoy-registry`, `amount-heuristic`, `bridge-history` from B1/D1/C1).
@@ -265,7 +271,7 @@ Rewrite each Phase 1 runner using the SDK. The original CLI-based runners are re
 | sub6-anonymity | M_1 | M_2 | yes/no |
 | c4-bridge-tick | K_1 | K_2 | yes/no |
 
-If parity holds: SDK extraction is validated end-to-end. If not: list deltas + Phase 3 stays open until resolved (or carry-forward to Sub-6c if delta is non-blocking).
+If parity holds: SDK extraction is validated end-to-end. If not: list deltas. "Non-blocking" means the same business outcome was reached (e.g., the order placed, the bridge claim landed) but with a different intermediate tx count -- carry-forward to Sub-6c. "Blocking" means the SDK runner failed to reach the same business outcome the CLI runner reached -- Phase 3 stays open until resolved.
 
 ## Phase 4 — Frontend onboarding pack
 
