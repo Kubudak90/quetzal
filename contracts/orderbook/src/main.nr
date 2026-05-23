@@ -331,6 +331,14 @@ pub contract Orderbook {
     /// Sub-6a A1: extracted body of submit_order for reuse by submit_order_bulk.
     /// Performs validation, pool lookup, escrow, OrderNote build + insert.
     /// Called from both the per-tx submit_order and the K-batch submit_order_bulk.
+    ///
+    /// NOTE for K-batch callers: each call enqueues two public callbacks
+    /// (`_assert_epoch_open` + `_append_order`). In a K-order bulk call this means
+    /// 2K public enqueues within the same private circuit. If Aztec enforces a
+    /// per-tx enqueue cap, the real K is bounded by it. Sub-6a A2 sizes
+    /// MAX_ORDERS_PER_BULK = 9 (i.e., 18 public enqueues) which fits comfortably,
+    /// but if A5's gate-count measurement forces a downsize, the enqueue cost
+    /// also scales down.
     #[internal("private")]
     fn _submit_one_order_internal(
         side: bool,
