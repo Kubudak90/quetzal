@@ -6,6 +6,8 @@ import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
 import { parseField } from "../field.js";
 import { queryRecentDeposits, isRoundTripRisk } from "../bridge/bridge-history.js";
+import { loadBridgeState, saveBridgeState } from "../bridge/bridge-schedule.js";
+import type { ScheduledExit } from "../bridge/bridge-schedule.js";
 
 function resolveTokenAddress(config: ReturnType<typeof loadConfig>, alias: string): string {
   // Accept both legacy (tUSDC/tETH/tBTC) and bridged (aUSDC/aWETH/aWBTC) names.
@@ -334,5 +336,78 @@ export function registerBridge(program: Command): void {
         functionName,
       );
       console.log(cmdLine);
+    });
+
+  // ── bridge status ────────────────────────────────────────────────────────────────────────
+  bridge
+    .command("status")
+    .description("show pending scheduled exits + statuses")
+    .action(() => {
+      const state = loadBridgeState();
+      if (state.scheduledExits.length === 0) {
+        console.log("No scheduled exits.");
+        return;
+      }
+      console.log(`Pending scheduled exits (${state.scheduledExits.length}):`);
+      for (const e of state.scheduledExits) {
+        const when = new Date(e.submitAfterUnix * 1000).toISOString();
+        console.log(`  ${e.id}  ${e.amount} ${e.token}  -> ${e.l1Recipient}  [${e.status}]  ${when}`);
+      }
+    });
+
+  // ── bridge tick ──────────────────────────────────────────────────────────────────────────
+  bridge
+    .command("tick")
+    .description("submit pending scheduled exits whose window has opened (and optionally auto-claim on L1)")
+    .option("--auto-claim", "also auto-submit L1 withdraw after the L2 epoch settles")
+    .action(async (_opts, cmd: Command) => {
+      const opts = cmd.optsWithGlobals();
+      const config = loadConfig(opts.config);
+      const ctx = await openCli(config, Number(opts.account));
+      try {
+        const state = loadBridgeState();
+        const now = Math.floor(Date.now() / 1000);
+        let changed = false;
+
+        for (const exit of state.scheduledExits as ScheduledExit[]) {
+          if (exit.status === "pending" && exit.submitAfterUnix <= now) {
+            console.log(`Submitting L2 exit for ${exit.id} (${exit.amount} ${exit.token})...`);
+            // SCAFFOLD: implementer wires the actual L2 send.
+            // Pattern reference: the existing 'bridge exit' single-exit path
+            // already resolves the token alias + builds Fr for l1Recipient + calls
+            // TokenContract.at(...).methods.exit_to_l1_public(amount, l1Recipient).send(...).
+            // Copy that block here, parameterized by exit.token + exit.amount +
+            // exit.l1Recipient.
+            //
+            // After successful send:
+            //   const receipt = await tx.wait();
+            //   exit.status = "submitted";
+            //   exit.l2TxHash = receipt.txHash.toString();
+            //   exit.l2EpochAtSubmit = <captured>;  // from receipt or node query
+            //   changed = true;
+            console.warn(`  [scaffold] L2 send not yet wired; operator session fills in.`);
+          } else if (exit.status === "submitted" && opts.autoClaim === true) {
+            console.log(`Checking L1 claim eligibility for ${exit.id}...`);
+            // SCAFFOLD: implementer wires the L1 claim check + cast send.
+            // Pattern reference: Sub-5c D2's relayer-mode loop + Sub-5b D2's
+            // buildOutboxProof (cli/src/bridge-helpers.ts).
+            // Flow:
+            //   1. Query Aztec node: has epoch exit.l2EpochAtSubmit settled to L1 outbox?
+            //   2. If yes: build outbox proof via Sub-5c A3's zswap-outbox-proof binary
+            //      (now quetzal-outbox-proof; see scripts/measure-* for the spawn pattern)
+            //   3. Call viem writeContract on TokenBridge.withdraw or withdrawPrivate
+            //      with the proof + recipient + amount
+            //   4. On L1 receipt:
+            //        exit.status = "done";
+            //        changed = true;
+            console.warn(`  [scaffold] L1 claim not yet wired; operator session fills in.`);
+          }
+        }
+
+        if (changed) saveBridgeState(state);
+        console.log("Tick complete.");
+      } finally {
+        await ctx.stop();
+      }
     });
 }
