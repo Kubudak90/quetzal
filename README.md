@@ -51,6 +51,33 @@ mainnet:** EmergencyPauser role with delay=0 timelock for `pause()` (7-day
 delay is unacceptable for security incidents). Sub-5c (Production Infra)
 remains.
 
+**Sub-5c CODE-COMPLETE (2026-05-23):** Production infrastructure — final Sub-5 split.
+Closes every Sub-5b carryforward + ships the production ops stack.
+TokenBridge.sol refactored from `Ownable` to `AccessControl` with `GOVERNANCE_ROLE`
+(7-day governance timelock) + `EMERGENCY_PAUSER_ROLE` (0-day emergency timelock,
+self-admin invariant — governance cannot revoke). Standalone TS subprocess binary
+`bin/zswap-outbox-proof` (audit-isolated under `tools/outbox-proof/`) constructs
+L2→L1 sibling paths via canonical `computeL2ToL1MembershipWitness` from
+`@aztec/stdlib/messaging`. `scripts/deploy-bridge.ts` end-to-end automated via
+shared `scripts/lib/aztec-wallet-bootstrap.ts` (DRY across testnet-m1-hello,
+testnet-sub5b-bridge, deploy-bridge). wBTC ships as third asset day 0; per-asset
+TVL caps prevent decimal-mismatch portal bricking. 3-phase `recoverDeposit`
+(90-day window + governance approval) handles lost-secret scenarios.
+`withdrawPrivate` consumer for L2's `exit_to_l1_private` (Sub-5b deferral closed).
+Prometheus + Grafana + Alertmanager VPS stack with custom L1+L2 exporters + 4
+alerts (BridgePaused, BridgeTvlNearCap, OrderbookStalled, OutboxBacklog) →
+Slack + PagerDuty. Opt-in relayer extends Sub-3 aggregator daemon
+(`RELAYER_MODE=1`) with Treasury fee economy; CLI `bridge exit --relayer-fee`.
+`contracts-l1/AUDIT.md` + Slither report at `contracts-l1/audit/slither-2026-05-23.txt`
++ commit-freeze tag `sub5c-audit-snapshot` at `2747700`. `docs/on-call-playbook.md`
+SEV1-4 + escalation tree + quarterly pause-drill. `docs/superpowers/specs/sub5c-runbook.md`
+extends Sub-5b runbook with EmergencyPauser usage, 3-phase recovery walkthrough,
+withdrawPrivate UX, monitoring setup, relayer setup, 3-asset cap-ramp policy.
+L1 test scoreboard: **33 Foundry tests pass**. L2 TXE: 8 tests (5 Token bridge-mode
++ 3 Treasury queue). **ZSwap is now mainnet-ready in $10k cap mode pending only
+the external audit.** Sub-5d (post-audit remediation) + Sub-6 (privacy mitigations)
+remain.
+
 ## Quickstart
 
 Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `4.2.1`, Foundry (anvil).
@@ -141,6 +168,11 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Sub-project 5b: L1 Bridge Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-05b-l1-bridge-design.md)
 - [Sub-project 5b: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-05b-l1-bridge.md)
 - [Sub-project 5b: Mainnet Deployment Runbook](docs/superpowers/specs/sub5b-runbook.md)
+- [Sub-project 5c: Production Infrastructure Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-05c-production-infra-design.md)
+- [Sub-project 5c: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-05c-production-infra.md)
+- [Sub-project 5c: Mainnet Deployment + Operations Runbook](docs/superpowers/specs/sub5c-runbook.md)
+- [L1 Bridge Audit Brief](contracts-l1/AUDIT.md)
+- [On-call Playbook](docs/on-call-playbook.md)
 
 ## Operator Runbook (Sub-3)
 
