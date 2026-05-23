@@ -25,8 +25,31 @@ circuit block B' (276K → 281K gates, +5,344). Sub-4 #6 (MAX_POOLS fixed at
 deploy) closed via mutable pool registry + `add_pool` (MAX_NUM_POOLS = 8).
 New vk_hash `2aae33dd4ea01690`; bridge constants 500/115 HOLD. Testnet runner
 scaffold at `scripts/testnet-sub5a.ts`; full step-body wire-up + live run
-deferred (same shape as Sub-2.5). Sub-5b (L1 Bridge) and Sub-5c (Production
-Infra) remain.
+deferred (same shape as Sub-2.5).
+
+**Sub-5b CODE-COMPLETE (2026-05-23):** L1↔L2 bridge for canonical USDC + WETH.
+`contracts-l1/` Foundry project deploys `TokenBridge.sol` (UUPS + Pausable +
+Ownable, owned by a `TimelockController` with multisig admin) once per asset.
+`Token.nr` extended with `is_bridged: PublicImmutable<bool>` +
+`portal_addr: PublicImmutable<EthAddress>` immutable fields + four new external
+functions (`claim_public`, `claim_private`, `exit_to_l1_public`,
+`exit_to_l1_private`); legacy `mint_to_*` revert in bridge mode. L1↔L2 content
+hash unified on `sha256_to_field(abi.encode(...))` (Aztec convention; matches
+the canonical `Hash.sha256ToField` from upstream `@aztec/l1-artifacts`).
+`exit_to_l1_private` has no L1 consumer yet — Sub-5c follow-up. CLI:
+`zswap bridge {claim, exit, claim-l1}` subcommands; bridge-helpers.ts wires
+`getTxEffect` + `getL2ToL1Messages` for the L2→L1 lookup half (siblingPath
+construction deferred to Sub-5c — operator completes proof manually via the
+upstream portal_manager.js reference). L1 test scoreboard: **21 Foundry tests
+pass** (16 TokenBridge unit + 5 BridgeFlow governance integration). L2 TXE:
+5 bridge-mode tests committed (Docker-blocked local execution carryover).
+Mainnet deployment runbook at `docs/superpowers/specs/sub5b-runbook.md` with
+$10k → unlimited cap ramp policy + 7-day timelock governance procedures.
+Live testnet bridge execution (`scripts/testnet-sub5b-bridge.ts` 12-step
+runner) deferred to operator session. **Sub-5b carryforward must ship before
+mainnet:** EmergencyPauser role with delay=0 timelock for `pause()` (7-day
+delay is unacceptable for security incidents). Sub-5c (Production Infra)
+remains.
 
 ## Quickstart
 
@@ -115,6 +138,9 @@ pnpm --filter @zswap/cli zswap claim --nonce <order-nonce>
 - [Sub-project 5a: Deterministic Addresses Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses-design.md)
 - [Sub-project 5a: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-05a-deterministic-addresses.md)
 - [Sub-project 5a: A1 outcome (args-dependent → FALLBACK 3-deploy)](docs/superpowers/specs/sub5a-A1-outcome.md)
+- [Sub-project 5b: L1 Bridge Design](docs/superpowers/specs/2026-05-23-zswap-aztec-subproject-05b-l1-bridge-design.md)
+- [Sub-project 5b: Implementation Plan](docs/superpowers/plans/2026-05-23-zswap-aztec-subproject-05b-l1-bridge.md)
+- [Sub-project 5b: Mainnet Deployment Runbook](docs/superpowers/specs/sub5b-runbook.md)
 
 ## Operator Runbook (Sub-3)
 
