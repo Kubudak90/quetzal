@@ -17,10 +17,21 @@ Rough estimate from per-call gate cost analysis: each `_submit_one_order_interna
 
 **Operator follow-up to run A5 properly:**
 1. Install `bb` CLI via `aztec-up` toolchain.
-2. Ensure `nargo compile` from `contracts/orderbook/` produces a fresh target (em-dash blockers cleared in commit `582e951`).
+2. Ensure `nargo compile` from `contracts/orderbook/` produces a fresh target (em-dash blockers cleared in commit `582e951`, remaining non-ASCII arrows/box-drawing cleared in commit `700ddbb`).
 3. Run `pnpm tsx scripts/measure-bulk-submit-gates.ts` from repo root.
 4. Read the measurement block appended to this file.
 5. If N > 350K: change `global MAX_ORDERS_PER_BULK: u32 = 9;` to `5` in `contracts/orderbook/src/main.nr` + update the A2 tests' array sizes from `[...; 9]` to `[...; 5]` + re-measure + update this section's Outcome line.
+
+## Operator follow-up attempt (2026-05-23)
+
+Attempted A3/A5 in-session. Installed `bb` (barretenberg 4.0.0-nightly.20260120 via `bbup -nv 1.0.0-beta.19`). Compile attempt with `nargo 1.0.0-beta.19` against `contracts/orderbook/` produced **1575 errors after the ASCII cleanup** — all pre-existing (not regressions from the cleanup):
+
+- `unconstrained fn get_aggregator_fee()` (and similar getters) missing `pub` keyword on return type
+- `cannot find 'self' in this scope` for unconstrained module-level fns referencing `self.storage`
+
+The errors are NOT introduced by Sub-6a; they exist on `main` independent of the bulk-submit work. They indicate the dev box's `nargo 1.0.0-beta.19` toolchain expects a slightly different unconstrained-fn syntax than what the codebase ships. The codebase has produced bb proofs successfully in prior sub-projects (Sub-4: `vk_hash 03180b0a`, gate 276K; Sub-5a: `vk_hash 2aae33dd`, gate 281K), so a compatible nargo version exists — just not on this dev box.
+
+**A3/A5 remains operator-pending** on either: (a) a nargo version that matches the codebase, OR (b) a separate refactor pass that updates the unconstrained getters to the current 1.0.0-beta.19 syntax. Provisional KEEP at `MAX_ORDERS_PER_BULK = 9` stands until a clean compile is achievable.
 
 ## Measurement runs
 
