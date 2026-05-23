@@ -78,6 +78,29 @@ L1 test scoreboard: **31 Foundry tests pass**. L2 TXE: 8 tests (5 Token bridge-m
 the external audit.** Sub-5d (post-audit remediation) + Sub-6 (privacy mitigations)
 remain.
 
+**Sub-6a CODE-COMPLETE (2026-05-23):** Anonymity Set — first of the Sub-6 split (6a/6b/6c).
+22 tasks across 7 phases (A-G). `submit_order_bulk` external private fn (up to 9 slots,
+skip semantics on zero `amount_in`) + `_submit_one_order_internal` extraction.
+`cli/src/orders/decoy-registry.ts` — maker-local JSON store (`~/.quetzal/decoy-registry-<addr>.json`)
+tracking decoy nonces; `quetzal order --decoys N` (0-8) builds bulk arrays with
+`UNFILLABLE_LOW=1n` / `UNFILLABLE_HIGH=u128::MAX` sentinel prices; `claim` auto-filters
+registry; `cancel-decoys --epoch N` batch-reclaims escrowed decoys.
+Bridge round-trip advisory: `cli/src/bridge/bridge-history.ts` queries `DepositInitiated`
+events (7-day window, viem); `bridge exit` checks L1 round-trip risk (5% tolerance)
+and requires `--ack-delay` to proceed; `bridge exit --split-into N --interval-days D`
+schedules staggered exits with ±20% noise (`cli/src/bridge/bridge-schedule.ts`);
+`bridge status` + `bridge tick [--auto-claim]` subcommands (L2-send + L1-claim bodies
+scaffolded for operator session).
+Amount-pattern heuristic: `cli/src/amount-heuristic.ts` — `classifyAmount` (round_unit,
+round_tenth, round_decimal, natural) + deterministic perturbation; wired into `order`
++ `bridge exit` with `--ack-round` opt-out flag.
+AUDIT.md extended: T-13 (bulk gate budget) + T-14 (decoy registry corruption) +
+T-15 (round-trip advisory bypass) + Known Issue #5 (PXE tagging window).
+Slither re-run: 0 new findings (L1 surface unchanged). CLI unit test scoreboard:
+**74/74 pass**. bb gate measurement + testnet runner execution (`scripts/testnet-sub6-anonymity.ts`)
+deferred to operator. Sub-6b (aggregator metadata mitigations) + Sub-6c (trade-direction
+fingerprint) remain.
+
 ## Quickstart
 
 Requires: Node 22+, pnpm 9+, Docker, Aztec CLI `4.2.1`, Foundry (anvil).
