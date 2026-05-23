@@ -24,7 +24,9 @@ contract DeployAllBridges is Script {
         address l1GovernanceMultisig,
         address l1EmergencyMultisig,
         uint256 governanceDelaySec,
-        uint256 maxTvl
+        uint256 maxTvlUsdc,
+        uint256 maxTvlWeth,
+        uint256 maxTvlWbtc
     ) external returns (
         address governanceTimelock,
         address emergencyTimelock,
@@ -34,25 +36,25 @@ contract DeployAllBridges is Script {
     ) {
         vm.startBroadcast();
 
-        // 1. Governance timelock (typically 7d on mainnet, 0d on testnet)
+        // 1. Governance timelock
         address[] memory govProposers = new address[](1); govProposers[0] = l1GovernanceMultisig;
         address[] memory govExecutors = new address[](1); govExecutors[0] = address(0);
         governanceTimelock = address(new TimelockController(
             governanceDelaySec, govProposers, govExecutors, l1GovernanceMultisig
         ));
 
-        // 2. Emergency timelock (always 0d — security incidents bypass governance window)
+        // 2. Emergency timelock
         address[] memory emProposers = new address[](1); emProposers[0] = l1EmergencyMultisig;
         address[] memory emExecutors = new address[](1); emExecutors[0] = address(0);
         emergencyTimelock = address(new TimelockController(
             0, emProposers, emExecutors, l1EmergencyMultisig
         ));
 
-        // 3. Three TokenBridge proxies (l2TokenAddress=bytes32(0) placeholder;
-        //    the TS orchestrator wires real L2 addresses post-deploy via wirePortalL2Token)
-        usdcBridge = _deployBridgeProxy(IERC20(l1Usdc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
-        wethBridge = _deployBridgeProxy(IERC20(l1Weth), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
-        wbtcBridge = _deployBridgeProxy(IERC20(l1Wbtc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvl);
+        // 3. Three TokenBridge proxies with per-asset TVL caps (token native units;
+        //    USDC=6d, WETH=18d, wBTC=8d → different absolute numbers for same $ value)
+        usdcBridge = _deployBridgeProxy(IERC20(l1Usdc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvlUsdc);
+        wethBridge = _deployBridgeProxy(IERC20(l1Weth), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvlWeth);
+        wbtcBridge = _deployBridgeProxy(IERC20(l1Wbtc), governanceTimelock, emergencyTimelock, IInbox(l1Inbox), IOutbox(l1Outbox), maxTvlWbtc);
 
         vm.stopBroadcast();
 

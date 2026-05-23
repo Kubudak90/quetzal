@@ -51,7 +51,15 @@ const L1_EMERGENCY_MULTISIG_ADDR = requireEnv("L1_EMERGENCY_MULTISIG_ADDR");
 const DEPLOYER_PK                = requireEnv("DEPLOYER_PK");
 
 const TIMELOCK_DELAY_SEC   = NETWORK === "mainnet" ? 7 * 24 * 3600 : 0;
-const MAX_TVL_PER_PORTAL: bigint = NETWORK === "mainnet" ? 10_000_000_000n : 0n;
+
+// Per-asset TVL caps in token native units. Target: ~$10k per portal at mainnet launch.
+// Native unit decimals differ: USDC=6, WETH=18, wBTC=8.
+//   USDC: 10_000 * 10^6  = 10_000_000_000 (≈ $10k)
+//   WETH: 4    * 10^18    = 4_000_000_000_000_000_000 (≈ $10k @ $2,500/ETH; round-trip cap)
+//   wBTC: 0.1  * 10^8     = 10_000_000 (≈ $10k @ $100,000/BTC; conservative)
+const MAX_TVL_USDC: bigint = NETWORK === "mainnet" ? 10_000_000_000n              : 0n;
+const MAX_TVL_WETH: bigint = NETWORK === "mainnet" ? 4_000_000_000_000_000_000n   : 0n;
+const MAX_TVL_WBTC: bigint = NETWORK === "mainnet" ? 10_000_000n                  : 0n;
 
 const FAUCET_URL = NETWORK === "testnet"
   ? "https://aztec-faucet.dev-nethermind.xyz/api/drip"
@@ -107,12 +115,15 @@ async function deployL1Stack(): Promise<DeployedL1> {
     "--rpc-url", L1_RPC_URL,
     "--private-key", DEPLOYER_PK,
     "--broadcast",
-    "--sig", "run(address,address,address,address,address,address,address,uint256,uint256)",
+    "--sig", "run(address,address,address,address,address,address,address,uint256,uint256,uint256,uint256)",
     "script/DeployAllBridges.s.sol:DeployAllBridges",
     L1_USDC_ADDR, L1_WETH_ADDR, L1_WBTC_ADDR,
     L1_INBOX_ADDR, L1_OUTBOX_ADDR,
     L1_MULTISIG_ADDR, L1_EMERGENCY_MULTISIG_ADDR,
-    TIMELOCK_DELAY_SEC.toString(), MAX_TVL_PER_PORTAL.toString(),
+    TIMELOCK_DELAY_SEC.toString(),
+    MAX_TVL_USDC.toString(),
+    MAX_TVL_WETH.toString(),
+    MAX_TVL_WBTC.toString(),
   ];
   console.log("Running forge deploy");
   await runForge(args, "contracts-l1");
@@ -247,7 +258,9 @@ async function main() {
   console.log(`  L1 wBTC: ${L1_WBTC_ADDR}`);
   console.log(`  Governance multisig: ${L1_MULTISIG_ADDR} (delay ${TIMELOCK_DELAY_SEC}s)`);
   console.log(`  Emergency multisig:  ${L1_EMERGENCY_MULTISIG_ADDR} (delay 0s)`);
-  console.log(`  Max TVL per portal:  ${MAX_TVL_PER_PORTAL}`);
+  console.log(`  Max TVL USDC: ${MAX_TVL_USDC} (≈$10k mainnet, unlimited testnet)`);
+  console.log(`  Max TVL WETH: ${MAX_TVL_WETH} (≈$10k mainnet, unlimited testnet)`);
+  console.log(`  Max TVL wBTC: ${MAX_TVL_WBTC} (≈$10k mainnet, unlimited testnet)`);
   console.log("");
 
   let l1: DeployedL1;
@@ -331,7 +344,9 @@ async function main() {
       wethBridge: l1.wethBridge,
       wbtcBridge: l1.wbtcBridge,
       timelockDelaySec: TIMELOCK_DELAY_SEC,
-      maxTvl: MAX_TVL_PER_PORTAL.toString(),
+      maxTvlUsdc: MAX_TVL_USDC.toString(),
+      maxTvlWeth: MAX_TVL_WETH.toString(),
+      maxTvlWbtc: MAX_TVL_WBTC.toString(),
     },
   };
   writeFileSync(cfgPath, JSON.stringify(config, null, 2));
