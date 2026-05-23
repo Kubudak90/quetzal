@@ -118,13 +118,14 @@ unconstrained fn deploy_orderbook(
         epoch_length,
         clearing_vk_hash,
         deployer,    // aggregator_registry stand-in
-        deployer,    // treasury stand-in
         0 as u128,   // aggregator_fee stand-in
         // Sub-4: single-pool registration
         1 as u32,    // pool_count
         [pool_addr, deployer, deployer, deployer],       // pool_addrs[4]
         [canon_a, deployer, deployer, deployer],         // pool_token_a_addrs[4]
         [canon_b, deployer, deployer, deployer],         // pool_token_b_addrs[4]
+        // Sub-5a A2: pool_registry_admin (treasury removed from constructor)
+        deployer,    // pool_registry_admin stand-in
     );
     env.deploy("Orderbook").with_public_initializer(deployer, initializer_call)
 }
@@ -576,16 +577,17 @@ unconstrained fn submit_order_rejects_path_with_no_matching_pool() {
     };
 
     // Deploy orderbook with a single usdc/eth pool only.
+    // Sub-5a A2: treasury removed from constructor; pool_registry_admin added.
     let initializer_call = Orderbook::interface().constructor(
         100 as u32,        // epoch_length
         0 as Field,        // clearing_vk_hash
         deployer,          // aggregator_registry stand-in
-        deployer,          // treasury stand-in
         0 as u128,         // aggregator_fee stand-in
         1 as u32,          // pool_count
         [pool_p0, deployer, deployer, deployer],
         [lo, deployer, deployer, deployer],
         [hi, deployer, deployer, deployer],
+        deployer,          // pool_registry_admin stand-in
     );
     let orderbook = env.deploy("Orderbook").with_public_initializer(deployer, initializer_call);
 
@@ -634,16 +636,17 @@ unconstrained fn pool_tokens_canonical_ordering_finds_pool() {
     let (eth_btc_a,  eth_btc_b)  = canon(eth,  btc);
 
     // Deploy with 3 pools. Slot [3] uses deployer as a harmless sentinel.
+    // Sub-5a A2: treasury removed from constructor; pool_registry_admin added.
     let initializer_call = Orderbook::interface().constructor(
         100 as u32,         // epoch_length
         0 as Field,         // clearing_vk_hash
         deployer,           // aggregator_registry stand-in
-        deployer,           // treasury stand-in
         0 as u128,          // aggregator_fee stand-in
         3 as u32,           // pool_count
         [pool_p0, pool_p1, pool_p2, deployer],
         [usdc_eth_a, usdc_btc_a, eth_btc_a, deployer],
         [usdc_eth_b, usdc_btc_b, eth_btc_b, deployer],
+        deployer,           // pool_registry_admin stand-in
     );
     let orderbook = env.deploy("Orderbook").with_public_initializer(deployer, initializer_call);
 
@@ -723,6 +726,127 @@ unconstrained fn submit_order_rejects_duplicate_path_hop() {
             [addr_a.to_field(), addr_a.to_field(), 0 as Field],
         ),
     );
+}
+
+// ============================================================================
+// Sub-5a Task A3: set_treasury one-shot setter TXE tests.
+//
+// set_treasury is a #[external("public")] function added in A2. It gates on:
+//   (1) caller == pool_registry_admin  → reverts with "only pool_registry_admin"
+//   (2) stored treasury == ZERO        → reverts with "treasury already set"
+//
+// All three tests deploy with the new A2 constructor signature (no treasury arg).
+// The `get_treasury()` utility getter is used in the happy-path to confirm the
+// address was actually written.
+// ============================================================================
+
+#[test]
+unconstrained fn sub5a_set_treasury_first_call_writes_address() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let stub_treasury = env.create_light_account();
+    let usdc = env.create_light_account();
+    let eth = env.create_light_account();
+    let stub_pool = env.create_light_account();
+
+    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+        (usdc, eth)
+    } else {
+        (eth, usdc)
+    };
+
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,        // epoch_length
+        0 as Field,        // clearing_vk_hash
+        admin,             // aggregator_registry stand-in
+        0 as u128,         // aggregator_fee stand-in
+        1 as u32,          // pool_count
+        [stub_pool, admin, admin, admin],
+        [lo, admin, admin, admin],
+        [hi, admin, admin, admin],
+        admin,             // pool_registry_admin
+    );
+    let orderbook = env.deploy("Orderbook").with_public_initializer(admin, initializer_call);
+
+    // Pre-condition: treasury must start as ZERO (constructor writes AztecAddress::from_field(0)).
+    let before: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_treasury());
+    assert(before == AztecAddress::from_field(0), "treasury must be ZERO before set_treasury");
+
+    // First call: admin sets treasury to stub_treasury. Must not revert.
+    env.call_public(admin, Orderbook::at(orderbook).set_treasury(stub_treasury));
+
+    // Post-condition: get_treasury() must return stub_treasury.
+    let after: AztecAddress = env.execute_utility(Orderbook::at(orderbook).get_treasury());
+    assert(after == stub_treasury, "treasury must equal stub_treasury after set_treasury");
+}
+
+#[test(should_fail_with = "treasury already set")]
+unconstrained fn sub5a_set_treasury_second_call_reverts() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let treasury_a = env.create_light_account();
+    let treasury_b = env.create_light_account();
+    let usdc = env.create_light_account();
+    let eth = env.create_light_account();
+    let stub_pool = env.create_light_account();
+
+    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+        (usdc, eth)
+    } else {
+        (eth, usdc)
+    };
+
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,
+        0 as Field,
+        admin,
+        0 as u128,
+        1 as u32,
+        [stub_pool, admin, admin, admin],
+        [lo, admin, admin, admin],
+        [hi, admin, admin, admin],
+        admin,
+    );
+    let orderbook = env.deploy("Orderbook").with_public_initializer(admin, initializer_call);
+
+    // First call succeeds (treasury goes from ZERO to treasury_a).
+    env.call_public(admin, Orderbook::at(orderbook).set_treasury(treasury_a));
+
+    // Second call must revert: "treasury already set".
+    env.call_public(admin, Orderbook::at(orderbook).set_treasury(treasury_b));
+}
+
+#[test(should_fail_with = "only pool_registry_admin")]
+unconstrained fn sub5a_set_treasury_rejects_non_admin_caller() {
+    let mut env = TestEnvironment::new();
+    let admin = env.create_light_account();
+    let stranger = env.create_light_account();
+    let stub_treasury = env.create_light_account();
+    let usdc = env.create_light_account();
+    let eth = env.create_light_account();
+    let stub_pool = env.create_light_account();
+
+    let (lo, hi) = if (usdc.to_field() as Field) < (eth.to_field() as Field) {
+        (usdc, eth)
+    } else {
+        (eth, usdc)
+    };
+
+    let initializer_call = Orderbook::interface().constructor(
+        100 as u32,
+        0 as Field,
+        admin,
+        0 as u128,
+        1 as u32,
+        [stub_pool, admin, admin, admin],
+        [lo, admin, admin, admin],
+        [hi, admin, admin, admin],
+        admin,
+    );
+    let orderbook = env.deploy("Orderbook").with_public_initializer(admin, initializer_call);
+
+    // Stranger (not admin) tries to set treasury → must revert: "only pool_registry_admin".
+    env.call_public(stranger, Orderbook::at(orderbook).set_treasury(stub_treasury));
 }
 
 // ============================================================================
