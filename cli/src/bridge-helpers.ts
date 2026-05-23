@@ -198,19 +198,22 @@ export async function buildOutboxProof(
 
 /**
  * Format an OutboxProof as a ready-to-run 'cast send' command for the L1
- * TokenBridge.withdraw call. Lets the maker paste it directly into Foundry
- * without manually building calldata.
+ * TokenBridge.withdraw or .withdrawPrivate call. Lets the maker paste it
+ * directly into Foundry without manually building calldata.
  *
  * @param proof          OutboxProof from buildOutboxProof
- * @param bridgeAddress  L1 portal address (USDCBridge / WETHBridge)
+ * @param bridgeAddress  L1 portal address (USDCBridge / WETHBridge / wBTCBridge)
  * @param amount         token amount (smallest unit)
  * @param l1Recipient    0x-prefixed L1 recipient address
+ * @param functionName   "withdraw" (default; consumes WITHDRAW_PUBLIC_TAG)
+ *                       or "withdrawPrivate" (consumes WITHDRAW_PRIVATE_TAG)
  */
 export function formatProofForCastSend(
   proof: OutboxProof,
   bridgeAddress: string,
   amount: bigint,
   l1Recipient: string,
+  functionName: "withdraw" | "withdrawPrivate" = "withdraw",
 ): string {
   if (!bridgeAddress.startsWith("0x") || bridgeAddress.length !== 42) {
     throw new Error(`bridgeAddress must be a 0x-prefixed 20-byte address, got: ${bridgeAddress}`);
@@ -218,10 +221,11 @@ export function formatProofForCastSend(
   if (!l1Recipient.startsWith("0x") || l1Recipient.length !== 42) {
     throw new Error(`l1Recipient must be a 0x-prefixed 20-byte address, got: ${l1Recipient}`);
   }
+  const sig = `${functionName}(uint256,address,uint256,uint256,bytes32[])`;
   const siblingArray = `[${proof.siblingPath.join(",")}]`;
   return [
     `cast send ${bridgeAddress} \\`,
-    `  "withdraw(uint256,address,uint256,uint256,bytes32[])" \\`,
+    `  "${sig}" \\`,
     `  ${amount} ${l1Recipient} ${proof.l2Epoch} ${proof.leafIndex} '${siblingArray}'`,
   ].join("\n");
 }

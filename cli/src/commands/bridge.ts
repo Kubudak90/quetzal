@@ -150,15 +150,18 @@ export function registerBridge(program: Command): void {
   // ── bridge claim-l1 ─────────────────────────────────────────────────────────────────────────────
   bridge
     .command("claim-l1")
-    .description("Print the L1 cast-send command needed to consume a pending L2->L1 withdraw")
+    .description("Print the L1 cast-send command needed to consume a pending L2→L1 withdraw")
     .requiredOption("--l2-tx <hash>", "L2 tx hash of the exit_to_l1_* call")
     .requiredOption("--l1-recipient <addr>", "0x-prefixed L1 recipient address")
     .requiredOption("--amount <units>", "token amount (smallest unit)")
-    .requiredOption("--bridge <addr>", "0x-prefixed L1 portal address (USDCBridge or WETHBridge)")
+    .requiredOption("--bridge <addr>", "0x-prefixed L1 portal address (USDCBridge or WETHBridge or wBTCBridge)")
     .requiredOption("--content <hex>", "expected 0x-prefixed bytes32 content hash committed by L2")
+    .option("--private", "use withdrawPrivate L1 function (matches L2's exit_to_l1_private); default is withdraw")
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);
+      const isPrivate = opts.private === true;
+      const functionName = isPrivate ? "withdrawPrivate" : "withdraw";
       const { buildOutboxProof, formatProofForCastSend, lookupOutboxMessage } = await import("../bridge-helpers.js");
       let proof;
       try {
@@ -182,7 +185,7 @@ export function registerBridge(program: Command): void {
         // Print a template with placeholder for the siblingPath
         const template = [
           `cast send ${String(opts.bridge)} \\`,
-          `  "withdraw(uint256,address,uint256,uint256,bytes32[])" \\`,
+          `  "${functionName}(uint256,address,uint256,uint256,bytes32[])" \\`,
           `  ${BigInt(opts.amount)} ${String(opts.l1Recipient)} ${lookup.l2Epoch} ${lookup.leafIndex} <SIBLING_PATH>`,
         ].join("\n");
         console.log(template);
@@ -193,6 +196,7 @@ export function registerBridge(program: Command): void {
         String(opts.bridge),
         BigInt(opts.amount),
         String(opts.l1Recipient),
+        functionName,
       );
       console.log(cmdLine);
     });
