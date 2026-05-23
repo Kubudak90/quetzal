@@ -24,6 +24,7 @@
 
 import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { Fr } from "@aztec/aztec.js/fields";
 
 const NETWORK = process.env.NETWORK ?? "testnet";
 if (!["testnet", "mainnet", "local"].includes(NETWORK)) {
@@ -117,6 +118,71 @@ async function deployL2Tokens(_usdcBridgeL1: string, _wethBridgeL1: string): Pro
   );
 }
 
+function castCalldata(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("cast", ["calldata", ...args]);
+    let out = "";
+    child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+    child.on("exit", (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(`cast calldata exited ${code}`))));
+  });
+}
+
+function castSend(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("cast", ["send", ...args], { stdio: "inherit" });
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`cast send exited ${code}`))));
+  });
+}
+
+/**
+ * Sub-5b E2: schedule + (for testnet/local with delay=0) execute
+ * setL2TokenAddress on a portal via the TimelockController.
+ *
+ * On mainnet (delay=7d), only schedules. The execute call must be run
+ * by an operator after the 7-day window via the printed cast command.
+ *
+ * @param timelockAddr  TimelockController address
+ * @param bridgeAddr    TokenBridge proxy address
+ * @param l2TokenHex    bytes32 hex (0x-prefixed, 32 bytes) of the L2 Token address
+ * @param label         human-readable label (e.g. "USDC", "WETH") for logs
+ */
+export async function wirePortalL2Token(
+  timelockAddr: string,
+  bridgeAddr: string,
+  l2TokenHex: string,
+  label: string,
+): Promise<void> {
+  if (!l2TokenHex.startsWith("0x") || l2TokenHex.length !== 66) {
+    throw new Error(`l2TokenHex must be 0x-prefixed 32 bytes (66 chars), got ${l2TokenHex}`);
+  }
+  const innerCalldata = await castCalldata(["setL2TokenAddress(bytes32)", l2TokenHex]);
+
+  console.log(`Scheduling setL2TokenAddress for ${label}Bridge → ${l2TokenHex}`);
+  await castSend([
+    "--rpc-url", L1_RPC_URL,
+    "--private-key", DEPLOYER_PK,
+    timelockAddr,
+    "schedule(address,uint256,bytes,bytes32,bytes32,uint256)",
+    bridgeAddr, "0", innerCalldata, "0x0", "0x0", TIMELOCK_DELAY_SEC.toString(),
+  ]);
+
+  if (TIMELOCK_DELAY_SEC === 0) {
+    console.log(`Executing setL2TokenAddress for ${label}Bridge immediately (delay=0)`);
+    await castSend([
+      "--rpc-url", L1_RPC_URL,
+      "--private-key", DEPLOYER_PK,
+      timelockAddr,
+      "execute(address,uint256,bytes,bytes32,bytes32)",
+      bridgeAddr, "0", innerCalldata, "0x0", "0x0",
+    ]);
+  } else {
+    console.log(`Mainnet delay = ${TIMELOCK_DELAY_SEC}s. After the timelock window, run:`);
+    console.log(
+      `  cast send ${timelockAddr} "execute(address,uint256,bytes,bytes32,bytes32)" ${bridgeAddr} 0 ${innerCalldata} 0x0 0x0`,
+    );
+  }
+}
+
 async function main() {
   console.log(`Sub-5b deploy on ${NETWORK}`);
   console.log(`  L1 USDC:        ${L1_USDC_ADDR}`);
@@ -152,6 +218,23 @@ async function main() {
   console.log(`aWETH: ${l2.aWETH}`);
   console.log("");
 
+  console.log("=== Wiring portals -> L2 tokens (timelock-gated) ===");
+
+  // EthAddress on L1 + bytes32 on contract: aUSDC/aWETH are AztecAddress
+  // (32-byte). Pack via Fr serialization.
+  const aUSDCBytes32 = new Fr(BigInt(l2.aUSDC)).toString(); // 0x-prefixed 32-byte hex
+  const aWETHBytes32 = new Fr(BigInt(l2.aWETH)).toString();
+
+  await wirePortalL2Token(l1.timelock, l1.usdcBridge, aUSDCBytes32, "USDC");
+  await wirePortalL2Token(l1.timelock, l1.wethBridge, aWETHBytes32, "WETH");
+
+  console.log("");
+  console.log("Portals wired. Maker flow ready:");
+  console.log(`  - deposit:  cast send <l1Token> approve <bridge> <amount> + bridge.depositToL2Public/Private(...)`);
+  console.log(`  - claim:    pnpm zswap bridge claim --token aUSDC --secret 0x... --message-index N`);
+  console.log(`  - exit:     pnpm zswap bridge exit --token aWETH --amount N --l1-recipient 0x...`);
+  console.log(`  - L1 claim: pnpm zswap bridge claim-l1 --l2-tx 0x... --bridge ${l1.usdcBridge} --amount N --content 0x...`);
+
   // Merge into zswap.config.json
   const cfgPath = "zswap.config.json";
   const existing = existsSync(cfgPath)
@@ -182,8 +265,7 @@ async function main() {
   console.log(`Wrote ${cfgPath}`);
 
   console.log("");
-  console.log("Next: run scripts/deploy-bridge.ts again with the L1+L2 wiring step (E2)");
-  console.log("      OR use the testnet runner scripts/testnet-sub5b-bridge.ts (F2)");
+  console.log("Sub-5b E1+E2 complete. Use the testnet runner scripts/testnet-sub5b-bridge.ts (F2) for end-to-end validation.");
 }
 
 main().catch((e) => {
