@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {IInbox} from "./interfaces/IInbox.sol";
@@ -14,10 +14,11 @@ import {DataStructures} from "./lib/DataStructures.sol";
 import {Epoch} from "./lib/TimeMath.sol";
 
 /// @title  TokenBridge — Aztec L1↔L2 portal for canonical ERC20s.
-/// @notice One instance per (L1 ERC20, L2 Token) pair. Owner is a
-///         TimelockController whose admin is a 3-of-5 multisig (mainnet)
-///         or a 1-of-1 deployer (testnet, delay=0).
-contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableUpgradeable {
+/// @notice One instance per (L1 ERC20, L2 Token) pair. Governance is split
+///         across two roles: GOVERNANCE_ROLE (7-day governance TimelockController
+///         in production) and EMERGENCY_PAUSER_ROLE (0-day emergency
+///         TimelockController fronted by a 2-of-3 emergency multisig).
+contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable, PausableUpgradeable {
     using SafeERC20 for IERC20;
 
     IERC20 public l1Token;
@@ -50,6 +51,17 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
     ///      non-standard token requires reviewing this assumption.
     uint256 public maxTvl;
 
+    /// @notice Role allowed to invoke governance functions (setMaxTvl,
+    ///         setL2TokenAddress, withdrawTreasuryDust, _authorizeUpgrade).
+    ///         In production this is the 7-day governance TimelockController.
+    bytes32 public constant GOVERNANCE_ROLE       = keccak256("GOVERNANCE_ROLE");
+
+    /// @notice Role allowed to invoke pause/unpause. In production this is the
+    ///         delay-0 emergency TimelockController fronted by a separate
+    ///         emergency multisig (2-of-3) so security incidents bypass the
+    ///         7-day governance window.
+    bytes32 public constant EMERGENCY_PAUSER_ROLE = keccak256("EMERGENCY_PAUSER_ROLE");
+
     event DepositInitiated(
         address indexed sender,
         bytes32 indexed l2Recipient,
@@ -81,32 +93,41 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         _disableInitializers();
     }
 
-    /// @notice One-shot initializer called by the proxy factory immediately after deployment.
-    ///         Cannot be called again once the proxy is initialized (OpenZeppelin Initializable guard).
-    /// @param _l1Token       The L1 ERC20 token this bridge accepts.
-    /// @param _l2TokenAddress Aztec L2 token contract address (as bytes32 Aztec AztecAddress).
-    /// @param _l2Version     Aztec rollup version; used when addressing L2 actors.
-    /// @param _inbox         Aztec Inbox contract for L1→L2 messages.
-    /// @param _outbox        Aztec Outbox contract for L2→L1 messages.
-    /// @param _owner         Owner (typically a TimelockController wrapping a multisig).
-    /// @param _maxTvl        Initial TVL cap; 0 = unlimited. See `maxTvl` for full semantics.
+    /// @notice One-shot initializer. Two timelocks are required: a governance
+    ///         timelock (typically 7-day delay) for setMaxTvl/setL2TokenAddress/
+    ///         withdrawTreasuryDust/upgrades, and an emergency timelock (typically
+    ///         0-day delay) for pause/unpause.
+    /// @param _l1Token             The L1 ERC20 token this bridge accepts.
+    /// @param _l2TokenAddress      Aztec L2 token contract address (as bytes32 Aztec AztecAddress).
+    /// @param _l2Version           Aztec rollup version; used when addressing L2 actors.
+    /// @param _inbox               Aztec Inbox contract for L1→L2 messages.
+    /// @param _outbox              Aztec Outbox contract for L2→L1 messages.
+    /// @param _governanceTimelock  Governance timelock (GOVERNANCE_ROLE + DEFAULT_ADMIN_ROLE).
+    /// @param _emergencyTimelock   Emergency timelock (EMERGENCY_PAUSER_ROLE).
+    /// @param _maxTvl              Initial TVL cap; 0 = unlimited. See `maxTvl` for full semantics.
     function initialize(
         IERC20 _l1Token,
         bytes32 _l2TokenAddress,
         uint256 _l2Version,
         IInbox _inbox,
         IOutbox _outbox,
-        address _owner,
+        address _governanceTimelock,
+        address _emergencyTimelock,
         uint256 _maxTvl
     ) external initializer {
         if (address(_l1Token) == address(0)) revert ZeroAddress();
         if (address(_inbox) == address(0)) revert ZeroAddress();
         if (address(_outbox) == address(0)) revert ZeroAddress();
-        if (_owner == address(0)) revert ZeroAddress();
+        if (_governanceTimelock == address(0)) revert ZeroAddress();
+        if (_emergencyTimelock == address(0)) revert ZeroAddress();
 
-        __Ownable_init(_owner);
+        __AccessControl_init();
         __Pausable_init();
         __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE,    _governanceTimelock);
+        _grantRole(GOVERNANCE_ROLE,        _governanceTimelock);
+        _grantRole(EMERGENCY_PAUSER_ROLE,  _emergencyTimelock);
 
         l1Token = _l1Token;
         l2TokenAddress = _l2TokenAddress;
@@ -214,19 +235,19 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
         return l1Token.balanceOf(address(this));
     }
 
-    // ── Governance (owner = TimelockController) ───────────────────────────────
+    // ── Governance ────────────────────────────────────────────────────────────
 
     /// @notice Pause all deposit and withdraw operations. Use this to block deposits
     ///         rather than `setMaxTvl(0)` — see `maxTvl` for why.
-    function pause() external onlyOwner { _pause(); }
+    function pause() external onlyRole(EMERGENCY_PAUSER_ROLE) { _pause(); }
 
     /// @notice Resume deposit and withdraw operations after a pause.
-    function unpause() external onlyOwner { _unpause(); }
+    function unpause() external onlyRole(EMERGENCY_PAUSER_ROLE) { _unpause(); }
 
     /// @notice Update the TVL cap. A value of 0 means UNLIMITED (no cap enforcement).
     ///         To block all new deposits use `pause()` instead; setting this to 0 does
     ///         NOT block deposits.
-    function setMaxTvl(uint256 newCap) external onlyOwner {
+    function setMaxTvl(uint256 newCap) external onlyRole(GOVERNANCE_ROLE) {
         emit MaxTvlUpdated(maxTvl, newCap);
         maxTvl = newCap;
     }
@@ -234,7 +255,7 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
     /// @notice Update the L2 token address. Allows governance to point the bridge to
     ///         a new L2 token deployment (e.g. after a token migration).
     /// @param newAddr New Aztec L2 token address (as bytes32); must be non-zero.
-    function setL2TokenAddress(bytes32 newAddr) external onlyOwner {
+    function setL2TokenAddress(bytes32 newAddr) external onlyRole(GOVERNANCE_ROLE) {
         if (newAddr == bytes32(0)) revert ZeroAddress();
         emit L2TokenAddressUpdated(l2TokenAddress, newAddr);
         l2TokenAddress = newAddr;
@@ -242,13 +263,13 @@ contract TokenBridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, Paus
 
     /// @notice Rescue accidentally sent ERC20 tokens (other than the bridged `l1Token`).
     ///         Cannot be used to drain the bridge's escrowed `l1Token` balance.
-    function withdrawTreasuryDust(IERC20 token, uint256 amount, address to) external onlyOwner {
+    function withdrawTreasuryDust(IERC20 token, uint256 amount, address to) external onlyRole(GOVERNANCE_ROLE) {
         if (address(token) == address(l1Token)) revert CannotSweepL1Token();
         if (to == address(0)) revert ZeroAddress();
         token.safeTransfer(to, amount);
     }
 
-    function _authorizeUpgrade(address) internal override onlyOwner {}
+    function _authorizeUpgrade(address) internal override onlyRole(GOVERNANCE_ROLE) {}
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
