@@ -13,5 +13,12 @@
       "token_b": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
       "address": "0x1c06506878d782e8060557bc0ac73a4ff38cfda00083035103058b73be2def75"
     }
-  ]
+  ],
+  "l1": {
+    "governanceTimelock": "0xA27E6be0CC923f377b0367e913B2B0Fa25487838",
+    "emergencyTimelock": "0x1469f18c5cd5c713e099f9acdA9C63648A8ed711",
+    "usdcBridge": "0x58E978ceeb768Ae906cF21757Bb4AA7166EC78Ed",
+    "wethBridge": "0x4cA362a6021910828fc14c55b4F138d90CB716eC",
+    "wbtcBridge": "0x233DD76dF07Ce1C56D4D5fd3cE3F89994Fa64200"
+  }
 }

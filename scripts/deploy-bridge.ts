@@ -156,7 +156,7 @@ async function deployL1Stack(): Promise<DeployedL1> {
 }
 
 async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBridgeL1: string): Promise<DeployedL2> {
-  const { wallet, account } = await bootstrapAztecWallet(
+  const { wallet, account, state } = await bootstrapAztecWallet(
     AZTEC_NODE_URL,
     "deploy-bridge-state.json",
     FAUCET_URL,
@@ -169,6 +169,24 @@ async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBr
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const TokenContractAny = TokenContract as any;
 
+    // Sub-6b 1.2 patch: if alice's fee-juice claim is still un-consumed
+    // (state.claimData present but no spendable fee-juice in account), use
+    // FeeJuicePaymentMethodWithClaim for the FIRST deploy tx to consume the
+    // claim atomically + pay for the tx.
+    const { FeeJuicePaymentMethodWithClaim } = await import("@aztec/aztec.js/fee");
+    const { Fr } = await import("@aztec/aztec.js/fields");
+    let claimUsed = false;
+    const buildClaimPayment = () => {
+      if (claimUsed || !state.claimData) return undefined;
+      const claim = {
+        claimAmount: new Fr(BigInt(state.claimData.claimAmount)),
+        claimSecret: Fr.fromString(state.claimData.claimSecretHex),
+        messageLeafIndex: BigInt(state.claimData.messageLeafIndex),
+      };
+      claimUsed = true;
+      return new FeeJuicePaymentMethodWithClaim(account, claim);
+    };
+
     const deployBridgedToken = async (
       name: string,
       symbol: string,
@@ -180,10 +198,13 @@ async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBr
       // EthAddress wraps a 20-byte Ethereum address; the Noir type EthAddress
       // serialises to a single field element (20 bytes right-padded to 32 bytes).
       const portalEthAddress = EthAddress.fromString(portalL1Addr);
+      const paymentMethod = buildClaimPayment();
+      const sendOpts: { from: typeof account; fee?: { paymentMethod: ReturnType<typeof buildClaimPayment> } } = { from: account };
+      if (paymentMethod) sendOpts.fee = { paymentMethod };
       const deployed = await TokenContractAny.deployWithOpts(
         { wallet, method: "constructor_with_minter_bridged" },
         paddedName, paddedSymbol, decimals, account, portalEthAddress,
-      ).send({ from: account });
+      ).send(sendOpts);
       return deployed.contract;
     };
 
