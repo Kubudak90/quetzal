@@ -1,17 +1,29 @@
 {
   "nodeUrl": "https://rpc.testnet.aztec-labs.com",
-  "admin": "0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00",
-  "tUSDC": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
-  "tETH": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
-  "orderbook": "0x2486ac705f0e7b509256dc96c8310a3abdf6465faa4a24e406a10fbcc17e5184",
-  "treasury": "0x1b2c36d0b7f5da9ccb7888eee7785111f4a5c35778097bb79957ac031a6606e6",
-  "aggregatorRegistry": "0x00e43e816cdc85de14b31c02450b06890f0ebca5c19023d2fdb511fd16ece8e0",
+  "admin": "0x0a6288dc8eea7d22fa49c281efb2750a5d9e45b2bcaccbe3340a718eeb0c3c2f",
+  "tUSDC": "0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369",
+  "tETH": "0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7",
+  "orderbook": "0x098ba1bc19513af7fb7e4858b0424ddf601e0106fd01daf8bbdc71dc48dda6b7",
+  "treasury": "0x256e85b2246f1d6891b373762929be9bc18b45f8715d3208cd3e7804c0f0cc30",
+  "aggregatorRegistry": "0x12d291cd1f7ee4d13dc9f532c5405b7fa90f53cbf4e0179c8cd985bd59ccfc6f",
   "pools": [
     {
       "pool_id": 0,
-      "token_a": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
-      "token_b": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
-      "address": "0x1c06506878d782e8060557bc0ac73a4ff38cfda00083035103058b73be2def75"
+      "token_a": "0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7",
+      "token_b": "0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369",
+      "address": "0x2cd41ed73806d9fdd66087aec32f776fc666704982a7db1a11bfcf156a7bde10"
+    },
+    {
+      "pool_id": 1,
+      "token_a": "0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3",
+      "token_b": "0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369",
+      "address": "0x2a4469c5c1a0e7c02956a55a83d009761e5f3d35e5d2a111f78278e5dbbf57c9"
+    },
+    {
+      "pool_id": 2,
+      "token_a": "0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7",
+      "token_b": "0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3",
+      "address": "0x20fd5b2e5dd8b9a5282fc82f07e5a67be8b34b8675be667ade68c1dcf929835c"
     }
   ],
   "l1": {
@@ -28,5 +40,18 @@
     "admin": "0x0a6288dc8eea7d22fa49c281efb2750a5d9e45b2bcaccbe3340a718eeb0c3c2f",
     "deployedAtUnix": 1779625800,
     "notes": "Fresh bridge wallet (NOT m3 admin). All 3 portals wired via timelock schedule+execute on 2026-05-24. m3 trade tokens preserved at top level."
+  },
+  "tBTC": "0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3",
+  "bucketPMinSqrt": "100000000000000000",
+  "bucketGrowthNum": "1500000000000000000",
+  "m3_legacy": {
+    "admin": "0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00",
+    "tUSDC": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
+    "tETH": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
+    "orderbook": "0x2486ac705f0e7b509256dc96c8310a3abdf6465faa4a24e406a10fbcc17e5184",
+    "treasury": "0x1b2c36d0b7f5da9ccb7888eee7785111f4a5c35778097bb79957ac031a6606e6",
+    "aggregatorRegistry": "0x00e43e816cdc85de14b31c02450b06890f0ebca5c19023d2fdb511fd16ece8e0",
+    "pool_usdc_eth": "0x1c06506878d782e8060557bc0ac73a4ff38cfda00083035103058b73be2def75",
+    "notes": "m3 era deploy (2026-05-22); m1-admin wallet; preserved here for reference."
   }
 }
