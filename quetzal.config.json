@@ -20,5 +20,13 @@
     "usdcBridge": "0x58E978ceeb768Ae906cF21757Bb4AA7166EC78Ed",
     "wethBridge": "0x4cA362a6021910828fc14c55b4F138d90CB716eC",
     "wbtcBridge": "0x233DD76dF07Ce1C56D4D5fd3cE3F89994Fa64200"
+  },
+  "bridge": {
+    "aUSDC": "0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369",
+    "aWETH": "0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7",
+    "aWBTC": "0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3",
+    "admin": "0x0a6288dc8eea7d22fa49c281efb2750a5d9e45b2bcaccbe3340a718eeb0c3c2f",
+    "deployedAtUnix": 1779625800,
+    "notes": "Fresh bridge wallet (NOT m3 admin). All 3 portals wired via timelock schedule+execute on 2026-05-24. m3 trade tokens preserved at top level."
   }
 }

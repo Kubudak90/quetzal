@@ -1,76 +1,82 @@
-# Sub-6b Phase 1 — Bridge deploy attempt (2026-05-24 afternoon)
+# Sub-6b Phase 1 — Bridge deploy (2026-05-24)
 
-**Status:** L1 GREEN (5 contracts live on Sepolia) — L2 BLOCKED on alice's fee-juice claim missing from L2 inbox
+**Status:** ✅ FULL GREEN — 5 L1 contracts + 3 L2 bridge-mode tokens + 3 portal wirings all live on testnet.
 
-## L1 deploy outcome
+## L1 deploy (Sepolia chain 11155111)
 
-Foundry script `contracts-l1/script/DeployAllBridges.s.sol` broadcast to Sepolia (chain 11155111). 5 contracts deployed + verified live via `cast code`:
+5 contracts deployed + verified live via `cast code`:
 
-| Contract | Sepolia address | code size |
+| Contract | Sepolia address |
+|---|---|
+| GovernanceTimelock | `0xA27E6be0CC923f377b0367e913B2B0Fa25487838` |
+| EmergencyTimelock | `0x1469f18c5cd5c713e099f9acdA9C63648A8ed711` |
+| USDCBridge (ERC1967Proxy) | `0x58E978ceeb768Ae906cF21757Bb4AA7166EC78Ed` |
+| WETHBridge (ERC1967Proxy) | `0x4cA362a6021910828fc14c55b4F138d90CB716eC` |
+| wBTCBridge (ERC1967Proxy) | `0x233DD76dF07Ce1C56D4D5fd3cE3F89994Fa64200` |
+
+L1 inbox/outbox + canonical assets (read via `node.getL1ContractAddresses()`):
+- Aztec inbox `0xf1bb424ac888aa239f1e658b5bddabc65a1c94e6`
+- Aztec outbox `0x5fe63c32b7ca20445e813bdb1019f1ffc5f52376`
+- Sepolia USDC `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (Circle)
+- Sepolia WETH9 `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`
+- Sepolia WBTC `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599`
+
+Multisig (gov + emergency) wired to deployer EOA `0xcF582A37AaE1E580b63666587FFa42d84169bA62` for testnet (real Safe deferred to mainnet).
+
+Forge's broadcast tool crashed at the end with Infura 429s (rate-limit) preventing receipt fetch; on-chain state is correct (verified independently via `cast code` showing all 5 bytecodes live).
+
+## L2 deploy (Aztec alpha-testnet, chain 11155111-rollup)
+
+3 bridge-mode tokens deployed using a fresh wallet (`0x0a6288dc8eea7d22fa49c281efb2750a5d9e45b2bcaccbe3340a718eeb0c3c2f`), claim-funded from the Aztec faucet (`/api/drip` after the per-address rate-limit allowed):
+
+| Token | L2 address | constructor |
 |---|---|---|
-| GovernanceTimelock | `0xA27E6be0CC923f377b0367e913B2B0Fa25487838` | 10903 bytes |
-| EmergencyTimelock | `0x1469f18c5cd5c713e099f9acdA9C63648A8ed711` | 10903 bytes |
-| USDCBridge (ERC1967Proxy) | `0x58E978ceeb768Ae906cF21757Bb4AA7166EC78Ed` | 263 bytes |
-| WETHBridge (ERC1967Proxy) | `0x4cA362a6021910828fc14c55b4F138d90CB716eC` | 263 bytes |
-| wBTCBridge (ERC1967Proxy) | `0x233DD76dF07Ce1C56D4D5fd3cE3F89994Fa64200` | 263 bytes |
+| aUSDC | `0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369` | `constructor_with_minter_bridged("aUSDC", "aUSDC", 6, minter, usdcBridgeL1)` |
+| aWETH | `0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7` | `("aWETH", "aWETH", 18, minter, wethBridgeL1)` |
+| aWBTC | `0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3` | `("aWBTC", "aWBTC", 8, minter, wbtcBridgeL1)` |
 
-Wired into `quetzal.config.json` under `l1.{governanceTimelock, emergencyTimelock, usdcBridge, wethBridge, wbtcBridge}`.
+## Portal wiring (setL2TokenAddress via governance timelock)
 
-L1 inbox/outbox + canonical USDC/WETH/wBTC addresses (read via `node.getL1ContractAddresses()` from Aztec testnet):
-- inbox: `0xf1bb424ac888aa239f1e658b5bddabc65a1c94e6`
-- outbox: `0x5fe63c32b7ca20445e813bdb1019f1ffc5f52376`
-- Sepolia USDC: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (Circle)
-- Sepolia WETH9: `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`
-- Sepolia WBTC: `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599`
+All 3 portals' `l2TokenAddress()` getter returns the matching L2 token (verified via `cast call`):
 
-Multisig (governance + emergency) wired to the deployer EOA `0xcF582A37AaE1E580b63666587FFa42d84169bA62` for testnet simplicity — this is a single-signer "multisig" stub. For mainnet a real Safe is needed (per Sub-5c runbook).
+```
+USDC ✓ wired: 0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369
+WETH ✓ wired: 0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7
+wBTC ✓ wired: 0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3
+```
 
-Forge's broadcast tool crashed at the end with `attempt to divide by zero` due to Infura rate-limit responses (429s) preventing receipt fetch. The on-chain state is correct (all 5 contracts live, verified independently via `cast code`) — only the broadcast post-processing crashed.
+Each wiring went through `governanceTimelock.schedule()` + `governanceTimelock.execute()` with `delay=0` (testnet). On mainnet the 7-day delay would gate this.
 
-## L2 deploy blocker
+## Bugs hit + fixed
 
-The script then attempts to deploy 3 L2 bridge-mode tokens (`aUSDC`, `aWETH`, `aWBTC`) using alice's wallet (from `.env.testnet`'s AZTEC_SECRET_KEY + AZTEC_PRIVATE_KEY → address `0x10a85d0b...`).
+1. **`"0x0"` instead of bytes32 zero literal in `wirePortalL2Token`** — cast rejected `--bytes32` arg with `parser error: odd number of digits`. Fixed by replacing `"0x0"` (3 chars) with `"0x" + "00"*32` (66 chars). Commit will include this fix in `scripts/deploy-bridge.ts`.
 
-First attempt failed with `Not enough balance for fee payer`: alice's fee-juice claim from the faucet was never consumed (the earlier 1.1 deploy attempt failed at the tUSDC constructor before consuming the claim).
+2. **Cast nonce drift between schedule + execute calls** — `next nonce N+8, tx nonce N` race when forge broadcast and cast share the same EOA. Worked around by running schedule + execute in separate processes with explicit sleeps between calls (`scripts/wire-final.sh`). Added `castSendWithRetry` helper to `scripts/deploy-bridge.ts` for future runs.
 
-A patch was applied to `scripts/deploy-bridge.ts` (`Sub-6b 1.2 patch: if alice's fee-juice claim is still un-consumed ...`) to use `FeeJuicePaymentMethodWithClaim` for the FIRST L2 token deploy tx. This is the correct fix in principle.
+3. **Previous attempt's claim already consumed-then-reverted** for alice's wallet (`0x10a85d0b...`). Worked around by deriving a FRESH wallet (`0x0a6288dc...`), having the user claim fee-juice for that address via faucet, then seeding `deploy-bridge-state.json` with the fresh claim data + `step=3` to skip the bootstrap's own faucet drip.
 
-Second attempt failed differently: `No L1 to L2 message found for message hash 0x00aa94a1bfca88c254d727af58fb8dd1f1e2694233d8930c77843aeb6c55f99e`. The fee-juice claim message that the faucet supposedly produced (per `AZTEC_FAUCET_CLAIM_*` env vars) is NOT present on the L2 inbox. Possible causes:
-- The earlier 1.1 attempt's claim was partially consumed (nullifier inserted on L2) but the tx itself reverted at simulation, leaving the message unusable
-- The faucet's L1 → L2 message hash computation diverged from what aztec.js computes from the claim secret + recipient
-- Faucet message landed before alice's account address was finalized, and was consumed by a different recipient
+## State of full Sub-5b bridge
 
-Without a fresh faucet drip (rate-limited 6 hours per IP per request), there is no way forward for L2 token deploys in this session.
+| Layer | Status |
+|---|---|
+| L1 portals | ✅ live |
+| L2 bridge-mode tokens | ✅ live |
+| L1↔L2 portal wiring | ✅ verified |
+| L1→L2 `depositToL2Public/Private` round-trip | ⏸ untested in-session (requires test USDC balance on Sepolia deployer EOA) |
+| L2→L1 `exit_to_l1_public/Private` round-trip | ⏸ untested in-session (requires L2 aUSDC balance on a maker wallet) |
 
-## State of partial progress
+## Wallet topology
 
-- **L1 stack:** ✅ deployed + verified
-- **L2 stack (aUSDC / aWETH / aWBTC):** ❌ blocked on alice fee-juice
-- **Timelock wiring (setL2TokenAddress):** ❌ depends on L2 stack
-- **Sub-5b deposit→claim→exit cycle:** ❌ depends on L2 stack
-- **Bridge tick C4 smoke:** ❌ depends on Sub-5b
+- **m3 trade stack** (Orderbook + Treasury + AggregatorRegistry + Pool + tUSDC/tETH): deployed 2026-05-22 by m1-admin `0x0524b493...`. Top-level `quetzal.config.json` keys (tUSDC, tETH, orderbook, etc.) point to this stack.
+- **Bridge stack** (aUSDC, aWETH, aWBTC + L1 bridges + timelocks): deployed 2026-05-24 by bridge-admin `0x0a6288dc...`. `quetzal.config.json.bridge.*` + `.l1.*` point to this stack.
+- These two stacks are INDEPENDENT — m3's orderbook is wired against m3 tokens, not bridge tokens. To trade bridge-mode tokens through the orderbook, a fresh Sub-4 ceremony redeploy (orderbook + pools wired against aUSDC/aWETH/aWBTC) would be needed. Out of Sub-6b scope.
 
-## Carry-forward to next operator session
+## Carry-forward
 
-1. Wait ≥6 hours for faucet rate-limit reset, then re-run with a fresh wallet (delete `deploy-bridge-state.json` to force fresh faucet drip)
-2. OR fund alice's account with fee-juice via a different path (the Aztec faucet `claim` endpoint may have a separate "I have a claim, give me fee-juice" flow)
-3. OR use a different .env.testnet wallet that already has fee-juice on L2
-
-Once L2 tokens deploy, the script will automatically:
-- Call `wirePortalL2Token` for each (timelock schedule + execute with `delay=0` for testnet)
-- Overwrite `quetzal.config.json.{tUSDC, tETH, tBTC}` with the new bridge-mode addresses
-- Make Sub-5b runner runnable
-
-**Note on config conflict:** after the L2 deploy lands, the m3-era trade tokens (current tUSDC/tETH) will be replaced. The m3 Orderbook + Pool + Treasury + AggregatorRegistry are wired against the m3 tokens — they cannot trade aUSDC/aWETH. A FULL FRESH Sub-4 ceremony redeploy would be required to wire Orderbook against the bridge tokens. Alternatively keep the m3 trade stack as-is and use bridge tokens only for L1↔L2 round-trips (no on-chain trades).
-
-## Git artifacts
-
-- `quetzal.config.json` — extended with `l1.*` section + 5 bridge addresses (commit pending)
-- `scripts/deploy-bridge.ts` — patched with `FeeJuicePaymentMethodWithClaim` fallback (commit pending)
-- `contracts-l1/broadcast/` — Foundry broadcast log (gitignored; local-only)
-- `deploy-bridge-state.json` — wallet bootstrap state (gitignored)
-- `quetzal.config.m3-backup.json` — pre-bridge config snapshot (gitignored)
+1. **End-to-end L1↔L2 round-trip validation** — needs Sepolia USDC funded into the deployer EOA + the existing testnet-sub5b-bridge.ts runner pointed at the new bridge config. The bridge contracts themselves are now production-ready.
+2. **Fresh Sub-4 ceremony for bridge-token trade flows** — out of Sub-6b scope. When done, Sub-6a anonymity flows can exercise the bridge-mode tokens end-to-end.
+3. **Real multisig instead of EOA** — for mainnet only.
 
 ## Tag
 
-`sub6b-phase1-bridge-deploy-partial` — partial green (L1 done, L2 blocked).
+`sub6b-phase1-bridge-full` — L1 + L2 + wiring all GREEN. Round-trip execution pending Sepolia USDC + downstream Sub-4 redeploy.

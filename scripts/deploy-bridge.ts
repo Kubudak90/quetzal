@@ -94,6 +94,21 @@ function castSend(args: string[]): Promise<void> {
   });
 }
 
+async function castSendWithRetry(args: string[], label: string): Promise<void> {
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await castSend(args);
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt === maxAttempts) throw new Error(`${label}: gave up after ${maxAttempts} attempts: ${msg}`);
+      console.log(`  ${label} attempt ${attempt} failed (${msg.slice(0, 80)}); sleeping 15s + retry`);
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+  }
+}
+
 interface DeployedL1 {
   governanceTimelock: string;
   emergencyTimelock: string;
@@ -156,7 +171,7 @@ async function deployL1Stack(): Promise<DeployedL1> {
 }
 
 async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBridgeL1: string): Promise<DeployedL2> {
-  const { wallet, account, state } = await bootstrapAztecWallet(
+  const { wallet, account } = await bootstrapAztecWallet(
     AZTEC_NODE_URL,
     "deploy-bridge-state.json",
     FAUCET_URL,
@@ -169,24 +184,9 @@ async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBr
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const TokenContractAny = TokenContract as any;
 
-    // Sub-6b 1.2 patch: if alice's fee-juice claim is still un-consumed
-    // (state.claimData present but no spendable fee-juice in account), use
-    // FeeJuicePaymentMethodWithClaim for the FIRST deploy tx to consume the
-    // claim atomically + pay for the tx.
-    const { FeeJuicePaymentMethodWithClaim } = await import("@aztec/aztec.js/fee");
-    const { Fr } = await import("@aztec/aztec.js/fields");
-    let claimUsed = false;
-    const buildClaimPayment = () => {
-      if (claimUsed || !state.claimData) return undefined;
-      const claim = {
-        claimAmount: new Fr(BigInt(state.claimData.claimAmount)),
-        claimSecret: Fr.fromString(state.claimData.claimSecretHex),
-        messageLeafIndex: BigInt(state.claimData.messageLeafIndex),
-      };
-      claimUsed = true;
-      return new FeeJuicePaymentMethodWithClaim(account, claim);
-    };
-
+    // Bootstrap step 4 consumes the fee-juice claim during account deploy, so
+    // by the time we reach here the account has spendable fee-juice balance.
+    // All 3 token deploys pay from that balance via the default fee method.
     const deployBridgedToken = async (
       name: string,
       symbol: string,
@@ -198,13 +198,10 @@ async function deployL2Tokens(usdcBridgeL1: string, wethBridgeL1: string, wbtcBr
       // EthAddress wraps a 20-byte Ethereum address; the Noir type EthAddress
       // serialises to a single field element (20 bytes right-padded to 32 bytes).
       const portalEthAddress = EthAddress.fromString(portalL1Addr);
-      const paymentMethod = buildClaimPayment();
-      const sendOpts: { from: typeof account; fee?: { paymentMethod: ReturnType<typeof buildClaimPayment> } } = { from: account };
-      if (paymentMethod) sendOpts.fee = { paymentMethod };
       const deployed = await TokenContractAny.deployWithOpts(
         { wallet, method: "constructor_with_minter_bridged" },
         paddedName, paddedSymbol, decimals, account, portalEthAddress,
-      ).send(sendOpts);
+      ).send({ from: account });
       return deployed.contract;
     };
 
@@ -249,20 +246,20 @@ export async function wirePortalL2Token(
   const innerCalldata = await castCalldata(["setL2TokenAddress(bytes32)", l2TokenHex]);
 
   console.log(`Scheduling setL2TokenAddress for ${label}Bridge → ${l2TokenHex}`);
-  await castSend([
+  await castSendWithRetry([
     "--rpc-url", L1_RPC_URL, "--private-key", DEPLOYER_PK,
     timelockAddr,
     "schedule(address,uint256,bytes,bytes32,bytes32,uint256)",
-    bridgeAddr, "0", innerCalldata, "0x0", "0x0", TIMELOCK_DELAY_SEC.toString(),
-  ]);
+    bridgeAddr, "0", innerCalldata, "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", TIMELOCK_DELAY_SEC.toString(),
+  ], `${label} schedule`);
 
   if (TIMELOCK_DELAY_SEC === 0) {
     console.log(`Executing setL2TokenAddress for ${label}Bridge immediately (delay=0)`);
-    await castSend([
+    await castSendWithRetry([
       "--rpc-url", L1_RPC_URL, "--private-key", DEPLOYER_PK,
       timelockAddr,
       "execute(address,uint256,bytes,bytes32,bytes32)",
-      bridgeAddr, "0", innerCalldata, "0x0", "0x0",
+      bridgeAddr, "0", innerCalldata, "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   } else {
     console.log(`Mainnet delay = ${TIMELOCK_DELAY_SEC}s. After window, run:`);
