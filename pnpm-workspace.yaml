@@ -3,5 +3,6 @@ packages:
   - 'aggregator'
   - 'cli'
   - 'sdk'
+  - 'examples'
   - 'tools/outbox-proof'
   - 'tools/exporters'
