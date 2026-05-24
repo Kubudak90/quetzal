@@ -3,7 +3,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { classifyAmount, formatAdvisory, resolveTokenDecimals } from "./amount-heuristic.js";
+// Sub-6b Task 2.8: this module now lives in @quetzal/sdk; the CLI test file
+// is kept to preserve the 74/74 CLI test count while exercising the SDK copy.
+import { classifyAmount, formatAdvisory, resolveTokenDecimals } from "@quetzal/sdk/privacy/amount-heuristic";
 
 describe("classifyAmount", () => {
   test("flags 1.0 USDC (1_000_000) as round_unit", () => {

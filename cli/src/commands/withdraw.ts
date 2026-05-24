@@ -4,7 +4,7 @@ import { Fr } from "@aztec/aztec.js/fields";
 import { LiquidityPoolContract } from "../../../tests/integration/generated/LiquidityPool.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
-import { parseField } from "../field.js";
+import { parseField } from "@quetzal/sdk";
 import { readPoolHint, readBucketHint } from "../pool-hint.js";
 
 export function registerWithdraw(program: Command): void {
@@ -27,21 +27,23 @@ export function registerWithdraw(program: Command): void {
       const poolEntry = config.pools[poolId];
       if (!poolEntry) throw new Error(`pool_id ${poolId} not found in config.pools`);
       const poolAddress = poolEntry.address;
-      const ctx = await openCli(config, Number(opts.account));
+      const { client } = await openCli(config, Number(opts.account));
       try {
         const pool = await LiquidityPoolContract.at(
           AztecAddress.fromString(poolAddress),
-          ctx.wallet,
+          client.wallet,
         );
-        const poolHint = await readPoolHint(pool, ctx.account);
-        const bucketHint = await readBucketHint(pool, bucketId, ctx.account);
+        const poolHint = await readPoolHint(pool, client.address);
+        const bucketHint = await readBucketHint(pool, bucketId, client.address);
 
         await pool.methods
           .withdraw(positionNonce, poolHint, bucketHint, new Fr(0n), new Fr(0n))
-          .send({ from: ctx.account });
-        console.log(`position ${positionNonce.toString()} (bucket ${bucketId}) withdrawn; liquidity returned`);
+          .send({ from: client.address });
+        console.log(
+          `position ${positionNonce.toString()} (bucket ${bucketId}) withdrawn; liquidity returned`,
+        );
       } finally {
-        await ctx.stop();
+        await client.stop();
       }
     });
 }

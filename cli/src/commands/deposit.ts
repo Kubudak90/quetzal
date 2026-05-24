@@ -3,9 +3,12 @@ import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { LiquidityPoolContract } from "../../../tests/integration/generated/LiquidityPool.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
-import { randomField } from "../field.js";
+import { randomField } from "@quetzal/sdk";
 import { readPoolHint, readBucketHint, type BucketStateHint } from "../pool-hint.js";
 
+// Sub-2 LP deposit. Stays CLI-local because the bucket-state hint + auto-b math
+// + position nonce generation are LP-specific concerns the SDK doesn't yet
+// model (a future OrdersApi.lp.deposit could lift this; tracked for Sub-7).
 export function registerDeposit(program: Command): void {
   program
     .command("deposit")
@@ -28,14 +31,14 @@ export function registerDeposit(program: Command): void {
       const poolEntry = config.pools[poolId];
       if (!poolEntry) throw new Error(`pool_id ${poolId} not found in config.pools`);
       const poolAddress = poolEntry.address;
-      const ctx = await openCli(config, Number(opts.account));
+      const { client } = await openCli(config, Number(opts.account));
       try {
         const pool = await LiquidityPoolContract.at(
           AztecAddress.fromString(poolAddress),
-          ctx.wallet,
+          client.wallet,
         );
 
-        const bucketHint: BucketStateHint = await readBucketHint(pool, bucketId, ctx.account);
+        const bucketHint: BucketStateHint = await readBucketHint(pool, bucketId, client.address);
 
         let amountB: bigint;
         if (opts["autoB"]) {
@@ -53,22 +56,27 @@ export function registerDeposit(program: Command): void {
           amountB = BigInt(opts.amountB);
         }
 
-        const poolHint = await readPoolHint(pool, ctx.account);
+        const poolHint = await readPoolHint(pool, client.address);
 
         const positionNonce = randomField();
         await pool.methods
           .deposit(
-            bucketId, amountA, amountB,
-            poolHint, bucketHint,
-            randomField(), randomField(), positionNonce,
+            bucketId,
+            amountA,
+            amountB,
+            poolHint,
+            bucketHint,
+            randomField(),
+            randomField(),
+            positionNonce,
           )
-          .send({ from: ctx.account });
+          .send({ from: client.address });
 
         console.log(`liquidity deposited to bucket ${bucketId} (A=${amountA}, B=${amountB})`);
         console.log(`position nonce: 0x${positionNonce.toString(16)}`);
         console.log(`withdraw later with: quetzal withdraw --nonce 0x${positionNonce.toString(16)}`);
       } finally {
-        await ctx.stop();
+        await client.stop();
       }
     });
 }

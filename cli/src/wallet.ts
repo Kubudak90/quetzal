@@ -1,76 +1,51 @@
-import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
-import { OrderbookContract } from "../../tests/integration/generated/Orderbook.js";
-import { LiquidityPoolContract } from "../../tests/integration/generated/LiquidityPool.js";
-import { TokenContract } from "../../tests/integration/generated/Token.js";
+import { QuetzalClient } from "@quetzal/sdk";
 import type { QuetzalConfig } from "./config.js";
 
 export interface CliContext {
-  wallet: EmbeddedWallet;
-  account: AztecAddress;
+  client: QuetzalClient;
   config: QuetzalConfig;
-  stop: () => Promise<void>;
+}
+
+function detectNetwork(nodeUrl: string): "alpha-testnet" | "sandbox" | "mainnet" {
+  if (nodeUrl.includes("testnet")) return "alpha-testnet";
+  if (nodeUrl.includes("localhost") || nodeUrl.includes("127.0.0.1")) return "sandbox";
+  return "mainnet";
 }
 
 /**
- * Connect to the Aztec node from `config`, build an ephemeral wallet, register the
- * local-network test accounts, register the deployed Quetzal contracts, and select
- * account `accountIndex` as the actor.
+ * Establish a QuetzalClient for the CLI process.
  *
- * A fresh PXE syncs contract classes/instances from the node but NOT their artifacts
- * (artifacts are off-chain). Interacting with an already-deployed contract therefore
- * requires registering it explicitly: fetch the on-chain instance via
- * `node.getContract` and pair it with the codegen'd artifact. The two Token contracts
- * are registered too because `submit_order` / `cancel_order` make nested calls into
- * them that the PXE must be able to simulate.
+ * Sub-6b Task 2.8: the CLI no longer constructs an EmbeddedWallet directly;
+ * instead it instantiates the SDK's `QuetzalClient` with a `test-account`
+ * adapter (which spins up the same EmbeddedWallet + pre-funded local network
+ * test accounts the CLI used pre-2.8). Contracts in `quetzal.config.json`
+ * are propagated through so the SDK auto-registers them against the PXE.
  */
 export async function openCli(config: QuetzalConfig, accountIndex: number): Promise<CliContext> {
-  const node = createAztecNodeClient(config.nodeUrl);
-  await waitForNode(node);
-
-  const wallet = await EmbeddedWallet.create(node, {
-    ephemeral: true,
-    pxe: { proverEnabled: false },
+  const network = detectNetwork(config.nodeUrl);
+  const client = await QuetzalClient.connect({
+    network,
+    nodeUrl: config.nodeUrl,
+    account: { type: "test-account", accountIndex },
+    contracts: {
+      orderbook: config.orderbook,
+      tUSDC: config.tUSDC,
+      tETH: config.tETH,
+      tBTC: config.tBTC,
+      pools: config.pools,
+      admin: config.admin,
+      aggregatorRegistry: config.aggregatorRegistry,
+      treasury: config.treasury,
+    },
+    l1: config.l1
+      ? {
+          rpcUrl: config.l1.rpcUrl,
+          makerAddr: process.env.L1_MAKER_ADDR,
+          usdcBridge: config.l1.usdcBridge,
+          wethBridge: config.l1.wethBridge,
+          wbtcBridge: config.l1.wbtcBridge,
+        }
+      : undefined,
   });
-  const accounts = await registerInitialLocalNetworkAccountsInWallet(wallet);
-  const account = accounts[accountIndex];
-  if (!account) {
-    throw new Error(
-      `account index ${accountIndex} out of range — ${accounts.length} test accounts available`,
-    );
-  }
-
-  const contracts: [string, "orderbook" | "pool" | "tUSDC" | "tETH"][] = [
-    [config.orderbook, "orderbook"],
-    [config.tUSDC, "tUSDC"],
-    [config.tETH, "tETH"],
-  ];
-  for (const [addr, label] of contracts) {
-    const instance = await node.getContract(AztecAddress.fromString(addr));
-    if (!instance) {
-      throw new Error(`${label} contract not found on-chain at ${addr} — is the config stale?`);
-    }
-    let artifact;
-    if (label === "orderbook") artifact = OrderbookContract.artifact;
-    else artifact = TokenContract.artifact;
-    await wallet.registerContract(instance, artifact);
-  }
-  // Register all pools from config.pools[]
-  for (const poolEntry of config.pools) {
-    const instance = await node.getContract(AztecAddress.fromString(poolEntry.address));
-    if (!instance) {
-      throw new Error(
-        `pool_id ${poolEntry.pool_id} contract not found on-chain at ${poolEntry.address} — is the config stale?`,
-      );
-    }
-    await wallet.registerContract(instance, LiquidityPoolContract.artifact);
-  }
-
-  const stop = async () => {
-    const s = (wallet as unknown as { stop?: () => Promise<void> }).stop;
-    if (typeof s === "function") await s.call(wallet);
-  };
-  return { wallet, account, config, stop };
+  return { client, config };
 }

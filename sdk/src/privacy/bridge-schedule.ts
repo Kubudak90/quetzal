@@ -1,28 +1,18 @@
-// cli/src/bridge/bridge-schedule.ts
+// sdk/src/privacy/bridge-schedule.ts
 // Sub-6a C3: bridge exit schedule writer/reader.
 //
 // State file: ~/.quetzal/bridge-state.json
 // Tracks scheduled multi-hop exits with status (pending -> submitted -> l1_claimable -> done).
 //
-// Used by bridge exit --split-into N --interval-days D (C3) + bridge tick + status (C4).
+// Lifted from cli/src/bridge/bridge-schedule.ts in Sub-6b Task 2.8 so the SDK
+// can own the C3 bridge state machine without cross-package imports.
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ScheduledExit } from "../types.js";
 
-export type ExitStatus = "pending" | "submitted" | "l1_claimable" | "done";
-
-export interface ScheduledExit {
-  id: string;
-  token: string;
-  amount: string;            // bigint as decimal string
-  l1Recipient: string;
-  submitAfterUnix: number;
-  status: ExitStatus;
-  l2TxHash: string | null;
-  l2EpochAtSubmit: number | null;
-  createdAtUnix: number;
-}
+export type ExitStatus = ScheduledExit["status"];
 
 export interface BridgeState {
   scheduledExits: ScheduledExit[];
@@ -65,13 +55,11 @@ export function buildSplitSchedule(
   const amounts: bigint[] = [];
   let runningSum = 0n;
   for (let i = 0; i < splitInto - 1; i++) {
-    // Deterministic +/- 20% noise: (i * 37) mod 41 yields a 0..40 spread; minus 20 -> -20..+20
     const noisePct = ((i * 37) % 41) - 20;
     const noisy = baseAmount + (baseAmount * BigInt(noisePct)) / 100n;
     amounts.push(noisy);
     runningSum += noisy;
   }
-  // Last entry absorbs rounding error so total is preserved exactly
   amounts.push(total - runningSum);
 
   return amounts.map((amt, idx) => ({

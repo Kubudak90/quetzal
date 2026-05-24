@@ -1,33 +1,6 @@
 import type { Command } from "commander";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { OrderbookContract } from "../../../tests/integration/generated/Orderbook.js";
 import { loadConfig } from "../config.js";
 import { openCli } from "../wallet.js";
-
-interface OrderRow {
-  nonce: bigint;
-  side: boolean;
-  amount_in: bigint;
-  limit_price: bigint;
-  submitted_at_block: bigint;
-}
-
-// `get_orders` returns a Noir BoundedVec<OrderNote, 10>, which the Aztec ABI
-// decoder yields as { storage: OrderNote[], len: bigint }.
-function normalise(result: unknown): OrderRow[] {
-  const bv = result as { storage: unknown[]; len: bigint | number };
-  const len = Number(bv.len);
-  return bv.storage.slice(0, len).map((o) => {
-    const r = o as Record<string, bigint | number | boolean>;
-    return {
-      nonce: BigInt(r.nonce as bigint),
-      side: Boolean(r.side),
-      amount_in: BigInt(r.amount_in as bigint),
-      limit_price: BigInt(r.limit_price as bigint),
-      submitted_at_block: BigInt(r.submitted_at_block as bigint),
-    };
-  });
-}
 
 export function registerOrders(program: Command): void {
   program
@@ -36,17 +9,9 @@ export function registerOrders(program: Command): void {
     .action(async (_opts, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
       const config = loadConfig(opts.config);
-      const ctx = await openCli(config, Number(opts.account));
+      const { client } = await openCli(config, Number(opts.account));
       try {
-        const orderbook = await OrderbookContract.at(
-          AztecAddress.fromString(config.orderbook),
-          ctx.wallet,
-        );
-        const sim = await orderbook.methods
-          .get_orders(ctx.account)
-          .simulate({ from: ctx.account });
-        const rows = normalise((sim as { result: unknown }).result);
-
+        const rows = await client.reads.getOrders();
         if (rows.length === 0) {
           console.log("no resting orders");
           return;
@@ -59,7 +24,7 @@ export function registerOrders(program: Command): void {
           );
         }
       } finally {
-        await ctx.stop();
+        await client.stop();
       }
     });
 }

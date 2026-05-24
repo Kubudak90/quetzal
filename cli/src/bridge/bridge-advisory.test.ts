@@ -3,8 +3,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { isRoundTripRisk, type DepositRecord } from "./bridge-history.js";
-import { buildSplitSchedule } from "./bridge-schedule.js";
+// Sub-6b Task 2.8: modules now live in @quetzal/sdk.
+import { isRoundTripRisk, type DepositRecord } from "@quetzal/sdk/privacy/bridge-history";
+import { buildSplitSchedule } from "@quetzal/sdk/privacy/bridge-schedule";
 
 // Helper to construct a well-typed DepositRecord with minimal fields.
 const makeRecord = (amount: bigint): DepositRecord => ({

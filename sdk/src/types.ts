@@ -4,14 +4,44 @@ export type OrderSide = "buy" | "sell";
 
 export type NetworkName = "alpha-testnet" | "sandbox" | "mainnet";
 
+export interface QuetzalPoolEntry {
+  pool_id: number;
+  token_a: string;
+  token_b: string;
+  address: string;
+}
+
+export interface QuetzalContracts {
+  orderbook: string;
+  tUSDC: string;
+  tETH: string;
+  tBTC?: string;
+  pools: QuetzalPoolEntry[];
+  admin?: string;
+  aggregatorRegistry?: string;
+  treasury?: string;
+}
+
+export interface NetworkConfigL1 {
+  rpcUrl?: string;
+  privateKey?: string;
+  makerAddr?: string;
+  usdcBridge?: string;
+  wethBridge?: string;
+  wbtcBridge?: string;
+}
+
 export interface NetworkConfig {
   name: NetworkName;
   nodeUrl: string;
-  l1?: {
-    rpcUrl: string;
-    privateKey?: string;
-    makerAddr?: string;
-  };
+  l1?: NetworkConfigL1;
+  /**
+   * Optional Quetzal protocol deployment metadata.  When present, the SDK
+   * APIs (OrdersApi, BridgeApi, ReadsApi, AggregatorApi) can resolve
+   * contract addresses + token aliases without the caller passing them on
+   * every method call.
+   */
+  contracts?: QuetzalContracts;
 }
 
 export interface ScheduledExit {
@@ -38,6 +68,11 @@ export interface PlaceOrderResult {
   nonce: bigint;
   orderNonce: bigint;
   epoch: number;
+}
+
+export interface CurrentEpoch {
+  epoch_id: number;
+  closes_at_block: number;
 }
 
 export interface BulkPlaceOrderInput extends PlaceOrderInput {

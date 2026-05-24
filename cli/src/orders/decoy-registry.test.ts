@@ -3,13 +3,14 @@ import { strict as assert } from "node:assert";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
+// Sub-6b Task 2.8: lifted to @quetzal/sdk.
 import {
   loadDecoyRegistry,
   saveDecoyRegistry,
   recordDecoyBatch,
   isDecoy,
   listDecoys,
-} from "./decoy-registry.js";
+} from "@quetzal/sdk/privacy/decoy-registry";
 
 // Isolate HOME so tests don't pollute the real ~/.quetzal/
 const origHome = process.env.HOME;

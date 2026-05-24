@@ -1,4 +1,5 @@
 // sdk/src/orders.ts
+import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
 import type { QuetzalClient } from "./client.js";
 import type {
@@ -6,11 +7,16 @@ import type {
   PlaceOrderResult,
   BulkPlaceOrderInput,
   BulkPlaceOrderResult,
+  CurrentEpoch,
 } from "./types.js";
-import { OrderError } from "./errors.js";
+import { OrderError, ConfigError } from "./errors.js";
+import { randomField } from "./util/field.js";
+import { recordDecoyBatch, isDecoy } from "./privacy/decoy-registry.js";
 
 export const MAX_ORDERS_PER_BULK = 5;
 export const MAX_DECOYS = MAX_ORDERS_PER_BULK - 1;
+
+// ─── Validators ───────────────────────────────────────────────────────────────
 
 export function validatePlaceOrderInput(input: PlaceOrderInput): void {
   if (input.amount <= 0n) {
@@ -34,31 +40,310 @@ export function validateBulkInput(input: BulkPlaceOrderInput): void {
   }
 }
 
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function requireContracts(client: QuetzalClient): NonNullable<typeof client.config.contracts> {
+  const c = client.config.contracts;
+  if (!c) {
+    throw new ConfigError(
+      "MISSING_ENV",
+      "QuetzalClient.config.contracts not set; pass `contracts` to QuetzalClient.connect()",
+    );
+  }
+  return c;
+}
+
+interface PathTriple {
+  path_len: 2 | 3;
+  pathFields: [Fr, Fr, Fr];
+}
+
+function resolvePath(client: QuetzalClient, aliases: string[]): PathTriple {
+  const contracts = requireContracts(client);
+  const map: Record<string, string | undefined> = {
+    tUSDC: contracts.tUSDC,
+    tETH: contracts.tETH,
+    tBTC: contracts.tBTC,
+  };
+  if (aliases.length < 2 || aliases.length > 3) {
+    throw new OrderError("INVALID_PATH", `path_len must be 2 or 3, got ${aliases.length}`);
+  }
+  const resolved = aliases.map((a) => {
+    const addr = map[a];
+    if (!addr) throw new OrderError("INVALID_PATH", `unknown token alias: ${a}`);
+    return addr;
+  });
+  for (let i = 0; i < resolved.length; i++) {
+    for (let j = i + 1; j < resolved.length; j++) {
+      if (resolved[i] === resolved[j]) {
+        throw new OrderError("INVALID_PATH", `path[${i}] == path[${j}]: ${resolved[i]}`);
+      }
+    }
+  }
+  const path: [Fr, Fr, Fr] = [
+    Fr.fromString(resolved[0]!),
+    Fr.fromString(resolved[1]!),
+    resolved[2] ? Fr.fromString(resolved[2]) : Fr.ZERO,
+  ];
+  return { path_len: aliases.length as 2 | 3, pathFields: path };
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 export class OrdersApi {
   constructor(private client: QuetzalClient) {}
 
   async placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
     validatePlaceOrderInput(input);
-    throw new OrderError("UNKNOWN", "placeOrder not yet implemented (Task 2.8 lifts CLI body)");
+    const contracts = requireContracts(this.client);
+    const { path_len, pathFields } = resolvePath(this.client, input.path);
+
+    const realSide = input.side === "sell"; // false = bid (tUSDC), true = ask (tETH)
+    const orderNonce = randomField();
+    const txNonce = randomField();
+
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    // Cast: codegen bindings may lag the Sub-4 7-arg signature
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tx = await (orderbook.methods.submit_order as any)(
+      realSide,
+      input.amount,
+      input.limitPrice,
+      txNonce,
+      orderNonce,
+      BigInt(path_len),
+      pathFields,
+    ).send({ from: this.client.address });
+    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
+      | { txHash?: { toString: () => string }; blockNumber?: number }
+      | undefined;
+
+    let epoch = 0;
+    try {
+      const epochSim = await orderbook.methods.get_epoch().simulate({ from: this.client.address });
+      epoch = Number((epochSim as { result: { epoch_id: bigint } }).result.epoch_id);
+    } catch {
+      /* best-effort */
+    }
+
+    return {
+      txHash: receipt?.txHash?.toString() ?? "",
+      nonce: txNonce,
+      orderNonce,
+      epoch,
+    };
   }
 
   async placeOrderBulk(input: BulkPlaceOrderInput): Promise<BulkPlaceOrderResult> {
     validateBulkInput(input);
-    throw new OrderError("UNKNOWN", "placeOrderBulk not yet implemented (Task 2.8 lifts CLI body)");
+    const contracts = requireContracts(this.client);
+    const { path_len, pathFields } = resolvePath(this.client, input.path);
+
+    const realSide = input.side === "sell";
+    const decoyCount = input.decoyCount;
+    const SLOTS = MAX_ORDERS_PER_BULK;
+    const sides: boolean[] = new Array(SLOTS).fill(false);
+    const amounts: bigint[] = new Array(SLOTS).fill(0n);
+    const limits: bigint[] = new Array(SLOTS).fill(0n);
+    const nonces: bigint[] = new Array(SLOTS).fill(0n);
+    const orderNonces: bigint[] = new Array(SLOTS).fill(0n);
+    const pathLens: number[] = new Array(SLOTS).fill(0);
+    const pathArrays: [Fr, Fr, Fr][] = new Array(SLOTS).fill([Fr.ZERO, Fr.ZERO, Fr.ZERO]);
+
+    // Slot 0: real order
+    sides[0] = realSide;
+    amounts[0] = input.amount;
+    limits[0] = input.limitPrice;
+    nonces[0] = randomField();
+    orderNonces[0] = randomField();
+    pathLens[0] = path_len;
+    pathArrays[0] = pathFields;
+
+    // Decoys: same amount, unfillable limit price
+    // sell: u128::MAX (no one buys at MAX); buy: 1 wei (pool sqrt_p >> 1).
+    // Must be > 0 — the orderbook helper asserts limit_price > 0.
+    const UNFILLABLE_HIGH = (1n << 128n) - 1n;
+    const UNFILLABLE_LOW = 1n;
+    for (let i = 1; i <= decoyCount; i++) {
+      sides[i] = realSide;
+      amounts[i] = input.amount;
+      limits[i] = realSide ? UNFILLABLE_HIGH : UNFILLABLE_LOW;
+      nonces[i] = randomField();
+      orderNonces[i] = randomField();
+      pathLens[i] = path_len;
+      pathArrays[i] = pathFields;
+    }
+
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    const bulkOrderbook = orderbook as unknown as {
+      methods: {
+        submit_order_bulk: (
+          side: boolean[],
+          amount_in: bigint[],
+          limit_price: bigint[],
+          nonce: bigint[],
+          order_nonce: bigint[],
+          path_len: number[],
+          path: [Fr, Fr, Fr][],
+        ) => { send: (args: { from: AztecAddress }) => { wait?: () => Promise<unknown> } };
+      };
+    };
+    const tx = bulkOrderbook.methods
+      .submit_order_bulk(sides, amounts, limits, nonces, orderNonces, pathLens, pathArrays)
+      .send({ from: this.client.address });
+    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
+      | { txHash?: { toString: () => string } }
+      | undefined;
+
+    // Record nonces in maker-local decoy registry
+    const entries: Array<{ nonce: string; isDecoy: boolean }> = [
+      { nonce: `0x${orderNonces[0]!.toString(16)}`, isDecoy: false },
+    ];
+    for (let i = 1; i <= decoyCount; i++) {
+      entries.push({ nonce: `0x${orderNonces[i]!.toString(16)}`, isDecoy: true });
+    }
+    recordDecoyBatch(this.client.address.toString(), entries);
+
+    let epoch = 0;
+    try {
+      const epochSim = await orderbook.methods.get_epoch().simulate({ from: this.client.address });
+      epoch = Number((epochSim as { result: { epoch_id: bigint } }).result.epoch_id);
+    } catch {
+      /* best-effort */
+    }
+
+    return {
+      txHash: receipt?.txHash?.toString() ?? "",
+      realNonce: orderNonces[0]!,
+      decoyNonces: orderNonces.slice(1, decoyCount + 1),
+      epoch,
+    };
   }
 
   async claimFill(opts: {
     nonce: bigint;
     epoch: number;
     filterDecoys?: boolean;
-  }): Promise<{ txHash: string }> {
-    void opts;
-    throw new OrderError("UNKNOWN", "claimFill not yet implemented (Task 2.8 lifts CLI body)");
+  }): Promise<{ txHash: string; skipped?: true; reason?: string }> {
+    const contracts = requireContracts(this.client);
+    const filterDecoys = opts.filterDecoys !== false;
+    const nonceHex = new Fr(opts.nonce).toString();
+    if (filterDecoys && isDecoy(this.client.address.toString(), nonceHex)) {
+      return { txHash: "", skipped: true, reason: "known decoy (amount_out=0)" };
+    }
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    // Plain Sub-1 claim_fill(nonce, epoch). Hop-fill (Sub-4) claims are intentionally
+    // left to the CLI's claim.ts for now — see CLI command for snapshot-based proof
+    // construction; SDK ergonomics for that path are tracked as a follow-up.
+    const orderbookDyn = orderbook as unknown as {
+      methods: {
+        claim_fill: (
+          nonce: bigint,
+          epoch: number,
+        ) => { send: (args: { from: AztecAddress }) => { wait?: () => Promise<unknown> } };
+      };
+    };
+    const tx = orderbookDyn.methods
+      .claim_fill(opts.nonce, opts.epoch)
+      .send({ from: this.client.address });
+    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
+      | { txHash?: { toString: () => string } }
+      | undefined;
+    return { txHash: receipt?.txHash?.toString() ?? "" };
   }
 
   async cancelOrder(opts: { nonce: bigint }): Promise<{ txHash: string }> {
-    void opts;
-    throw new OrderError("UNKNOWN", "cancelOrder not yet implemented (Task 2.8 lifts CLI body)");
+    const contracts = requireContracts(this.client);
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    // authwit nonce MUST be 0n: cancel_order calls transfer_public_to_private
+    // with from=orderbook.address; self-call requires nonce==0 (authorize_once).
+    const tx = await orderbook.methods
+      .cancel_order(opts.nonce, 0n)
+      .send({ from: this.client.address });
+    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
+      | { txHash?: { toString: () => string } }
+      | undefined;
+    return { txHash: receipt?.txHash?.toString() ?? "" };
+  }
+
+  /**
+   * Plain epoch advance (no clearing proof).  For the verified path that
+   * applies a ZK clearing proof, use `closeEpochVerified`.
+   */
+  async closeEpoch(_opts: { epoch?: number } = {}): Promise<CurrentEpoch> {
+    const contracts = requireContracts(this.client);
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    await orderbook.methods.close_epoch().send({ from: this.client.address });
+
+    const sim = await orderbook.methods.get_epoch().simulate({ from: this.client.address });
+    const epoch = (sim as { result: { epoch_id: bigint; closes_at_block: bigint } }).result;
+    return {
+      epoch_id: Number(epoch.epoch_id),
+      closes_at_block: Number(epoch.closes_at_block),
+    };
+  }
+
+  /**
+   * Verified close-epoch: submits a recursive ZK clearing proof + applies clearing.
+   * Inputs are the parsed proof / vk / public-inputs payloads (callers normalize
+   * file reads in their own layer).
+   */
+  async closeEpochVerified(opts: {
+    proofFields: Fr[];
+    vkFields: Fr[];
+    publicInputs: unknown;
+  }): Promise<CurrentEpoch> {
+    const contracts = requireContracts(this.client);
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    const orderbookDyn = orderbook as unknown as {
+      methods: {
+        close_epoch_and_clear_verified: (
+          publicInputs: unknown,
+          proof: Fr[],
+          vk: Fr[],
+        ) => { send: (args: { from: AztecAddress }) => { wait?: () => Promise<unknown> } };
+      };
+    };
+    await orderbookDyn.methods
+      .close_epoch_and_clear_verified(opts.publicInputs, opts.proofFields, opts.vkFields)
+      .send({ from: this.client.address });
+
+    const sim = await orderbook.methods.get_epoch().simulate({ from: this.client.address });
+    const epoch = (sim as { result: { epoch_id: bigint; closes_at_block: bigint } }).result;
+    return {
+      epoch_id: Number(epoch.epoch_id),
+      closes_at_block: Number(epoch.closes_at_block),
+    };
   }
 }
 

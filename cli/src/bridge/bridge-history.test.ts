@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { isRoundTripRisk, type DepositRecord } from "./bridge-history.js";
+// Sub-6b Task 2.8: lifted to @quetzal/sdk.
+import { isRoundTripRisk, type DepositRecord } from "@quetzal/sdk/privacy/bridge-history";
 
 const rec = (amount: bigint): DepositRecord => ({
   blockNumber: 100n,
