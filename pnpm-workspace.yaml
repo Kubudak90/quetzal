@@ -2,5 +2,6 @@ packages:
   - 'tests/**'
   - 'aggregator'
   - 'cli'
+  - 'sdk'
   - 'tools/outbox-proof'
   - 'tools/exporters'
