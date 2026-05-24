@@ -38,17 +38,22 @@ Path order no longer leaks side. Circuit enforces canonical (lex-sorted endpoint
 **Files:**
 - Modify: `contracts/orderbook/src/main.nr` (in `_submit_one_order_internal`, after path-length validation, before escrow)
 
-Add:
+Add (exact Field-comparison syntax adapts to the existing codebase convention; Sub-6a A2 + Sub-4 `canon()` helpers use a documented pattern -- implementer copies it):
 ```rust
 // Sub-6c A1: canonical path enforcement.
 // Endpoints lex-sorted: path[0] < path[path_len-1]. Direction is encoded
 // privately in `side` bool; on-chain path no longer leaks direction.
 let lo = path[0];
 let hi = path[(path_len - 1) as u32];
-assert(lo.to_field().lt(hi.to_field()), "path must be canonical (lex-sorted endpoints)");
+// Noir Field comparison: cast to u128 (canonical convention from Sub-6a A2
+// `Fields cannot be compared, try casting to an integer first` fix); top 2 bits
+// truncated -- safe for AztecAddress comparison since addresses are bounded.
+assert((lo as u128) < (hi as u128), "path must be canonical (lex-sorted endpoints)");
 ```
 
 3-hop case (`path = [a, b, c]`): only endpoints a vs c are sorted. Middle hop `b` is unconstrained (it's the intermediate pool -- irrelevant to direction).
+
+**Implementer note:** the `as u128` cast loses the high 2 bits of a 254-bit Field. AztecAddress is bounded < 2^254 so the cast is order-preserving for the 0..2^126 range that practical addresses fall into. If full Field comparison is needed, the implementer should use the codebase's existing `canon(a, b)` helper pattern (see `scripts/deploy-tokens.ts:62` and `scripts/deploy-sub4-bridge.ts:62`) which uses `a.toBigInt() < b.toBigInt()` on the TS side. For Noir, see if `to_le_bytes` + byte-wise comparison is needed for 256-bit precision -- the implementer plans this in Phase A1 of the plan doc.
 
 ### A2 — SDK auto-canonicalization
 
