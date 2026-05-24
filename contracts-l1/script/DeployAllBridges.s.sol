@@ -74,9 +74,13 @@ contract DeployAllBridges is Script {
         uint256 maxTvl
     ) internal returns (address) {
         TokenBridge impl = new TokenBridge();
+        // Aztec's L1 Inbox checks that the L2 actor's version matches the
+        // current rollupVersion. Read it from env (caller fetches via
+        // `node.getNodeInfo().rollupVersion` and exports L2_VERSION).
+        uint256 l2Version = vm.envOr("L2_VERSION", uint256(1));
         bytes memory init = abi.encodeWithSelector(
             TokenBridge.initialize.selector,
-            token, bytes32(0), uint256(1), inbox, outbox,
+            token, bytes32(0), l2Version, inbox, outbox,
             governanceTl, emergencyTl, maxTvl
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);

@@ -18,9 +18,15 @@ importers:
         specifier: 4.2.1
         version: 4.2.1(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
+      '@aztec/stdlib':
+        specifier: 4.2.1
+        version: 4.2.1(typescript@5.9.3)
       tsx:
         specifier: ^4.19.0
         version: 4.21.1
+      viem:
+        specifier: ^2.21.0
+        version: 2.50.4(typescript@5.9.3)(zod@3.25.76)
 
   aggregator:
     dependencies:
