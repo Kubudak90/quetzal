@@ -44,3 +44,8 @@ wallet_data_*/
 
 # Sub-6a testnet runner state (contains alice keys + nonces; runtime-only. Do NOT commit.)
 testnet-sub6-state.json
+
+# Sub-6b Phase 1 — testnet credentials + runner state
+.env.testnet
+testnet-sub6b-*-state.json
+docs/superpowers/runs/.scratch-*
