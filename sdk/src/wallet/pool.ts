@@ -84,6 +84,16 @@ export class WalletPool {
     return new WalletPool(children);
   }
 
+  /**
+   * @internal — test-only constructor. Allows unit tests to inject stubbed
+   * children without going through QuetzalClient.connect (which requires a
+   * live node). Not part of the public API; do not use in production.
+   */
+  static __forTesting__(stubs: Array<{ client: unknown; index: number; pendingTx: number }>): WalletPool {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return new WalletPool(stubs as any);
+  }
+
   get size(): number {
     return this.children.length;
   }
@@ -102,7 +112,7 @@ export class WalletPool {
       const child = this.children[idx];
       if (child.pendingTx < PXE_TAGGING_CAP) {
         this.cursor = (idx + 1) % this.children.length;
-        return child.client;
+        return this.wrapClient(child);
       }
     }
     throw new Error(
@@ -118,10 +128,54 @@ export class WalletPool {
   acquireFor(tag: string): QuetzalClient {
     const hashHex = createHash("sha256").update(tag).digest("hex").slice(0, 16);
     const idx = Number(BigInt("0x" + hashHex) % BigInt(this.children.length));
-    return this.children[idx].client;
+    return this.wrapClient(this.children[idx]);
   }
 
   async stop(): Promise<void> {
     await Promise.all(this.children.map((c) => c.client.stop()));
+  }
+
+  /**
+   * Wrap a child's QuetzalClient with a Proxy that intercepts tx-emitting
+   * calls on `orders.*` + `bridge.*` to increment/decrement `pendingTx`.
+   *
+   * Decrement happens on promise resolve (success OR failure). The simplification
+   * vs. tracking actual on-chain finalization is acceptable: PXE's tagging-window
+   * release happens at finalization regardless of the SDK's counter, and the
+   * counter's job is just to gate `next()` selection.
+   */
+  private wrapClient(child: PoolChild): QuetzalClient {
+    const tagged = new Set(["placeOrder", "placeOrderBulk", "claimFill", "cancelOrder", "claim", "exit"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return new Proxy(child.client as any, {
+      get(target, prop) {
+        if (prop === "orders" || prop === "bridge") {
+          const sub = (target as Record<string, unknown>)[prop as string];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return new Proxy(sub as any, {
+            get(subTarget, method) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const fn = (subTarget as any)[method];
+              const methodStr = String(method);
+              if (typeof fn !== "function" || !tagged.has(methodStr)) {
+                return typeof fn === "function" ? fn.bind(subTarget) : fn;
+              }
+              return async (...args: unknown[]) => {
+                child.pendingTx++;
+                try {
+                  const result = await fn.apply(subTarget, args);
+                  child.pendingTx = Math.max(0, child.pendingTx - 1);
+                  return result;
+                } catch (e) {
+                  child.pendingTx = Math.max(0, child.pendingTx - 1);
+                  throw e;
+                }
+              };
+            },
+          });
+        }
+        return Reflect.get(target, prop);
+      },
+    }) as QuetzalClient;
   }
 }

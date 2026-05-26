@@ -75,3 +75,46 @@ describe("PXE_TAGGING_CAP", () => {
     assert.equal(PXE_TAGGING_CAP, 18);
   });
 });
+
+describe("WalletPool — saturation semantics", () => {
+  test("saturated wallet is skipped by next()", () => {
+    const a = makeStubChild(0);
+    const b = makeStubChild(1);
+    a.pendingTx = PXE_TAGGING_CAP; // saturate
+    const pool = WalletPool.__forTesting__([a, b]);
+    const picked = pool.next();
+    assert.equal(picked.address.toString(), b.client.address.toString());
+  });
+
+  test("WalletPoolExhausted thrown when all saturated", () => {
+    const a = makeStubChild(0);
+    const b = makeStubChild(1);
+    a.pendingTx = PXE_TAGGING_CAP;
+    b.pendingTx = PXE_TAGGING_CAP;
+    const pool = WalletPool.__forTesting__([a, b]);
+    assert.throws(() => pool.next(), /WalletPoolExhausted/);
+  });
+
+  test("acquireFor tag is stable across calls", () => {
+    const a = makeStubChild(0);
+    const b = makeStubChild(1);
+    const pool = WalletPool.__forTesting__([a, b]);
+    const first = pool.acquireFor("session-xyz");
+    const second = pool.acquireFor("session-xyz");
+    assert.equal(first.address.toString(), second.address.toString());
+  });
+});
+
+// Test stub: minimal PoolChild satisfying the structural shape used by next/acquireFor.
+function makeStubChild(index: number): { client: { address: { toString: () => string }; stop: () => Promise<void>; orders: object; bridge: object }; index: number; pendingTx: number } {
+  return {
+    client: {
+      address: { toString: () => `0xstub${index}` },
+      stop: async () => {},
+      orders: {},
+      bridge: {},
+    },
+    index,
+    pendingTx: 0,
+  };
+}
