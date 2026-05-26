@@ -105,6 +105,43 @@ describe("WalletPool — saturation semantics", () => {
   });
 });
 
+describe("WalletPool — round-robin behavior", () => {
+  test("next() round-robins across children when all under cap", () => {
+    const a = makeStubChild(0);
+    const b = makeStubChild(1);
+    const c = makeStubChild(2);
+    const pool = WalletPool.__forTesting__([a, b, c]);
+    const first = pool.next();
+    const second = pool.next();
+    const third = pool.next();
+    const fourth = pool.next();
+    assert.equal(first.address.toString(), a.client.address.toString());
+    assert.equal(second.address.toString(), b.client.address.toString());
+    assert.equal(third.address.toString(), c.client.address.toString());
+    assert.equal(fourth.address.toString(), a.client.address.toString()); // wraps around
+  });
+});
+
+describe("WalletPool — size + addresses", () => {
+  test("size reflects children count", () => {
+    const pool = WalletPool.__forTesting__([makeStubChild(0), makeStubChild(1), makeStubChild(2)]);
+    assert.equal(pool.size, 3);
+  });
+
+  test("addresses lists all child addresses", () => {
+    const pool = WalletPool.__forTesting__([makeStubChild(0), makeStubChild(1)]);
+    assert.deepEqual(pool.addresses, ["0xstub0", "0xstub1"]);
+  });
+});
+
+describe("deriveChildSecret — format", () => {
+  test("returns 0x-prefixed hex32 (66 chars)", () => {
+    const s = deriveChildSecret("0x" + "ff".repeat(32), 5);
+    assert.ok(s.startsWith("0x"));
+    assert.equal(s.length, 66);
+  });
+});
+
 // Test stub: minimal PoolChild satisfying the structural shape used by next/acquireFor.
 function makeStubChild(index: number): { client: { address: { toString: () => string }; stop: () => Promise<void>; orders: object; bridge: object }; index: number; pendingTx: number } {
   return {
