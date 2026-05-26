@@ -131,6 +131,33 @@ export class WalletPool {
     return this.wrapClient(this.children[idx]);
   }
 
+  /**
+   * Aggregate `getOrders()` across all children. Each entry tags the wallet
+   * that owns those orders so the caller can re-issue actions against the
+   * correct child via `acquireFor(wallet)`.
+   */
+  async getAllOrders(): Promise<Array<{ wallet: string; orders: unknown[] }>> {
+    const results = await Promise.all(
+      this.children.map(async (c) => ({
+        wallet: c.client.address.toString(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        orders: await ((c.client as any).reads.getOrders() as Promise<unknown[]>),
+      })),
+    );
+    return results;
+  }
+
+  /**
+   * Sum the public balance of `token` across all child wallets.
+   */
+  async getAggregatedBalance(token: string): Promise<bigint> {
+    const balances = await Promise.all(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.children.map((c) => ((c.client as any).reads.getBalance(token) as Promise<bigint>)),
+    );
+    return balances.reduce((acc, b) => acc + b, 0n);
+  }
+
   async stop(): Promise<void> {
     await Promise.all(this.children.map((c) => c.client.stop()));
   }
