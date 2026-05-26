@@ -58,6 +58,8 @@ export { SchnorrSecretAdapter } from "./wallet/schnorr.js";
 export { ExternalPxeAdapter } from "./wallet/pxe.js";
 export { AztecWalletAdapter } from "./wallet/aztec-wallet.js";
 export { TestAccountAdapter } from "./wallet/test-account.js";
+export { WalletPool, PXE_TAGGING_CAP, deriveChildSecret } from "./wallet/pool.js";
+export type { WalletPoolOptions } from "./wallet/pool.js";
 
 // Utility surface (re-exported so CLI / front-end can drop the local copies)
 export { randomField, parseField } from "./util/field.js";
