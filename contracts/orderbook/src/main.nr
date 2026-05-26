@@ -433,6 +433,20 @@ pub contract Orderbook {
             assert(path[2] == 0 as Field, "path[2] must be 0 sentinel for 1-hop");
         }
 
+        // Sub-6c A1: canonical path enforcement.
+        // Endpoints lex-sorted: path[0] < path[path_len-1]. Direction is
+        // encoded only in the private `side` bool; on-chain path no longer
+        // leaks direction. Middle hop (3-hop case) unconstrained -- it's the
+        // intermediate pool, irrelevant to direction.
+        // Uses (as u128) comparison per codebase convention (main.nr:352,
+        // 383, 597, 611); top 2 bits of Field truncated, order-preserving
+        // for the practical AztecAddress range.
+        let last_hop_field: Field = if path_len == 2 { path[1] } else { path[2] };
+        assert(
+            (path[0] as u128) < (last_hop_field as u128),
+            "path must be canonical (lex-sorted endpoints)",
+        );
+
         let maker = self.msg_sender();
 
         // Sub-4 (B2): validate each hop's pool exists in the registry.
