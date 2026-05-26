@@ -129,9 +129,14 @@ export class OrdersApi {
   async placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
     validatePlaceOrderInput(input);
     const contracts = requireContracts(this.client);
-    const { path_len, pathFields } = resolvePath(this.client, input.path);
+    // Sub-6c A3: canonicalize path BEFORE alias resolution so the side
+    // semantics carry through. canonicalizePath operates on the alias
+    // strings (compared as BigInt) and returns the canonical {side, path};
+    // resolvePath then turns them into Fr fields for the circuit.
+    const canonical = canonicalizePath(input.side, input.path);
+    const { path_len, pathFields } = resolvePath(this.client, canonical.path);
 
-    const realSide = input.side === "sell"; // false = bid (tUSDC), true = ask (tETH)
+    const realSide = canonical.side === "sell"; // false = bid, true = ask
     const orderNonce = randomField();
     const txNonce = randomField();
 
@@ -175,9 +180,13 @@ export class OrdersApi {
   async placeOrderBulk(input: BulkPlaceOrderInput): Promise<BulkPlaceOrderResult> {
     validateBulkInput(input);
     const contracts = requireContracts(this.client);
-    const { path_len, pathFields } = resolvePath(this.client, input.path);
+    // Sub-6c A3: same canonicalization treatment as placeOrder. The real
+    // order (slot 0) inherits the canonical side; decoys (slots 1..K-1) use
+    // unfillable limit-price so direction is irrelevant for them.
+    const canonical = canonicalizePath(input.side, input.path);
+    const { path_len, pathFields } = resolvePath(this.client, canonical.path);
 
-    const realSide = input.side === "sell";
+    const realSide = canonical.side === "sell";
     const decoyCount = input.decoyCount;
     const SLOTS = MAX_ORDERS_PER_BULK;
     const sides: boolean[] = new Array(SLOTS).fill(false);
