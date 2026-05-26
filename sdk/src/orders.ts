@@ -8,6 +8,7 @@ import type {
   BulkPlaceOrderInput,
   BulkPlaceOrderResult,
   CurrentEpoch,
+  OrderSide,
 } from "./types.js";
 import { OrderError, ConfigError } from "./errors.js";
 import { randomField } from "./util/field.js";
@@ -38,6 +39,38 @@ export function validateBulkInput(input: BulkPlaceOrderInput): void {
       `decoyCount must be in [0, ${MAX_DECOYS}]; got ${input.decoyCount}`,
     );
   }
+}
+
+// ─── Sub-6c A2: canonical path normalization ──────────────────────────────────
+//
+// Path-order leaks side: a sell from USDC->ETH used to store [USDC, ETH];
+// a buy of USDC from ETH used to store [ETH, USDC]. On-chain observers could
+// derive direction from the redundant path encoding. Sub-6c A1 Noir circuit
+// asserts path[0] < path[path_len-1] (canonical); A2 (this) transparently
+// canonicalizes SDK callers' paths + flips the `side` bool so the semantic
+// intent is preserved while the on-chain path no longer leaks direction.
+//
+// Post-canonical side semantics:
+//   side="buy" (false) -> pay path[0] (canonical low), receive path[last] (high)
+//   side="sell" (true) -> pay path[last] (high), receive path[0] (low)
+
+export function canonicalizePath(
+  side: OrderSide,
+  path: string[],
+): { side: OrderSide; path: string[] } {
+  if (path.length < 2 || path.length > 3) {
+    throw new OrderError("INVALID_PATH", `path length must be 2 or 3; got ${path.length}`);
+  }
+  const lo = BigInt(path[0]);
+  const hi = BigInt(path[path.length - 1]);
+  if (lo === hi) {
+    throw new OrderError("INVALID_PATH", "path endpoints must differ");
+  }
+  if (lo < hi) return { side, path };
+  return {
+    side: side === "buy" ? "sell" : "buy",
+    path: [...path].reverse(),
+  };
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
