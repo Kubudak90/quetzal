@@ -71,6 +71,8 @@ The following threats were considered during design. Each lists the mitigation i
 | **T-13** | Bulk-submit gate-budget exhaustion | `MAX_ORDERS_PER_BULK = 5` hard cap (downsized from 9 after A5 2026-05-23 measurement showed K=9 = 581K gates, K=5 = 312K gates). Per-tx gas pricing on Aztec L2 provides natural rate limiting |
 | **T-14** | Decoy-registry corruption attack | Accepted limitation — registry is intentionally local + unprivileged; attacker needs maker-machine filesystem access (at which point private keys are also exposed). Cancel path still requires the legitimate signing key; fund loss is not possible |
 | **T-15** | Bridge round-trip advisory bypass via amount fuzzing | Maker uses `--split-into N` (multi-hop split) + amount perturbation (`--ack-round` prompt) + non-default `--recipient` address. Advisory is warn-only; `--ack-delay` disables the heuristic if the maker's use case requires the deposit pattern |
+| **T-16** | Trade-direction path-order leak | Noir circuit asserts `path[0] < path[path_len-1]` (Sub-6c A1); SDK auto-canonicalizes (A2). Direction is encoded only in private `side` bool; path no longer leaks. Status: closed |
+| **T-17** | WalletPool exhaustion | Maker's N child wallets all at PXE_TAGGING_CAP=18 saturate the pool; `next()` throws `WalletPoolExhausted`. Frontend must catch + show "wait for finalization OR grow pool" message. Status: accepted limitation; architectural, not a vulnerability |
 
 ### T-13 detail — Bulk-submit gate-budget exhaustion
 
@@ -141,3 +143,27 @@ The audit firm should produce:
 - Medium findings: triaged; may be accepted with explicit rationale in this doc.
 - Low + Informational: tracked in GitHub issues; addressed during normal sprint.
 - Findings remediation is its own project (Sub-5d candidate); Sub-5c does NOT block on the audit report.
+
+### T-16 detail -- Trade-direction path-order leak
+
+submit_order's `path: [Field; 3]` field-array was previously interpreted in submission direction: a sell from USDC to ETH stored `[USDC, ETH]`; a buy of USDC from ETH stored `[ETH, USDC]`. On-chain observers reading the public submit tx would see this redundantly encode the direction that the private `side` bool was supposed to hide.
+
+Sub-6c A1 circuit enforces `path[0] < path[path_len-1]` (lex-sorted endpoints) via the codebase convention `(field as u128) < (field as u128)`. Sub-6c A2 SDK transparently canonicalizes: if user-input path is reversed, SDK flips the `side` bool + reverses the array. Post-canonical: `side=buy` means maker pays canonical-low + receives canonical-high; `side=sell` is the inverse.
+
+Side itself remains private (encrypted in the OrderNote). The on-chain escrow call to `Token.transfer_private_to_public(...)` still reveals which token the maker spent (the input asset) -- this is the residual #2-leak, deferred to Sub-6d as "full direction obscure" via per-token shielded escrow pool.
+
+- **Impact:** Medium. Pre-fix: observer could correlate path direction with side, learn maker's direction even for private orders.
+- **Likelihood:** High under adversarial monitoring.
+- **Mitigation:** A1 + A2 + A3 doc.
+- **Status:** Closed (path-order leak fully fixed; residual escrow-side leak deferred).
+- **Notes:** Backward-compat: existing SDK callers see no behavior change; canonicalization is transparent.
+
+### T-17 detail -- WalletPool exhaustion
+
+Aztec PXE caps ~20 unfinalised private submits per wallet. Sub-6c B1-B3 `WalletPool` distributes across N wallets to give frontend ~N*18 capacity (PXE_TAGGING_CAP=18 with safety buffer), but a maker that opens many orders in rapid succession can saturate all N. `WalletPool.next()` throws `WalletPoolExhausted` with a helpful message.
+
+- **Impact:** Low. UX degradation, not security. Maker either waits ~6-10s for testnet finalization OR grows pool by adding more child wallets (requires fresh fee-juice drip per child).
+- **Likelihood:** Medium for heavy power-user / market-maker patterns.
+- **Mitigation:** Document in `docs/wallet-pool.md`; default pool size N=3 conservative; max N=20 configurable.
+- **Status:** Accepted architectural limitation.
+- **Notes:** Aztec 4.2.1 specific. Future Aztec releases may relax the per-wallet tagging cap; re-evaluate on each upgrade.
