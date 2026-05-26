@@ -105,6 +105,16 @@ interface PlaceOrderInput {
 
 `claimFill` skips decoy nonces by default (`filterDecoys` defaults to `true`). Skipped claims return `{ txHash: "", skipped: true, reason: "known decoy (amount_out=0)" }`.
 
+#### Side semantics (post-canonical)
+
+As of Sub-6c, the SDK canonicalizes the `path` array before submitting on-chain. The Noir circuit asserts `path[0] < path[path_len-1]` (lex-sorted endpoints); the SDK auto-reverses + flips `side` when a caller passes a reversed path. This means the on-chain path no longer leaks trade direction.
+
+Post-canonical side semantics:
+- `side: "buy"` → maker pays `path[0]` (canonical low), receives `path[path_len-1]` (canonical high)
+- `side: "sell"` → maker pays `path[path_len-1]` (canonical high), receives `path[0]` (canonical low)
+
+Backward compat: pass `side` + `path` as you always have; the SDK does the right thing. If you want the canonicalized output directly, use `canonicalizePath(side, path)`.
+
 ### Bridge
 
 | Method | Returns |

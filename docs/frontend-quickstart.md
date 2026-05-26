@@ -177,6 +177,8 @@ const bulk = await client.orders.placeOrderBulk({
 // bulk.decoyNonces[] — dummy nonces; claimFill skips these automatically
 ```
 
+> **Note on side + path:** The SDK auto-canonicalizes `path` (lex-sorts endpoints) and flips `side` to preserve semantic intent. This is a privacy mitigation (Sub-6c) -- on-chain observers can't derive direction from path order. Your code stays the same; you don't need to think about it. See [`sdk/README.md`](../sdk/README.md#side-semantics-post-canonical) for the full side-semantics table.
+
 ---
 
 ## §4 Claim a fill

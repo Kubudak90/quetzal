@@ -10,6 +10,7 @@ export {
   MAX_DECOYS,
   validatePlaceOrderInput,
   validateBulkInput,
+  canonicalizePath,
 } from "./orders.js";
 
 export { BridgeApi, validateBridgeExitInput } from "./bridge.js";
