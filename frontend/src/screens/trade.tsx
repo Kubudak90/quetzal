@@ -5,6 +5,8 @@
 
 import { useState, useMemo } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
 import {
   Eyebrow, Hairline, Dot, Badge, PillButton, Field, Tooltip, Segmented, FeatherWatermark,
   EpochCountdown,
@@ -41,14 +43,7 @@ interface TradeOrder {
   status: TradeOrderStatus;
 }
 
-const SEED_ORDERS: TradeOrder[] = [
-  { nonce: "0x9c4f…a012", side: "sell", amount: "1.0734", amountToken: "ETH",  limit: "3,220.50", limitToken: "USDC", epoch: 41827, status: "filled" },
-  { nonce: "0x9c4f…a013", side: "buy",  amount: "5,073.20", amountToken: "USDC", limit: "3,180.00", limitToken: "USDC", epoch: 41828, status: "open"   },
-  { nonce: "0x9c4f…a014", side: "buy",  amount: "0.0427",  amountToken: "ETH",  limit: "3,205.75", limitToken: "USDC", epoch: 41828, status: "open"   },
-  { nonce: "0x9c4f…a015", side: "sell", amount: "2.1500",  amountToken: "ETH",  limit: "3,250.00", limitToken: "USDC", epoch: 41828, status: "decoy"  },
-  { nonce: "0x9c4f…a016", side: "sell", amount: "0.8917",  amountToken: "ETH",  limit: "3,235.40", limitToken: "USDC", epoch: 41828, status: "decoy"  },
-  { nonce: "0x9c4f…a008", side: "buy",  amount: "847.12",  amountToken: "USDC", limit: "3,150.00", limitToken: "USDC", epoch: 41825, status: "cancelled" },
-];
+// SEED_ORDERS removed — replaced by useQuery(["orders", sessionId]) via client.reads.getOrders()
 
 interface TradeFill {
   epoch: number;
@@ -60,13 +55,38 @@ interface TradeFill {
   tx: string;
 }
 
-const SEED_FILLS: TradeFill[] = [
-  { epoch: 41827, side: "sell", amount: "1.0734",  amountToken: "ETH",  price: "3,220.50", priceToken: "USDC", tx: "0x4a2b…f81e" },
-  { epoch: 41826, side: "buy",  amount: "2,840.00",amountToken: "USDC", price: "3,217.22", priceToken: "USDC", tx: "0x8f1c…0a4d" },
-  { epoch: 41825, side: "sell", amount: "0.4127",  amountToken: "ETH",  price: "3,210.00", priceToken: "USDC", tx: "0xb7e2…3c1f" },
-  { epoch: 41824, side: "buy",  amount: "1,500.00",amountToken: "USDC", price: "3,205.80", priceToken: "USDC", tx: "0x2d44…91ab" },
-  { epoch: 41823, side: "sell", amount: "0.8923",  amountToken: "ETH",  price: "3,212.45", priceToken: "USDC", tx: "0x6e1f…7b2c" },
-];
+// SEED_FILLS removed — recentFills is now derived client-side from orders with status==="filled"
+// (SDK has no separate history.getRecentFills; deferred to a future Sub-7 history API)
+
+// ─── SDK input helpers ────────────────────────────────────────────────────────
+
+/** Parse a display amount string (e.g. "1,234.56") to bigint with 6 decimals. */
+function parseAmount(s: string, decimals: number = 6): bigint {
+  const clean = s.replace(/,/g, "").trim();
+  if (!clean || clean === "." ) return 0n;
+  const [whole = "0", frac = ""] = clean.split(".");
+  const fracPadded = frac.padEnd(decimals, "0").slice(0, decimals);
+  try {
+    return BigInt(whole + fracPadded);
+  } catch {
+    return 0n;
+  }
+}
+
+/** "USDC/ETH" → ["tUSDC", "tETH"], "ETH/BTC" → ["tETH", "tBTC"] */
+function pairToPath(pair: string): string[] {
+  return pair.split("/").map(tok => "t" + tok);
+}
+
+/** Format a raw bigint amount (6-decimal fixed-point) to display string. */
+function formatAmount(raw: bigint, decimals: number = 6): string {
+  const s = raw.toString().padStart(decimals + 1, "0");
+  const whole = s.slice(0, s.length - decimals) || "0";
+  const frac = s.slice(s.length - decimals).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole;
+}
+
+// ─── Amount advisory ─────────────────────────────────────────────────────────
 
 interface AmountAdvisory {
   classification: "natural" | "round_unit" | "round_cent";
@@ -84,6 +104,15 @@ function classifyAmount(raw: string): AmountAdvisory {
 }
 
 export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
+  // ── SDK client + React Query ───────────────────────────────────────────────
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
+  const qc = useQueryClient();
+
+  // Guard: App-level redirect handles the no-session case; this is belt-and-suspenders.
+  if (!client) return null;
+
+  // ── Form state ─────────────────────────────────────────────────────────────
   const [pair, setPair] = useState("USDC/ETH");
   const [side, setSide] = useState<"buy" | "sell">("sell");
   const [amount, setAmount] = useState("");
@@ -91,54 +120,143 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
   const [limit, setLimit] = useState("3,218.50");
   const [decoys, setDecoys] = useState(DEFAULT_DECOYS);
   const [ack, setAck] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [orders, setOrders] = useState<TradeOrder[]>(SEED_ORDERS);
 
   const advisory = useMemo(() => classifyAmount(amount), [amount]);
   const canSubmit = !!amount && parseFloat(amount.replace(/,/g, "")) > 0 &&
     (advisory.classification === "natural" || ack);
 
-  function handleSubmit() {
-    // TODO(sdk): call client.orders.placeOrder({ pair, side, amount, limit, decoys })
-    setSubmitting(true);
-    setTimeout(() => {
-      const baseNonce = "0x9c4f…b" + String(Math.floor(Math.random() * 999)).padStart(3, "0");
-      const newOrders: TradeOrder[] = [{
-        nonce: baseNonce, side, amount, amountToken,
-        limit, limitToken: "USDC",
-        epoch: 41828, status: "open",
-      }];
-      for (let i = 0; i < decoys; i++) {
-        newOrders.push({
-          nonce: "0x9c4f…b" + String(Math.floor(Math.random() * 999)).padStart(3, "0"),
-          side, amount: (parseFloat(amount.replace(/,/g, "")) * (0.92 + Math.random() * 0.16)).toFixed(4),
-          amountToken, limit, limitToken: "USDC", epoch: 41828, status: "decoy",
+  // ── Orders query ───────────────────────────────────────────────────────────
+  // getOrders() returns resting orders (all "open" from the contract's perspective).
+  // The SDK's OrderViewModel has: nonce: bigint, side: boolean, amount_in: bigint,
+  // limit_price: bigint, submitted_at_block: bigint — no status field.
+  const ordersQ = useQuery({
+    queryKey: ["orders", session?.sessionId],
+    queryFn: () => client.reads.getOrders(),
+    enabled: !!client,
+  });
+
+  // Map SDK OrderViewModel → TradeOrder for display
+  const orders: TradeOrder[] = (ordersQ.data ?? []).map(o => ({
+    nonce: "0x" + o.nonce.toString(16),
+    side: o.side ? "sell" : "buy",
+    amount: formatAmount(o.amount_in),
+    amountToken: pair.split("/")[o.side ? 1 : 0] ?? "—",
+    limit: formatAmount(o.limit_price),
+    limitToken: "USDC",
+    epoch: Number(o.submitted_at_block),
+    status: "open" as const,
+  }));
+
+  // Recent fills: client-side filter on orders with status === "filled".
+  // All resting orders from the contract are "open"; filled orders are
+  // removed from the note tree after claiming. Until a dedicated Sub-7
+  // history API ships, recentFills will be empty (orders are claim-and-gone).
+  const recentFills: TradeFill[] = orders
+    .filter(o => o.status === "filled")
+    .slice(0, 20)
+    .map(o => ({
+      epoch: o.epoch,
+      side: o.side,
+      amount: o.amount,
+      amountToken: o.amountToken,
+      price: o.limit,
+      priceToken: o.limitToken,
+      tx: o.nonce,
+    }));
+
+  // ── Place order mutation ───────────────────────────────────────────────────
+  const placeOrderMut = useMutation({
+    mutationFn: async (input: {
+      side: "buy" | "sell";
+      amount: bigint;
+      limitPrice: bigint;
+      path: string[];
+      decoys: number;
+    }) => {
+      if (input.decoys === 0) {
+        return await client.orders.placeOrder({
+          side: input.side,
+          amount: input.amount,
+          limitPrice: input.limitPrice,
+          path: input.path,
         });
       }
-      setOrders([...newOrders, ...orders]);
-      setAmount("");
-      setSubmitting(false);
-      pushToast({
-        kind: "success",
-        text: `Order submitted with ${decoys} decoys`,
+      return await client.orders.placeOrderBulk({
+        side: input.side,
+        amount: input.amount,
+        limitPrice: input.limitPrice,
+        path: input.path,
+        decoyCount: input.decoys,
       });
-    }, 900);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["orders", session?.sessionId] });
+      setAmount("");
+      pushToast({ kind: "ok", text: "Order placed." });
+    },
+    onError: (e) => {
+      pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Order failed" });
+    },
+  });
+
+  // ── Claim fill mutation ────────────────────────────────────────────────────
+  const claimFillMut = useMutation({
+    mutationFn: async (input: { nonce: bigint; epoch: number }) => {
+      return await client.orders.claimFill({
+        nonce: input.nonce,
+        epoch: input.epoch,
+        filterDecoys: true,
+      });
+    },
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ["orders", session?.sessionId] });
+      pushToast({ kind: "ok", text: `Fill claimed (nonce 0x${vars.nonce.toString(16).slice(0, 8)}…)` });
+    },
+    onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Claim failed" }),
+  });
+
+  // ── Cancel mutation ────────────────────────────────────────────────────────
+  const cancelMut = useMutation({
+    mutationFn: async (input: { nonce: bigint }) => {
+      return await client.orders.cancelOrder({ nonce: input.nonce });
+    },
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ["orders", session?.sessionId] });
+      pushToast({ kind: "ok", text: `Order cancelled (nonce 0x${vars.nonce.toString(16).slice(0, 8)}…)` });
+    },
+    onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Cancel failed" }),
+  });
+
+  // ── Form submit ────────────────────────────────────────────────────────────
+  function handleSubmit() {
+    const amountBigInt = parseAmount(amount);
+    const limitBigInt = parseAmount(limit);
+    const path = pairToPath(pair);
+    placeOrderMut.mutate({
+      side,
+      amount: amountBigInt,
+      limitPrice: limitBigInt,
+      path,
+      decoys,
+    });
+  }
+
+  // ── Row action handlers ────────────────────────────────────────────────────
+  function handleClaim(o: { nonce?: string | number; amount: string | number; amountToken: string }) {
+    const nonceStr = String(o.nonce ?? "0x0");
+    // epoch is stored in the .epoch field of TradeOrder (mapped from submitted_at_block)
+    const orderData = orders.find(x => x.nonce === nonceStr);
+    claimFillMut.mutate({ nonce: BigInt(nonceStr), epoch: orderData?.epoch ?? 0 });
+  }
+  function handleCancel(o: { nonce?: string | number }) {
+    cancelMut.mutate({ nonce: BigInt(String(o.nonce ?? "0x0")) });
   }
 
   function applySuggested() {
     if (advisory.suggested) setAmount(advisory.suggested);
   }
-  function handleClaim(o: { nonce?: string | number; amount: string | number; amountToken: string }) {
-    // TODO(sdk): call client.orders.claimFill({ nonce: o.nonce })
-    setOrders(orders.map(x => x.nonce === o.nonce ? { ...x, status: "cancelled" as const } : x));
-    pushToast({ kind: "success", text: `Fill claimed: ${o.amount} ${o.amountToken}` });
-  }
-  function handleCancel(o: { nonce?: string | number }) {
-    // TODO(sdk): call client.orders.cancelOrder({ nonce: o.nonce })
-    setOrders(orders.map(x => x.nonce === o.nonce ? { ...x, status: "cancelled" as const } : x));
-    pushToast({ kind: "info", text: `Order cancelled: ${o.nonce}` });
-  }
 
+  // ── Display counts ─────────────────────────────────────────────────────────
   const openCount = orders.filter(o => o.status === "open").length;
   const decoyCount = orders.filter(o => o.status === "decoy").length;
   const filledCount = orders.filter(o => o.status === "filled").length;
@@ -244,11 +362,11 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
               variant="primary"
               size="lg"
               fullWidth
-              disabled={!canSubmit || submitting}
+              disabled={!canSubmit || placeOrderMut.isPending}
               onClick={handleSubmit}
-              rightIcon={submitting ? undefined : "arrow-right"}
+              rightIcon={placeOrderMut.isPending ? undefined : "arrow-right"}
             >
-              {submitting ? "Sealing & submitting…" : `Submit ${side === "buy" ? "buy" : "sell"} · 1 real + ${decoys} decoy${decoys === 1 ? "" : "s"}`}
+              {placeOrderMut.isPending ? "Sealing & submitting…" : `Submit ${side === "buy" ? "buy" : "sell"} · 1 real + ${decoys} decoy${decoys === 1 ? "" : "s"}`}
             </PillButton>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
@@ -316,18 +434,26 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
             <span className="q-eyebrow">Status</span>
             <span className="q-eyebrow" style={{ textAlign: "right" }}>Actions</span>
           </div>
-          {orders.length === 0 ? (
+          {ordersQ.isLoading && (
+            <div style={{ padding: 16, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg-muted)", textAlign: "center" }}>
+              Loading orders…
+            </div>
+          )}
+          {ordersQ.error && (
+            <div style={{ padding: 16, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--aztec-vermillion)", textAlign: "center" }}>
+              Failed to load orders: {ordersQ.error instanceof Error ? ordersQ.error.message : "unknown error"}
+            </div>
+          )}
+          {!ordersQ.isLoading && !ordersQ.error && orders.length === 0 && (
             <div style={{ padding: 60, textAlign: "center", position: "relative", overflow: "hidden" }}>
               <FeatherWatermark size={180} opacity={0.08} style={{ position: "absolute", top: -20, right: -20 }} />
               <div style={{ fontFamily: "var(--font-serif)", fontSize: 16, color: "var(--fg-muted)" }}>No open orders.</div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-subtle)", marginTop: 6 }}>Submit your first order to see it here.</div>
             </div>
-          ) : (
-            orders.slice(0, 8).map(o => (
-              // TODO(sdk): replace SEED_ORDERS with client.orders.getOrders() subscription
-              <OrderRow key={o.nonce} order={o} onClaim={handleClaim} onCancel={handleCancel} />
-            ))
           )}
+          {orders.length > 0 && orders.slice(0, 8).map(o => (
+            <OrderRow key={o.nonce} order={o} onClaim={handleClaim} onCancel={handleCancel} />
+          ))}
         </div>
 
         {/* Recent fills */}
@@ -340,8 +466,18 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
             <a href="#" onClick={(e) => e.preventDefault()} style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)", textDecoration: "underline" }}>View full history →</a>
           </div>
           <Hairline />
-          {/* TODO(sdk): replace SEED_FILLS with client.history.getRecentFills() */}
-          {SEED_FILLS.map((f, i) => <FillRow key={i} fill={f} />)}
+          {/* recentFills: client-side filter of orders with status==="filled" (last 20).
+              SDK has no separate history.getRecentFills; deferred to Sub-7 history API.
+              Resting orders returned by getOrders() are all "open"; filled orders are
+              removed from the note tree after claim, so this will show entries only if
+              the local optimistic state is ever updated with "filled" status. */}
+          {recentFills.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center" }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg-muted)" }}>No recent fills.</div>
+            </div>
+          ) : (
+            recentFills.map((f, i) => <FillRow key={i} fill={f} />)
+          )}
         </div>
       </div>
     </div>
