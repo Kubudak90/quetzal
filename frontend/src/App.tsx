@@ -77,8 +77,22 @@ export default function App() {
     if (window.lucide) window.lucide.createIcons();
   });
 
+  // Sub-6c frontend: theme switcher (parchment <-> dark/malachite)
+  const [theme, setTheme] = useState<"parchment" | "dark">(() => {
+    if (typeof window === "undefined") return "parchment";
+    const saved = window.localStorage.getItem("quetzal-theme");
+    return saved === "dark" ? "dark" : "parchment";
+  });
+  const toggleTheme = () => {
+    setTheme((t) => {
+      const next = t === "dark" ? "parchment" : "dark";
+      window.localStorage.setItem("quetzal-theme", next);
+      return next;
+    });
+  };
+
   // Default theme = parchment (no class). Persona + motifs are CSS hooks.
-  const rootClasses = "persona-renaissance motifs-subtle";
+  const rootClasses = `${theme === "dark" ? "theme-dark" : ""} persona-renaissance motifs-subtle`.trim();
   useEffect(() => {
     document.body.className = rootClasses;
   }, [rootClasses]);
@@ -91,7 +105,7 @@ export default function App() {
       height: "100vh", display: "flex", flexDirection: "column",
       background: "var(--bg)", color: "var(--fg)",
     }}>
-      <TopBar route={route} setRoute={setRoute} secondsLeft={secondsLeft} />
+      <TopBar route={route} setRoute={setRoute} secondsLeft={secondsLeft} theme={theme} onToggleTheme={toggleTheme} />
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {route !== "landing" && route !== "setup" && (
@@ -118,8 +132,10 @@ interface TopBarProps {
   route: Route;
   setRoute: (r: Route) => void;
   secondsLeft: number;
+  theme: "parchment" | "dark";
+  onToggleTheme: () => void;
 }
-function TopBar({ route, setRoute, secondsLeft }: TopBarProps) {
+function TopBar({ route, setRoute, secondsLeft, theme, onToggleTheme }: TopBarProps) {
   const showEpoch = route !== "landing" && route !== "setup";
   return (
     <header style={{
@@ -156,6 +172,22 @@ function TopBar({ route, setRoute, secondsLeft }: TopBarProps) {
               {String(Math.floor(secondsLeft / 60)).padStart(2, "0")}:{String(secondsLeft % 60).padStart(2, "0")}
             </span>
           </div>
+        )}
+        {route !== "landing" && route !== "setup" && (
+          <button
+            onClick={onToggleTheme}
+            title={theme === "dark" ? "Switch to Parchment" : "Switch to Malachite"}
+            aria-label="Toggle theme"
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 32, height: 32, border: "1px solid var(--hairline-strong)",
+              borderRadius: 999, background: "transparent",
+              color: "var(--fg)", cursor: "pointer",
+              transition: "all 120ms var(--ease-out)",
+            }}
+          >
+            <i data-lucide={theme === "dark" ? "sun" : "moon"} style={{ width: 14, height: 14, strokeWidth: 1.5 } as CSSProperties}></i>
+          </button>
         )}
         {route !== "landing" && route !== "setup" && (
           <div style={{
