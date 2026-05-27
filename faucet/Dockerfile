@@ -112,8 +112,16 @@ RUN corepack enable pnpm
 # in case the `pnpm rebuild better-sqlite3` below has to fall back to
 # compiling the binding from source (matching node versions should make this
 # a no-op, but we pay the ~80MB once to avoid runtime failures on first req).
-RUN apt-get update \
+# @aztec/bb.js's prebuilt nodejs_module.node was compiled against GLIBCXX_3.4.32
+# (gcc 13+ toolchain). Bookworm's libstdc++6 ships GLIBCXX up to 3.4.30, so the
+# native module fails to dlopen at runtime. We pull libstdc++6 from Debian
+# trixie (which has GCC 13.3 / GLIBCXX 3.4.33+) without switching the base image.
+RUN echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list.d/trixie.list \
+    && printf 'Package: *\nPin: release n=trixie\nPin-Priority: 100\n' > /etc/apt/preferences.d/trixie \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends -t trixie libstdc++6 \
     && apt-get install -y --no-install-recommends wget ca-certificates python3 make g++ \
+    && rm /etc/apt/sources.list.d/trixie.list /etc/apt/preferences.d/trixie \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
