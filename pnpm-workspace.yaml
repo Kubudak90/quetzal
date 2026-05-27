@@ -4,5 +4,6 @@ packages:
   - 'cli'
   - 'sdk'
   - 'examples'
+  - 'frontend'
   - 'tools/outbox-proof'
   - 'tools/exporters'

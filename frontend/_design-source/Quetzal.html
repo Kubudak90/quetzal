@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quetzal — Design Canvas</title>
+
+  <link rel="stylesheet" href="aztec-tokens.css" />
+  <link rel="stylesheet" href="quetzal-styles.css" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <style>
+    body { background: #f0eee9; }
+    .canvas-intro {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 1000;
+      background: #1A1400; color: #F2EEE1;
+      padding: 14px 22px; border-radius: 999px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+      display: flex; align-items: center; gap: 16px;
+      font-family: 'Geist', system-ui, sans-serif;
+      pointer-events: auto;
+    }
+    .canvas-intro a {
+      color: #D4FF28; text-decoration: none;
+      font-family: 'Geist Mono', monospace; font-size: 12px;
+      padding: 6px 12px; border-radius: 999px;
+      border: 1px solid rgba(212,255,40,0.4);
+      transition: background 120ms;
+    }
+    .canvas-intro a:hover { background: rgba(212,255,40,0.1); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="browser-window.jsx"></script>
+  <script type="text/babel" src="atoms.jsx"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    /* A browser-framed iframe artboard that points at the prototype */
+    function PrototypeFrame({ route, theme = "parchment", url, width = 1280, height = 760 }) {
+      const themeQ = theme === "dark" ? "?theme=dark" : "?theme=parchment";
+      const hash = route ? `#${route}` : "";
+      const src = `Quetzal Prototype.html${themeQ}${hash}`;
+      const display = url || `quetzal.app/${route === "landing" || !route ? "" : route}`;
+      return (
+        <ChromeWindow
+          tabs={[{ title: "Quetzal — Private DEX on Aztec" }]}
+          activeIndex={0}
+          url={display}
+          width={width}
+          height={height}
+        >
+          <iframe
+            src={src}
+            style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+            title={`Quetzal · ${route} · ${theme}`}
+          />
+        </ChromeWindow>
+      );
+    }
+
+    /* A small inline-html artboard used for the variation explorations */
+    function StaticArtboard({ children, width, height, padding = 0 }) {
+      return (
+        <div style={{
+          width, height, background: "var(--bg, #F2EEE1)",
+          fontFamily: "var(--font-body, system-ui)", color: "var(--fg, #1A1400)",
+          padding, overflow: "hidden", position: "relative",
+        }}>
+          {children}
+        </div>
+      );
+    }
+
+    function Intro() {
+      return (
+        <div className="canvas-intro">
+          <span style={{ fontSize: 13 }}>
+            <strong style={{ fontFamily: 'Martel, serif', fontWeight: 300, fontSize: 16, letterSpacing: '-0.02em' }}>
+              Quet<em style={{ fontFamily: 'EB Garamond, serif', fontStyle: 'italic', fontWeight: 400 }}>zal</em>
+            </strong>
+            <span style={{ opacity: 0.6, marginLeft: 8 }}>· design canvas</span>
+          </span>
+          <a href="Quetzal Prototype.html" target="_blank">Open prototype →</a>
+        </div>
+      );
+    }
+
+    function Canvas() {
+      return (
+        <>
+          <Intro />
+          <DesignCanvas>
+
+            {/* ===================================================
+                SECTION 1: STYLE DIRECTIONS — A/B comparison
+                =================================================== */}
+            <DCSection
+              id="directions"
+              title="Two visual directions"
+              subtitle="Same prototype, two grounds. Pick one — every other variation builds on top of the choice you make here.">
+
+              <DCArtboard id="dir-parch" label="A · Parchment (Aztec system)" width={1280} height={760}>
+                <PrototypeFrame route="trade" theme="parchment" />
+              </DCArtboard>
+
+              <DCArtboard id="dir-dark" label="B · Malachite (deep tone)" width={1280} height={760}>
+                <PrototypeFrame route="trade" theme="dark" />
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 2: THE 7 ROUTES (interactive prototype)
+                =================================================== */}
+            <DCSection
+              id="routes"
+              title="All 7 routes · interactive"
+              subtitle="Each frame is a live, scrollable, clickable view of the prototype. Click ↗ on any artboard to focus.">
+
+              <DCArtboard id="r-landing" label="01 · Landing" width={1280} height={760}>
+                <PrototypeFrame route="landing" theme="parchment" url="quetzal.app" />
+              </DCArtboard>
+
+              <DCArtboard id="r-setup" label="02 · First-launch setup" width={1280} height={760}>
+                <PrototypeFrame route="setup" theme="parchment" url="quetzal.app/setup" />
+              </DCArtboard>
+
+              <DCArtboard id="r-trade" label="03 · Trade (order placement)" width={1280} height={760}>
+                <PrototypeFrame route="trade" theme="parchment" url="quetzal.app/trade" />
+              </DCArtboard>
+
+              <DCArtboard id="r-bridge" label="04 · Bridge · L1 ↔ L2" width={1280} height={760}>
+                <PrototypeFrame route="bridge" theme="parchment" url="quetzal.app/bridge" />
+              </DCArtboard>
+
+              <DCArtboard id="r-wallet" label="05 · Wallet pool" width={1280} height={760}>
+                <PrototypeFrame route="wallet" theme="parchment" url="quetzal.app/wallet" />
+              </DCArtboard>
+
+              <DCArtboard id="r-history" label="06 · History · with decoys" width={1280} height={760}>
+                <PrototypeFrame route="history" theme="parchment" url="quetzal.app/history" />
+              </DCArtboard>
+
+              <DCArtboard id="r-settings" label="07 · Settings" width={1280} height={760}>
+                <PrototypeFrame route="settings" theme="parchment" url="quetzal.app/settings" />
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 3: DECOY VISUALIZATION — signature interaction
+                =================================================== */}
+            <DCSection
+              id="decoys"
+              title="Decoy submission · the signature interaction"
+              subtitle="Three takes on the anonymity-set visualization. The form is shipped (left); the others are alternative renderings to consider.">
+
+              <DCArtboard id="dec-slots" label="Shipped · slotted set" width={520} height={520}>
+                <StaticArtboard width={520} height={520} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <div>
+                      <Eyebrow>Anonymity set</Eyebrow>
+                      <h3 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 300, letterSpacing: "-0.02em", marginTop: 6 }}>
+                        1 real <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>+ 3 decoys</em>
+                      </h3>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+                      {[0,1,2,3,4].map(i => {
+                        const isReal = i === 0;
+                        const isActive = i <= 3;
+                        return (
+                          <div key={i} style={{
+                            position: "relative", height: 80, borderRadius: 8,
+                            border: `1px solid ${isReal ? "var(--aztec-ink)" : (isActive ? "var(--q-decoy)" : "var(--hairline)")}`,
+                            background: isReal ? "var(--aztec-ink)" : (isActive ? "rgba(255,45,244,0.06)" : "transparent"),
+                            opacity: isActive ? 1 : 0.4, overflow: "hidden",
+                          }}>
+                            {!isReal && isActive && <div className="shimmer-orchid" style={{ position: "absolute", inset: 0 }} />}
+                            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                              <Dot kind={isReal ? "filled" : (isActive ? "decoy" : "pending")} size={10} />
+                              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase",
+                                            color: isReal ? "var(--aztec-parchment)" : (isActive ? "var(--q-decoy)" : "var(--fg-subtle)") }}>
+                                {isReal ? "real" : "decoy"}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.5 }}>
+                      Each slot is one order submitted to the epoch. From outside, all five look identical — only you know which one is real.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="dec-ring" label="Alt · ring constellation" width={520} height={520}>
+                <StaticArtboard width={520} height={520} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <Eyebrow>Anonymity set · ring view</Eyebrow>
+                    <div style={{ position: "relative", width: "100%", aspectRatio: "1", maxHeight: 320, margin: "0 auto" }}>
+                      <svg viewBox="0 0 200 200" style={{ width: "100%", height: "100%" }}>
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="1" strokeDasharray="2 3" />
+                        <circle cx="100" cy="100" r="60" fill="none" stroke="rgba(0,0,0,0.06)" strokeWidth="1" strokeDasharray="2 3" />
+                        {/* dots arranged on outer ring */}
+                        {[
+                          { angle:  20, real: false },
+                          { angle:  92, real: true },
+                          { angle: 164, real: false },
+                          { angle: 236, real: false },
+                          { angle: 308, real: false },
+                        ].map((p, i) => {
+                          const rad = (p.angle * Math.PI) / 180;
+                          const x = 100 + Math.cos(rad) * 85;
+                          const y = 100 + Math.sin(rad) * 85;
+                          return (
+                            <g key={i}>
+                              {p.real ? (
+                                <>
+                                  <circle cx={x} cy={y} r="9" fill="var(--aztec-ink)" />
+                                  <text x={x} y={y+18} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="7" fill="var(--fg)">YOU</text>
+                                </>
+                              ) : (
+                                <circle cx={x} cy={y} r="9" fill="var(--q-decoy)" opacity="0.7" />
+                              )}
+                            </g>
+                          );
+                        })}
+                        <text x="100" y="98" textAnchor="middle" fontFamily="var(--font-serif)" fontStyle="italic" fontSize="14" fill="var(--fg-muted)">epoch 41828</text>
+                        <text x="100" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" letterSpacing="0.06em" fill="var(--fg-muted)">5 ORDERS</text>
+                      </svg>
+                    </div>
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.5, textAlign: "center" }}>
+                      Plays up the "hidden in a crowd" metaphor. Higher charm, slightly less informational.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="dec-feather" label="Alt · feather stack" width={520} height={520}>
+                <StaticArtboard width={520} height={520} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <Eyebrow>Anonymity set · feather stack</Eyebrow>
+                    <div style={{
+                      flex: 1, minHeight: 280,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      gap: 4, padding: 16,
+                    }}>
+                      {[0, 1, 2, 3, 4].map(i => {
+                        const isReal = i === 0;
+                        const isActive = i <= 3;
+                        return (
+                          <div key={i} style={{
+                            display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                            opacity: isActive ? 1 : 0.25,
+                            color: isReal ? "var(--aztec-ink)" : "var(--q-decoy)",
+                            transform: `translateY(${isActive ? 0 : 8}px)`,
+                            transition: "all 200ms var(--ease-out)",
+                          }}>
+                            <FeatherGlyph size={68} strokeWidth={isReal ? 2 : 1.2} />
+                            <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", color: isReal ? "var(--aztec-ink)" : (isActive ? "var(--q-decoy)" : "var(--fg-subtle)") }}>
+                              {isReal ? "real" : `decoy ${i}`}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.5, textAlign: "center" }}>
+                      Quetzal-native motif. Most charm, least information density.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 4: ORDER FORM LAYOUTS
+                =================================================== */}
+            <DCSection
+              id="order-form"
+              title="Order form · 3 layouts"
+              subtitle="Split (shipped), stacked single-column, and single-pane with privacy in a side-drawer.">
+
+              <DCArtboard id="of-split" label="A · Split (shipped)" width={1280} height={760}>
+                <PrototypeFrame route="trade" theme="parchment" />
+              </DCArtboard>
+
+              <DCArtboard id="of-stacked" label="B · Stacked · single column" width={520} height={1200}>
+                <StaticArtboard width={520} height={1200} padding={28}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <div>
+                      <Eyebrow>Place order</Eyebrow>
+                      <h3 style={{ fontFamily: "var(--font-display)", fontSize: 30, fontWeight: 300, letterSpacing: "-0.03em", marginTop: 8 }}>
+                        Sell <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>0.5</em> ETH
+                      </h3>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Badge tone="private" shimmer>sealed</Badge>
+                      <Badge>epoch 41828</Badge>
+                      <Badge>1 real + 3 decoys</Badge>
+                    </div>
+                    {[
+                      ["PAIR", "USDC / ETH", "1 ETH = 3,217.84 USDC"],
+                      ["SIDE", "Sell", "auto-canonicalized"],
+                      ["AMOUNT", "0.5073 ETH", "≈ $1,633 USD"],
+                      ["LIMIT", "3,218.50 USDC", "pool √p ± 0.02%"],
+                      ["DECOYS", "3 / 4", "anonymity set = 5"],
+                    ].map(([k, v, hint]) => (
+                      <div key={k} style={{ padding: "16px 0", borderBottom: "1px solid var(--hairline)" }}>
+                        <Eyebrow>{k}</Eyebrow>
+                        <div style={{ fontFamily: "var(--font-mono)", fontSize: 18, color: "var(--fg)", marginTop: 4 }}>{v}</div>
+                        <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>{hint}</div>
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 8 }}>
+                      <PillButton size="lg" variant="primary" fullWidth rightIcon="arrow-right">
+                        Submit sealed order
+                      </PillButton>
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="of-drawer" label="C · Single-pane + privacy drawer" width={1100} height={760}>
+                <StaticArtboard width={1100} height={760}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", height: "100%" }}>
+                    <div style={{ padding: 32, display: "flex", flexDirection: "column", gap: 18 }}>
+                      <Eyebrow>Place order · epoch 41828</Eyebrow>
+                      <h3 style={{ fontFamily: "var(--font-display)", fontSize: 32, fontWeight: 300, letterSpacing: "-0.03em" }}>
+                        Single-pane <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic" }}>compose</em>
+                      </h3>
+                      <div className="q-card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                        <Segmented value="sell" fullWidth size="lg" onChange={() => {}} options={[
+                          { id: "buy",  label: "Buy",  activeBg: "#0d9876", activeFg: "#fff" },
+                          { id: "sell", label: "Sell", activeBg: "var(--aztec-vermillion)", activeFg: "var(--aztec-parchment)" },
+                        ]} />
+                        <Field label="Amount" mono value="0.5073" suffix="ETH" />
+                        <Field label="Limit" mono value="3,218.50" suffix="USDC" />
+                      </div>
+                      <PillButton size="lg" variant="primary" rightIcon="arrow-right" fullWidth>
+                        Submit · 1 real + 3 decoys
+                      </PillButton>
+                    </div>
+                    <div style={{
+                      background: "var(--bg-alt)", borderLeft: "1px solid var(--hairline)",
+                      padding: 24, display: "flex", flexDirection: "column", gap: 16,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <i data-lucide="shield" style={{ width: 14, height: 14, color: "var(--priv)", strokeWidth: 1.5 }}></i>
+                        <Eyebrow>Privacy drawer</Eyebrow>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 4 }}>
+                        {[0,1,2,3,4].map(i => (
+                          <div key={i} style={{
+                            aspectRatio: "1", borderRadius: 4,
+                            background: i === 0 ? "var(--aztec-ink)" : (i <= 3 ? "rgba(255,45,244,0.15)" : "transparent"),
+                            border: `1px solid ${i === 0 ? "var(--aztec-ink)" : (i <= 3 ? "var(--q-decoy)" : "var(--hairline)")}`,
+                            opacity: i <= 3 ? 1 : 0.4,
+                          }} />
+                        ))}
+                      </div>
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }}>3 decoys</div>
+                      <input type="range" min="0" max="4" defaultValue="3" style={{ accentColor: "var(--q-decoy)" }} />
+                      <Hairline />
+                      <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.45 }}>
+                        Privacy controls live in a persistent drawer. Always visible, never collapses. Costs ~280px of width.
+                      </div>
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 5: BRIDGE FLOW VARIATIONS
+                =================================================== */}
+            <DCSection
+              id="bridge-flow"
+              title="Bridge · 3 flow shapes"
+              subtitle="Tabs (shipped), single scrolling page, and a stepper.">
+
+              <DCArtboard id="br-tabs" label="A · Tabs (shipped)" width={1280} height={760}>
+                <PrototypeFrame route="bridge" theme="parchment" />
+              </DCArtboard>
+
+              <DCArtboard id="br-stepper" label="B · Stepper" width={760} height={600}>
+                <StaticArtboard width={760} height={600} padding={28}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <Eyebrow>Bridge · L1 → L2</Eyebrow>
+                    <h3 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 300, letterSpacing: "-0.03em" }}>
+                      Step 2 of 3 · <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic" }}>waiting</em>
+                    </h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                      {["Deposit", "Wait for message", "Claim"].map((s, i) => (
+                        <React.Fragment key={s}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: i === 1 ? 0 : 0 }}>
+                            <span style={{
+                              width: 28, height: 28, borderRadius: "50%",
+                              background: i <= 1 ? "var(--aztec-ink)" : "transparent",
+                              color: i <= 1 ? "var(--aztec-parchment)" : "var(--fg-muted)",
+                              border: `1px solid ${i <= 1 ? "var(--aztec-ink)" : "var(--hairline-strong)"}`,
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              fontFamily: "var(--font-mono)", fontSize: 12,
+                            }}>{i < 1 ? "✓" : i + 1}</span>
+                            <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{s}</span>
+                          </div>
+                          {i < 2 && <div style={{ flex: 1, height: 1, background: "var(--hairline)", margin: "0 16px" }} />}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                    <div style={{
+                      flex: 1, background: "rgba(212,162,74,0.08)",
+                      border: "1px solid rgba(212,162,74,0.4)",
+                      borderRadius: 8, padding: 24, display: "flex", flexDirection: "column", gap: 14,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <Dot kind="proving" size={14} />
+                        <div style={{ fontFamily: "var(--font-mono)", fontSize: 14 }}>Waiting for L1→L2 message</div>
+                      </div>
+                      <div style={{ height: 4, background: "var(--hairline)", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: "65%", background: "var(--proving)" }} />
+                      </div>
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg-muted)" }}>
+                        ~4–15 min · auto-polling every 30s · safe to close tab
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.5, textAlign: "center" }}>
+                      Linear, force-walks the user through L1 wait. Bad for power-users with many concurrent deposits.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="br-scroll" label="C · Single scrolling page" width={760} height={1000}>
+                <StaticArtboard width={760} height={1000} padding={28}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                    {["Deposit", "Claim", "Exit"].map((sec, i) => (
+                      <div key={sec} className="q-card" style={{ borderTop: i === 0 ? undefined : "3px solid var(--aztec-ink)" }}>
+                        <Eyebrow>Section {i + 1}</Eyebrow>
+                        <h4 style={{ fontFamily: "var(--font-serif)", fontSize: 22, marginTop: 8 }}>{sec}</h4>
+                        <div style={{ marginTop: 12, height: 180, borderRadius: 6, background: "var(--bg-alt)", border: "1px dashed var(--hairline-strong)",
+                                      display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg-muted)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                          {sec} form…
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.5, textAlign: "center" }}>
+                      Everything visible at once. Best for monitoring; worst for focus.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 6: WALLET POOL VISUALIZATIONS
+                =================================================== */}
+            <DCSection
+              id="wallet-pool"
+              title="Wallet pool · 3 takes"
+              subtitle="Card grid (shipped), compact table, and a visual pool diagram.">
+
+              <DCArtboard id="wp-cards" label="A · Card grid (shipped)" width={1280} height={760}>
+                <PrototypeFrame route="wallet" theme="parchment" />
+              </DCArtboard>
+
+              <DCArtboard id="wp-table" label="B · Compact table" width={1100} height={520}>
+                <StaticArtboard width={1100} height={520} padding={28}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    <Eyebrow>Pool · 3 wallets</Eyebrow>
+                    <h3 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 300 }}>
+                      <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic" }}>Compact</em> view
+                    </h3>
+                    <div className="q-card" style={{ padding: 0, overflow: "hidden" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "40px 1.4fr 1fr 1fr 1fr 1.4fr 80px", gap: 12, padding: "10px 16px", background: "var(--bg-alt)" }}>
+                        {["#", "Address", "Fee", "aUSDC", "aWETH", "Capacity", ""].map((h, i) => <span key={i} className="q-eyebrow">{h}</span>)}
+                      </div>
+                      {[
+                        { i: 0, fee: "0.0824", usdc: "5,200.00", weth: "1.500", cap: 8 },
+                        { i: 1, fee: "0.0941", usdc: "3,150.00", weth: "0.840", cap: 12 },
+                        { i: 2, fee: "0.0712", usdc: "1,840.00", weth: "0.500", cap: 4 },
+                      ].map((r, idx) => (
+                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "40px 1.4fr 1fr 1fr 1fr 1.4fr 80px", gap: 12, padding: "10px 16px",
+                                                 borderBottom: "1px solid var(--hairline)", alignItems: "center" }}>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{r.i}</span>
+                          <AddressMono value={`0x7c5fA12e8B3D4f9aC1e29bd071E4a7e12${r.i}a456b8`} />
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{r.fee} ETH</span>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{r.usdc}</span>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{r.weth}</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, height: 4, background: "var(--hairline)", borderRadius: 2, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${(r.cap/18)*100}%`, background: r.cap >= 10 ? "var(--proving)" : "var(--aztec-chartreuse)" }} />
+                            </div>
+                            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{r.cap}/18</span>
+                          </div>
+                          <PillButton size="sm" variant="quiet" leftIcon="droplet">Drip</PillButton>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="wp-diagram" label="C · Visual pool diagram" width={760} height={680}>
+                <StaticArtboard width={760} height={680} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20, height: "100%" }}>
+                    <Eyebrow>Pool · visual</Eyebrow>
+                    <h3 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 300, letterSpacing: "-0.03em" }}>
+                      Round-<em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic" }}>robin</em> dispatcher
+                    </h3>
+                    <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg viewBox="0 0 400 400" style={{ width: "100%", height: "100%", maxHeight: 420 }}>
+                        {/* center: master */}
+                        <circle cx="200" cy="200" r="44" fill="var(--aztec-ink)" />
+                        <text x="200" y="195" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--aztec-chartreuse)" letterSpacing="1">MASTER</text>
+                        <text x="200" y="210" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--aztec-parchment)" opacity="0.7">0x9d2c…c9d8</text>
+                        {/* children at 0°, 120°, 240° */}
+                        {[
+                          { deg: -90, label: "child-0", cap: "8/18", color: "var(--aztec-chartreuse)" },
+                          { deg:  30, label: "child-1", cap: "12/18", color: "var(--proving)" },
+                          { deg: 150, label: "child-2", cap: "4/18", color: "var(--aztec-chartreuse)" },
+                        ].map((p, i) => {
+                          const rad = (p.deg * Math.PI) / 180;
+                          const x = 200 + Math.cos(rad) * 130;
+                          const y = 200 + Math.sin(rad) * 130;
+                          const lx = 200 + Math.cos(rad) * 60;
+                          const ly = 200 + Math.sin(rad) * 60;
+                          return (
+                            <g key={i}>
+                              <line x1={lx} y1={ly} x2={x - Math.cos(rad)*32} y2={y - Math.sin(rad)*32} stroke="var(--hairline-strong)" strokeWidth="1" strokeDasharray="3 3" />
+                              <circle cx={x} cy={y} r="32" fill="var(--surface-card)" stroke={p.color} strokeWidth="2" />
+                              <text x={x} y={y - 2} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="10" fill="var(--fg)">{p.label}</text>
+                              <text x={x} y={y + 12} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill={p.color}>{p.cap}</text>
+                            </g>
+                          );
+                        })}
+                        {/* outgoing arrow → current */}
+                        <path d="M236 198 Q 280 198 320 198" stroke="var(--aztec-ink)" strokeWidth="1.5" markerEnd="url(#arrow)" fill="none" />
+                        <defs>
+                          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                            <path d="M0 0 L10 5 L0 10 z" fill="var(--aztec-ink)" />
+                          </marker>
+                        </defs>
+                        <text x="335" y="185" fontFamily="var(--font-mono)" fontSize="9" fill="var(--fg-muted)" letterSpacing="1">.next()</text>
+                        <text x="335" y="205" fontFamily="var(--font-mono)" fontSize="10" fill="var(--aztec-ink)">child-0</text>
+                      </svg>
+                    </div>
+                    <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.5, textAlign: "center" }}>
+                      One master, N children, round-robin <code style={{ fontFamily: "var(--font-mono)" }}>.next()</code> dispatch. Visualizes the data model directly.
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 7: ONBOARDING + FILLS FEED + EMPTY STATES
+                =================================================== */}
+            <DCSection
+              id="onboarding"
+              title="Setup · two onboarding shapes"
+              subtitle="A full-page wizard (shipped) and an ambient tooltip approach.">
+
+              <DCArtboard id="ob-wizard" label="A · Full-page wizard (shipped)" width={1280} height={760}>
+                <PrototypeFrame route="setup" theme="parchment" />
+              </DCArtboard>
+
+              <DCArtboard id="ob-tour" label="B · Ambient tour overlay" width={1280} height={760}>
+                <PrototypeFrame route="trade" theme="parchment" url="quetzal.app/trade · tour active" />
+              </DCArtboard>
+
+            </DCSection>
+
+            {/* ===================================================
+                SECTION 8: PRIVACY VOCABULARY
+                =================================================== */}
+            <DCSection
+              id="vocab"
+              title="Privacy vocabulary"
+              subtitle="The semantic dots, badges, and copy patterns used everywhere.">
+
+              <DCArtboard id="v-dots" label="State indicators" width={520} height={420}>
+                <StaticArtboard width={520} height={420} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <Eyebrow>State indicators</Eyebrow>
+                    {[
+                      { kind: "private", label: "Private", desc: "Encrypted note. Only you can read this." },
+                      { kind: "public",  label: "Public",  desc: "Visible on-chain. Linkable." },
+                      { kind: "decoy",   label: "Decoy",   desc: "Unfillable order submitted alongside yours." },
+                      { kind: "proving", label: "Proving", desc: "Local proof generation in progress." },
+                      { kind: "filled",  label: "Filled",  desc: "Matched at epoch close. Ready to claim." },
+                      { kind: "pending", label: "Pending", desc: "Submitted, awaiting confirmation." },
+                      { kind: "cancel",  label: "Cancelled", desc: "Cancelled or expired." },
+                    ].map((row, i) => (
+                      <div key={i} style={{ display: "grid", gridTemplateColumns: "24px 100px 1fr", gap: 12, alignItems: "center", paddingBottom: 10, borderBottom: i === 6 ? "none" : "1px solid var(--hairline)" }}>
+                        <Dot kind={row.kind} size={10} shimmer={row.kind === "private"} />
+                        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{row.label}</div>
+                        <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)" }}>{row.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+              <DCArtboard id="v-badges" label="Badges & buttons" width={520} height={420}>
+                <StaticArtboard width={520} height={420} padding={32}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                    <div>
+                      <Eyebrow>Badges</Eyebrow>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <Badge tone="private" shimmer><Dot kind="private" size={5} /> sealed</Badge>
+                        <Badge tone="public"><Dot kind="public" size={5} /> public</Badge>
+                        <Badge tone="decoy" shimmer><Dot kind="decoy" size={5} /> decoy</Badge>
+                        <Badge tone="filled">filled</Badge>
+                        <Badge tone="warn">round amount</Badge>
+                        <Badge>pending</Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <Eyebrow>Buttons</Eyebrow>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <PillButton variant="primary" size="md" rightIcon="arrow-right">Submit</PillButton>
+                        <PillButton variant="ink"     size="md">Confirm</PillButton>
+                        <PillButton variant="ghost"   size="md">Cancel</PillButton>
+                        <PillButton variant="danger"  size="md">Reset</PillButton>
+                      </div>
+                    </div>
+                    <div>
+                      <Eyebrow>Voice</Eyebrow>
+                      <div style={{ fontFamily: "var(--font-serif)", fontSize: 14, color: "var(--fg)", marginTop: 10, lineHeight: 1.6 }}>
+                        ✓ "Decoys submit unfillable orders alongside yours."<br/>
+                        ✓ "Your order is matched at epoch close, every ~10 min."<br/>
+                        <span style={{ color: "var(--fg-subtle)", textDecoration: "line-through" }}>✗ "Securely encrypting your order with bank-grade…"</span>
+                      </div>
+                    </div>
+                  </div>
+                </StaticArtboard>
+              </DCArtboard>
+
+            </DCSection>
+
+          </DesignCanvas>
+        </>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<Canvas />);
+
+    setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 400);
+    const obs = new MutationObserver(() => { if (window.lucide) window.lucide.createIcons(); });
+    setTimeout(() => obs.observe(document.body, { childList: true, subtree: true }), 500);
+  </script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quetzal — Private Dark-Pool DEX on Aztec</title>
+
+  <link rel="stylesheet" href="aztec-tokens.css" />
+  <link rel="stylesheet" href="quetzal-styles.css" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <template id="__bundler_thumbnail">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <rect width="100" height="100" fill="#F2EEE1"/>
+      <circle cx="72" cy="22" r="2.6" fill="#1A1400"/>
+      <path d="M68 26 C 58 38, 46 52, 32 66 C 24 74, 18 78, 12 82"
+            stroke="#1A1400" stroke-width="2" fill="none" stroke-linecap="square"/>
+      <path d="M58 32 L 72 30" stroke="#1A1400" stroke-width="2" stroke-linecap="square"/>
+      <path d="M50 42 L 66 41" stroke="#1A1400" stroke-width="2" stroke-linecap="square"/>
+      <path d="M42 52 L 60 52" stroke="#1A1400" stroke-width="2" stroke-linecap="square"/>
+      <path d="M34 62 L 52 63" stroke="#1A1400" stroke-width="2" stroke-linecap="square"/>
+      <path d="M26 72 L 42 74" stroke="#1A1400" stroke-width="2" stroke-linecap="square"/>
+      <circle cx="20" cy="20" r="6" fill="#D4FF28"/>
+    </svg>
+  </template>
+</head>
+<body>
+  <div id="q-boot" style="
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+    background: #F2EEE1; color: #1A1400;
+    font-family: 'Geist', system-ui, -apple-system, sans-serif;
+    transition: opacity 300ms ease-out;
+  ">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 21 C 7 14, 11 8, 18 4">
+        <animate attributeName="stroke-dasharray" values="0 60;60 0;0 60" dur="2s" repeatCount="indefinite" />
+      </path>
+      <path d="M6 18 C 9 16, 13 12, 17 7" opacity="0.5"/>
+      <path d="M7 15 C 10 14, 13 11, 16 9" opacity="0.3"/>
+    </svg>
+    <div style="font-family: 'Martel', Georgia, serif; font-weight: 300; font-size: 22px; letter-spacing: -0.02em;">
+      Quet<em style="font-family: 'EB Garamond', serif; font-style: italic; font-weight: 400;">zal</em>
+    </div>
+    <div id="q-boot-status" style="
+      font-family: 'Geist Mono', ui-monospace, monospace;
+      font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #7a8682;
+    ">Loading…</div>
+    <div id="q-boot-error" style="
+      max-width: 520px;
+      margin-top: 8px;
+      padding: 12px 16px;
+      background: rgba(217, 119, 87, 0.08);
+      border: 1px solid rgba(217, 119, 87, 0.35);
+      border-radius: 6px;
+      font-family: 'Geist Mono', ui-monospace, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #b3563a;
+      text-align: left;
+      white-space: pre-wrap;
+      display: none;
+    "></div>
+  </div>
+
+  <div id="root"></div>
+
+  <script>
+    // ---- Boot diagnostics ----
+    window.__qBoot = { step: "html-parsed", t0: Date.now(), errors: [] };
+    window.qStatus = function(msg) {
+      const el = document.getElementById('q-boot-status');
+      if (el) el.textContent = msg;
+      window.__qBoot.step = msg;
+    };
+    const qStatus = window.qStatus;
+    function qError(msg) {
+      const el = document.getElementById('q-boot-error');
+      if (el) { el.style.display = 'block'; el.textContent = String(msg); }
+      window.__qBoot.errors.push(String(msg));
+      console.error('[quetzal-boot]', msg);
+    }
+    window.addEventListener('error', (e) => qError(`${e.message}\n  at ${e.filename}:${e.lineno}`));
+    window.addEventListener('unhandledrejection', (e) => qError(`Promise rejection: ${e.reason}`));
+
+    // poll for libs loading
+    let pollCount = 0;
+    const poll = setInterval(() => {
+      pollCount++;
+      if (typeof React === 'undefined') qStatus('Loading React…');
+      else if (typeof ReactDOM === 'undefined') qStatus('Loading ReactDOM…');
+      else if (typeof Babel === 'undefined') qStatus('Loading Babel…');
+      else qStatus('Compiling components…');
+      if (pollCount > 60) clearInterval(poll); // stop after 30s
+    }, 500);
+
+    window.__qBootDone = () => {
+      clearInterval(poll);
+      const el = document.getElementById('q-boot');
+      if (el) {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 350);
+      }
+    };
+  </script>
+
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="atoms.jsx"></script>
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="trade.jsx"></script>
+  <script type="text/babel" src="bridge.jsx"></script>
+  <script type="text/babel" src="wallet-history-settings.jsx"></script>
+  <script type="text/babel" src="landing-setup.jsx"></script>
+  <script type="text/babel" src="app.jsx"></script>
+
+  <script>
+    // Render lucide icons once initial render is done
+    setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 200);
+    // Re-render on DOM changes
+    const obs = new MutationObserver(() => {
+      if (window.lucide) window.lucide.createIcons();
+    });
+    setTimeout(() => obs.observe(document.body, { childList: true, subtree: true }), 300);
+  </script>
+</body>
+</html>
