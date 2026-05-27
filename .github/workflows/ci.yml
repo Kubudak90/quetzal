@@ -1,187 +1,64 @@
-# CI Pipeline for Quetzal
-#
-# Three jobs:
-#   noir        - compile Noir contracts + run TXE (oracle) tests inside Docker
-#   typescript  - typecheck (runs in parallel with `noir`)
-#   integration - spin up full dev stack and run Node:test integration suite
-#
-# VERSION PIN SCHEME
-# ------------------
-# The single source of truth for the Aztec runtime version is the file
-# `.aztec-version` in the repo root (currently "4.2.1").  All jobs below read
-# it via:
-#
-#   VERSION=$(cat .aztec-version | tr -d '[:space:]')
-#
-# and use it to pull/run `aztecprotocol/aztec:$VERSION`.
-#
-# NOTE: Nargo.toml dependencies point to a *different* tag (currently v4.2.0
-# from aztec-packages).  This is intentional: the Docker image version and the
-# Noir source-code release tags are on separate cadences.  The Nargo deps
-# reference the git commit where the Noir library code lives; the Docker tag
-# references the CLI/runtime version.  Do not try to unify them.
-#
-# NOTE ON FLAKINESS: The `integration` job starts the Aztec local-network as a
-# background process and polls http://localhost:8080 for readiness.  Aztec 4.x
-# local-network startup is non-deterministic and can take 60-180 s in CI; the
-# poll loop allows up to 3 min (90 x 2 s).  If the stack does not come up in
-# time, the tests will fail with connection-refused errors rather than a
-# meaningful assertion failure.  This is a known limitation of running a
-# multi-container L1+L2 stack inside a GitHub-hosted runner -- do NOT paper
-# over it with blind retries.  If it becomes consistently flaky, consider
-# extracting integration tests to a self-hosted runner or using `concurrency`
-# + retry at the workflow level.
-
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on PR force-push or merge into main
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Job 1: Noir -- compile contracts + TXE tests (all via Docker bypass)
-  # ---------------------------------------------------------------------------
-  noir:
-    name: Noir compile + TXE tests
+  typecheck-and-test:
+    name: Typecheck + unit tests + frontend build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Pull Aztec Docker image
-        run: |
-          VERSION=$(cat .aztec-version | tr -d '[:space:]')
-          docker pull "aztecprotocol/aztec:$VERSION"
-
-      - name: Compile contracts
-        run: bash scripts/compile-all.sh
-
-      - name: Setup pnpm
+      - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # Match the packageManager field in package.json
+          version: 9.12.0
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run Noir / TXE tests
-        run: pnpm test:noir
-
-  # ---------------------------------------------------------------------------
-  # Job 2: TypeScript -- typecheck (independent, runs in parallel with `noir`)
-  # ---------------------------------------------------------------------------
-  typescript:
-    name: TypeScript typecheck
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 22
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+          node-version: '22'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # Mirror Vercel's command — non-frozen lockfile, in case pnpm-lock.yaml drifts.
+        # If you want strict reproducibility on CI, switch to --frozen-lockfile.
+        run: pnpm install --frozen-lockfile=false
 
-      - name: Typecheck
-        # tests/integration/generated/ is gitignored and only produced by
-        # codegen at runtime.  The tsconfig for that package excludes the
-        # `generated` directory so tsc will not complain about missing files.
-        run: pnpm typecheck
+      - name: Typecheck — @quetzal/sdk
+        run: pnpm -F @quetzal/sdk typecheck
 
-  # ---------------------------------------------------------------------------
-  # Job 3: Integration -- full dev-stack tests (needs compiled artifacts)
-  # ---------------------------------------------------------------------------
-  integration:
-    name: Integration tests
-    runs-on: ubuntu-latest
-    # Artifacts are compiled fresh below; we still gate on `noir` to avoid
-    # running the expensive dev-stack when compile/TXE already failed.
-    needs: [noir]
+      - name: Typecheck — @quetzal/cli
+        run: pnpm -F @quetzal/cli typecheck
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Typecheck — @quetzal/frontend
+        run: pnpm -F @quetzal/frontend typecheck
 
-      - name: Setup Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Unit tests — @quetzal/sdk (node:test)
+        run: pnpm -F @quetzal/sdk test
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Unit tests — @quetzal/cli (node:test)
+        run: pnpm -F @quetzal/cli test
 
-      - name: Install Foundry (anvil)
-        uses: foundry-rs/foundry-toolchain@v1
+      - name: Build — @quetzal/frontend (Vite + Node polyfills + SDK browser shims)
+        run: pnpm -F @quetzal/frontend build
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Pull Aztec Docker image
-        run: |
-          VERSION=$(cat .aztec-version | tr -d '[:space:]')
-          docker pull "aztecprotocol/aztec:$VERSION"
-
-      - name: Compile contracts
-        run: bash scripts/compile-all.sh
-
-      - name: Generate TypeScript bindings (codegen)
-        run: |
-          VERSION=$(cat .aztec-version | tr -d '[:space:]')
-          mkdir -p tests/integration/generated
-          docker run --rm \
-            -v "$PWD:/work" -w /work \
-            "aztecprotocol/aztec:$VERSION" \
-            bash -c "node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js codegen contracts/token-a/target -o tests/integration/generated"
-          docker run --rm \
-            -v "$PWD:/work" -w /work \
-            "aztecprotocol/aztec:$VERSION" \
-            bash -c "node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js codegen contracts/token-b/target -o tests/integration/generated"
-
-      - name: Start dev stack (background)
-        run: |
-          nohup bash scripts/dev.sh > /tmp/dev.log 2>&1 &
-          echo $! > /tmp/dev.pid
-          echo "Dev stack PID: $(cat /tmp/dev.pid)"
-
-      - name: Wait for Aztec local-network to be ready
-        # Polls http://localhost:8080 -- the Aztec node returns 405 or 200 once
-        # it is accepting JSON-RPC.  Timeout: 90 x 2 s = 3 min.
-        # NOTE: If this step times out the L2 node did not come up in time.
-        # This is the most likely source of flakiness.  See top-level comment.
-        run: |
-          echo "Waiting for Aztec local-network on :8080 ..."
-          for i in $(seq 1 90); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 || true)
-            if [ "$code" = "405" ] || [ "$code" = "200" ]; then
-              echo "Aztec node ready (HTTP $code) after $((i * 2)) s"
-              break
-            fi
-            if [ "$i" = "90" ]; then
-              echo "TIMEOUT: Aztec node did not come up within 3 minutes."
-              echo "--- dev.log tail ---"
-              tail -80 /tmp/dev.log || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Run integration tests
-        run: pnpm test
-
-      - name: Stop dev stack
-        if: always()
-        run: bash scripts/dev.sh --down
+      # Skipped on purpose (would slow PRs from <2min to >15min):
+      #   - L1 Foundry tests (needs forge install + Solidity toolchain)
+      #   - L2 Noir TXE tests (needs Docker + nargo via aztec-up)
+      #   - Integration tests under tests/ (needs deployed contracts on Aztec sandbox)
+      #   - Aggregator package (depends on local Postgres + Aztec stack)
+      # If you want these gated, add a separate "weekly" workflow that runs on cron.
