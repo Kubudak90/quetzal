@@ -4,10 +4,83 @@
 
 import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
 import {
   Eyebrow, Hairline, Dot, Badge, PillButton, Field, AddressMono, Tooltip, Segmented,
 } from "../components/atoms.js";
 import { RoundAmountAdvisory, TokenGlyph } from "../components/screens-shared.js";
+
+// ─── Amount helper ─────────────────────────────────────────────────────────────
+/** Parse a display amount string (e.g. "1,234.56") to bigint with given decimals. */
+function parseAmount(s: string, decimals: number = 6): bigint {
+  const clean = s.replace(/,/g, "").trim();
+  if (!clean || clean === ".") return 0n;
+  const [whole = "0", frac = ""] = clean.split(".");
+  const fracPadded = frac.padEnd(decimals, "0").slice(0, decimals);
+  try {
+    return BigInt(whole + fracPadded);
+  } catch {
+    return 0n;
+  }
+}
+
+// ─── localStorage helpers for pending claims ───────────────────────────────────
+// SDK has no client.bridge.getPendingClaims() — pending claims are tracked in
+// localStorage after each deposit() call.
+interface LocalPendingClaim {
+  token: string;
+  amount: string; // bigint stringified
+  secret: string;
+  secretHash: string;
+  messageIndex: string;
+  isPrivate: boolean;
+  createdAt: number;
+}
+
+function addLocalPendingClaim(c: LocalPendingClaim) {
+  const list = loadLocalPendingClaims();
+  list.push(c);
+  localStorage.setItem("quetzal-pending-claims", JSON.stringify(list));
+}
+
+function loadLocalPendingClaims(): LocalPendingClaim[] {
+  try {
+    const raw = localStorage.getItem("quetzal-pending-claims");
+    return raw ? (JSON.parse(raw) as LocalPendingClaim[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function removeLocalPendingClaim(secret: string) {
+  const list = loadLocalPendingClaims().filter((c) => c.secret !== secret);
+  localStorage.setItem("quetzal-pending-claims", JSON.stringify(list));
+}
+
+// ─── Browser-compatible bridge-state helpers ───────────────────────────────────
+// SDK's loadBridgeState() / saveBridgeState() from @quetzal/sdk/privacy/bridge-schedule
+// use Node's node:fs / node:os / node:path — unusable in the browser.
+// TODO(sdk-browser-state): SDK needs a browser-portable bridge-state backend.
+// Until then, the shape { scheduledExits: ScheduledExit[] } is mirrored here via localStorage.
+interface BridgeScheduledExit {
+  id: number;
+  token: string;
+  amount: string;
+  recipient: string;
+  part: string;
+  scheduled: string;
+  status: "submitted" | "pending";
+}
+
+function loadBrowserBridgeState(): { scheduledExits: BridgeScheduledExit[] } {
+  try {
+    const raw = localStorage.getItem("quetzal-bridge-state");
+    return raw ? (JSON.parse(raw) as { scheduledExits: BridgeScheduledExit[] }) : { scheduledExits: [] };
+  } catch {
+    return { scheduledExits: [] };
+  }
+}
 
 interface ToastIn { kind: string; text: string }
 type PushToast = (t: ToastIn) => void;
@@ -90,6 +163,10 @@ export function BridgeScreen({ pushToast }: BridgeScreenProps) {
 
 /* ============ DEPOSIT ============ */
 function DepositTab({ pushToast }: { pushToast: PushToast }) {
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
+  const qc = useQueryClient();
+
   const [token, setToken] = useState("USDC");
   const [amount, setAmount] = useState("");
   const [visibility, setVisibility] = useState<"private" | "public">("private");
@@ -99,11 +176,52 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
 
   const tokenData = tokenById(token);
 
+  // Sub-6b 2.8 deviation: SDK bridge.deposit is currently reserved (throws BridgeError).
+  // The CLI / scripts/testnet-sub5b-bridge.ts is canonical for L1 deposits.
+  // When the SDK ships its own deposit impl this call will work; for now it
+  // surfaces a clear error to the user.
+  const depositMut = useMutation({
+    mutationFn: async (input: { token: string; amount: bigint; isPrivate: boolean }) => {
+      if (!client) throw new Error("Not connected");
+      return await client.bridge.deposit({
+        token: input.token,
+        amount: input.amount,
+        isPrivate: input.isPrivate,
+      });
+    },
+    onSuccess: (result) => {
+      addLocalPendingClaim({
+        token,
+        amount: parseAmount(amount, 6).toString(),
+        secret: result.secret ?? "",
+        secretHash: result.secretHash ?? "",
+        messageIndex: result.messageIndex.toString(),
+        isPrivate: visibility === "private",
+        createdAt: Date.now(),
+      });
+      setStep(2);
+      pushToast({ kind: "ok", text: `Deposit submitted: L1 tx ${String(result.l1TxHash).slice(0, 10)}…` });
+      void qc.invalidateQueries({ queryKey: ["pendingClaims", session?.sessionId] });
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("not yet implemented")) {
+        pushToast({ kind: "warn", text: "SDK bridge.deposit reserved (Sub-6b carry-forward). Use scripts/testnet-sub5b-bridge.ts for L1 deposits." });
+      } else {
+        pushToast({ kind: "warn", text: msg });
+      }
+      setStep(0);
+    },
+  });
+
   function handleSubmit() {
-    // TODO(sdk): call client.bridge.deposit({ token, amount, visibility, recipient })
     setStep(1);
     pushToast({ kind: "info", text: "L1 transaction broadcast — waiting for L1→L2 message" });
-    setTimeout(() => setStep(2), 3500);
+    depositMut.mutate({
+      token,
+      amount: parseAmount(amount, 6),
+      isPrivate: visibility === "private",
+    });
   }
 
   return (
@@ -190,8 +308,8 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
         {/* Submit / progress */}
         {step === 0 && (
           <PillButton size="lg" fullWidth variant="primary" onClick={handleSubmit}
-            disabled={!amount} rightIcon="arrow-right">
-            Bridge {amount || "0"} {token} to Aztec
+            disabled={!amount || depositMut.isPending} rightIcon="arrow-right">
+            {depositMut.isPending ? "Submitting…" : `Bridge ${amount || "0"} ${token} to Aztec`}
           </PillButton>
         )}
         {step === 1 && (
@@ -254,25 +372,39 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
 }
 
 /* ============ CLAIM ============ */
-interface PendingClaim {
-  token: string;
-  amount: string;
-  secret: string;
-  age: string;
-  ready: boolean;
-}
-const PENDING_CLAIMS: PendingClaim[] = [
-  { token: "USDC", amount: "2,500.00", secret: "0xa1b2c3d4e5f60718293a4b5c6d7e8f9012345678", age: "8 min", ready: true },
-  { token: "WETH", amount: "0.7842",    secret: "0xc1f2a3b4e5d60718293a4b5c6d7e8f9011112233", age: "1 min", ready: false },
-];
-
 function ClaimTab({ pushToast }: { pushToast: PushToast }) {
-  const [claims, setClaims] = useState<PendingClaim[]>(PENDING_CLAIMS);
-  function handleClaim(c: PendingClaim) {
-    // TODO(sdk): call client.bridge.claim({ secret: c.secret })
-    setClaims(claims.filter(x => x.secret !== c.secret));
-    pushToast({ kind: "success", text: `Claimed ${c.amount} ${c.token}` });
-  }
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
+  const qc = useQueryClient();
+
+  // Pending claims are tracked in localStorage (SDK has no getPendingClaims() API).
+  const pendingClaimsQ = useQuery({
+    queryKey: ["pendingClaims", session?.sessionId],
+    queryFn: () => loadLocalPendingClaims(),
+    refetchInterval: false,
+  });
+
+  const claimMut = useMutation({
+    mutationFn: async (input: { token: string; amount: bigint; isPrivate: boolean; secret: string; messageIndex: string }) => {
+      if (!client) throw new Error("Not connected");
+      return await client.bridge.claim({
+        token: input.token,
+        amount: input.amount,
+        isPrivate: input.isPrivate,
+        secret: input.secret,
+        messageIndex: input.messageIndex,
+      });
+    },
+    onSuccess: (result, vars) => {
+      removeLocalPendingClaim(vars.secret);
+      void qc.invalidateQueries({ queryKey: ["pendingClaims", session?.sessionId] });
+      pushToast({ kind: "ok", text: `Claimed on L2: ${String(result.l2TxHash).slice(0, 10)}…` });
+    },
+    onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Claim failed" }),
+  });
+
+  const claims = pendingClaimsQ.data ?? [];
+
   return (
     <div className="q-card" style={{ padding: 0, overflow: "hidden" }}>
       <div style={{ padding: "18px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -285,7 +417,6 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
           <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--fg-muted)" }}>No pending deposits.</div>
         </div>
       ) : (
-        // TODO(sdk): replace PENDING_CLAIMS with client.bridge.getPendingClaims() subscription
         claims.map(c => (
           <div key={c.secret} style={{
             display: "grid", gridTemplateColumns: "auto 1fr 1fr 80px 120px", gap: 16,
@@ -295,21 +426,33 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
             <TokenGlyph token={c.token} size={28} />
             <div>
               <div data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 500 }}>{c.amount} <span style={{ color: "var(--fg-muted)" }}>{c.token}</span></div>
-              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>{c.age} ago</div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>
+                {Math.round((Date.now() - c.createdAt) / 60000)} min ago
+              </div>
             </div>
             <div>
               <Eyebrow style={{ marginBottom: 2 }}>Secret</Eyebrow>
               <AddressMono value={c.secret} />
             </div>
             <div>
-              {c.ready ? (
-                <Badge tone="filled">Ready</Badge>
-              ) : (
-                <Badge>Waiting</Badge>
-              )}
+              <Badge tone="filled">Ready</Badge>
             </div>
             <div style={{ textAlign: "right" }}>
-              <PillButton size="sm" variant="primary" disabled={!c.ready} onClick={() => handleClaim(c)} rightIcon="check">Claim</PillButton>
+              <PillButton
+                size="sm"
+                variant="primary"
+                disabled={claimMut.isPending}
+                onClick={() => claimMut.mutate({
+                  token: c.token,
+                  amount: BigInt(c.amount),
+                  isPrivate: c.isPrivate,
+                  secret: c.secret,
+                  messageIndex: c.messageIndex,
+                })}
+                rightIcon="check"
+              >
+                {claimMut.isPending ? "Claiming…" : "Claim"}
+              </PillButton>
             </div>
           </div>
         ))
@@ -325,6 +468,10 @@ interface ExitAdvisory {
 }
 
 function ExitTab({ pushToast }: { pushToast: PushToast }) {
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
+  const qc = useQueryClient();
+
   const [token, setToken] = useState("USDC");
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("0x9Aa12B3C4d5E6f7890aB1c2D3e4F5067890aBcDe");
@@ -345,9 +492,35 @@ function ExitTab({ pushToast }: { pushToast: PushToast }) {
   const parsed = parseFloat(amount.replace(/,/g, ""));
   const showRoundTrip = !isNaN(parsed) && parsed >= 2400 && parsed <= 2600;
 
+  const exitMut = useMutation({
+    mutationFn: async (input: { token: string; amount: bigint; l1Recipient: string; splitInto: number; intervalDays: number; ackRound: boolean; ackDelay: boolean }) => {
+      if (!client) throw new Error("Not connected");
+      return await client.bridge.exit({
+        token: input.token,
+        amount: input.amount,
+        l1Recipient: input.l1Recipient,
+        splitInto: input.splitInto > 1 ? input.splitInto : undefined,
+        intervalDays: input.splitInto > 1 ? input.intervalDays : undefined,
+        ackRound: input.ackRound,
+        ackDelay: input.ackDelay,
+      });
+    },
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: ["scheduledExits", session?.sessionId] });
+      if ("scheduledExits" in result) {
+        pushToast({ kind: "ok", text: `${(result as { scheduledExits: unknown[] }).scheduledExits.length} exits scheduled.` });
+      } else {
+        pushToast({ kind: "ok", text: `Exit submitted: L2 tx ${String((result as { l2TxHash: unknown }).l2TxHash).slice(0, 10)}…` });
+      }
+      setAmount("");
+    },
+    onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Exit failed" }),
+  });
+
   const canSubmit = !!amount &&
     (advisory.classification === "natural" || ackRound) &&
-    (!showRoundTrip || ackDelay);
+    (!showRoundTrip || ackDelay) &&
+    !exitMut.isPending;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
@@ -440,14 +613,19 @@ function ExitTab({ pushToast }: { pushToast: PushToast }) {
         </div>
 
         <PillButton size="lg" fullWidth variant="primary" onClick={() => {
-          // TODO(sdk): call client.bridge.scheduleExit({ token, amount, recipient, splitInto, intervalDays: interval })
-          pushToast({
-            kind: "success",
-            text: `Exit scheduled · ${splitInto} part${splitInto === 1 ? "" : "s"}${splitInto > 1 ? ` (every ${interval}d)` : ""}`,
+          exitMut.mutate({
+            token,
+            amount: parseAmount(amount, 6),
+            l1Recipient: recipient,
+            splitInto,
+            intervalDays: interval,
+            ackRound,
+            ackDelay,
           });
-          setAmount("");
         }} disabled={!canSubmit} rightIcon="arrow-right">
-          {splitInto === 1 ? `Exit ${amount || "0"} ${token} to L1` : `Schedule ${splitInto}-part exit`}
+          {exitMut.isPending
+            ? "Submitting…"
+            : splitInto === 1 ? `Exit ${amount || "0"} ${token} to L1` : `Schedule ${splitInto}-part exit`}
         </PillButton>
       </div>
 
@@ -513,23 +691,19 @@ function ScheduleTimeline({ parts, interval, amount, token }: ScheduleTimelinePr
   );
 }
 
-interface ScheduledExit {
-  id: number;
-  token: string;
-  amount: string;
-  recipient: string;
-  part: string;
-  scheduled: string;
-  status: "submitted" | "pending";
-}
-const SCHEDULED_EXITS: ScheduledExit[] = [
-  { id: 1, token: "USDC", amount: "1,000.00", recipient: "0x9Aa1…cDe", part: "1/4", scheduled: "now",   status: "submitted" },
-  { id: 2, token: "USDC", amount: "1,000.00", recipient: "0x9Aa1…cDe", part: "2/4", scheduled: "+7d",   status: "pending"   },
-  { id: 3, token: "USDC", amount: "1,000.00", recipient: "0x9Aa1…cDe", part: "3/4", scheduled: "+14d",  status: "pending"   },
-  { id: 4, token: "USDC", amount: "1,000.00", recipient: "0x9Aa1…cDe", part: "4/4", scheduled: "+21d",  status: "pending"   },
-];
-
 function ScheduledExits() {
+  const { session } = useClientContext();
+
+  // SDK's loadBridgeState() uses Node fs (CLI-only) — see loadBrowserBridgeState() above.
+  // TODO(sdk-browser-state): replace with a browser-portable SDK bridge-state backend.
+  const scheduledExitsQ = useQuery({
+    queryKey: ["scheduledExits", session?.sessionId],
+    queryFn: () => loadBrowserBridgeState().scheduledExits,
+    refetchInterval: false,
+  });
+
+  const exits = scheduledExitsQ.data ?? [];
+
   return (
     <div className="q-card" style={{ padding: 0, overflow: "hidden" }}>
       <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -542,39 +716,46 @@ function ScheduledExits() {
         </div>
       </div>
       <Hairline />
-      <div style={{
-        display: "grid", gridTemplateColumns: "10px 70px 100px 1fr 1fr 100px 100px",
-        gap: 12, padding: "8px 20px", background: "var(--bg-alt)",
-      }}>
-        <span></span>
-        <span className="q-eyebrow">Part</span>
-        <span className="q-eyebrow">Token</span>
-        <span className="q-eyebrow">Amount</span>
-        <span className="q-eyebrow">Recipient</span>
-        <span className="q-eyebrow">Due</span>
-        <span className="q-eyebrow" style={{ textAlign: "right" }}>Status</span>
-      </div>
-      {/* TODO(sdk): replace SCHEDULED_EXITS with client.bridge.getScheduledExits() */}
-      {SCHEDULED_EXITS.map(e => (
-        <div key={e.id} style={{
-          display: "grid", gridTemplateColumns: "10px 70px 100px 1fr 1fr 100px 100px",
-          gap: 12, padding: "12px 20px", alignItems: "center",
-          borderBottom: "1px solid var(--hairline)",
-        }}>
-          <Dot kind={e.status === "submitted" ? "filled" : "pending"} size={8} />
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.part}</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <TokenGlyph token={e.token} size={16} />
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.token}</span>
-          </div>
-          <span data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{e.amount}</span>
-          <AddressMono value={e.recipient} />
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{e.scheduled}</span>
-          <div style={{ textAlign: "right" }}>
-            <Badge tone={e.status === "submitted" ? "filled" : "default"}>{e.status}</Badge>
-          </div>
+      {exits.length === 0 ? (
+        <div style={{ padding: 60, textAlign: "center" }}>
+          <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--fg-muted)" }}>No scheduled exits.</div>
         </div>
-      ))}
+      ) : (
+        <>
+          <div style={{
+            display: "grid", gridTemplateColumns: "10px 70px 100px 1fr 1fr 100px 100px",
+            gap: 12, padding: "8px 20px", background: "var(--bg-alt)",
+          }}>
+            <span></span>
+            <span className="q-eyebrow">Part</span>
+            <span className="q-eyebrow">Token</span>
+            <span className="q-eyebrow">Amount</span>
+            <span className="q-eyebrow">Recipient</span>
+            <span className="q-eyebrow">Due</span>
+            <span className="q-eyebrow" style={{ textAlign: "right" }}>Status</span>
+          </div>
+          {exits.map(e => (
+            <div key={e.id} style={{
+              display: "grid", gridTemplateColumns: "10px 70px 100px 1fr 1fr 100px 100px",
+              gap: 12, padding: "12px 20px", alignItems: "center",
+              borderBottom: "1px solid var(--hairline)",
+            }}>
+              <Dot kind={e.status === "submitted" ? "filled" : "pending"} size={8} />
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.part}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <TokenGlyph token={e.token} size={16} />
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.token}</span>
+              </div>
+              <span data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{e.amount}</span>
+              <AddressMono value={e.recipient} />
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{e.scheduled}</span>
+              <div style={{ textAlign: "right" }}>
+                <Badge tone={e.status === "submitted" ? "filled" : "default"}>{e.status}</Badge>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
