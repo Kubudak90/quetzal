@@ -1,0 +1,59 @@
+import { z } from "zod";
+
+const HexAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be 0x-prefixed hex32");
+
+export const DripRequestSchema = z.object({
+  address: HexAddress,
+  captchaToken: z.string().min(1).max(2048),
+});
+export type DripRequest = z.infer<typeof DripRequestSchema>;
+
+export const ClaimDataSchema = z.object({
+  claimAmount: z.string(),
+  claimSecretHex: z.string(),
+  claimSecretHashHex: z.string(),
+  messageHashHex: z.string(),
+  messageLeafIndex: z.string(),
+  l1TxHash: z.string(),
+});
+export type ClaimData = z.infer<typeof ClaimDataSchema>;
+
+export const MintReceiptSchema = z.object({
+  txHash: z.string(),
+  amount: z.string(),
+});
+export type MintReceipt = z.infer<typeof MintReceiptSchema>;
+
+export const DripResponseSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    claimData: ClaimDataSchema,
+    tUSDCMint: MintReceiptSchema,
+    tETHMint: MintReceiptSchema,
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    retryAfterSeconds: z.number().optional(),
+  }),
+]);
+export type DripResponse = z.infer<typeof DripResponseSchema>;
+
+export const HealthResponseSchema = z.object({
+  status: z.enum(["ok", "degraded"]),
+  l1: z.object({
+    blockNumber: z.number(),
+    operatorBalanceEth: z.string(),
+    operatorBalanceFeeJuice: z.string(),
+  }),
+  l2: z.object({
+    rollupVersion: z.number(),
+    operatorBalanceTUSDC: z.string(),
+    operatorBalanceTETH: z.string(),
+  }),
+  rateLimit: z.object({
+    totalRequests24h: z.number(),
+    throttled24h: z.number(),
+  }),
+});
+export type HealthResponse = z.infer<typeof HealthResponseSchema>;
