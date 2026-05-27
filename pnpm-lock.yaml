@@ -111,6 +111,9 @@ importers:
       '@aztec/aztec.js':
         specifier: 4.2.1
         version: 4.2.1(typescript@5.6.2)
+      '@aztec/ethereum':
+        specifier: 4.2.1
+        version: 4.2.1(typescript@5.6.2)
       '@aztec/stdlib':
         specifier: 4.2.1
         version: 4.2.1(typescript@5.6.2)
