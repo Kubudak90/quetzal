@@ -17,11 +17,42 @@ const nextConfig = {
   // ESM convention: .ts files import siblings as ".js" (paired with type:module
   // in package.json). Vitest + tsc resolve this natively; Next 14's webpack needs
   // an explicit extensionAlias to map .js requests to .ts/.tsx files.
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.resolve.extensionAlias = {
       ".js": [".ts", ".tsx", ".js"],
       ".mjs": [".mts", ".mjs"],
     };
+    // Externalize Aztec runtime packages on the server side: they ship native
+    // modules (@aztec/bb.js — barretenberg .wasm.gz, @aztec/native — .node) and
+    // dynamic transports (pino) that webpack's bundling breaks. Loading them
+    // at runtime via require() from node_modules sidesteps all of it. The
+    // Dockerfile already COPYs node_modules into the runtime image, so
+    // require resolution at request-time just works.
+    if (isServer) {
+      const aztecExternals = [
+        "@aztec/aztec.js",
+        "@aztec/wallets",
+        "@aztec/wallet-sdk",
+        "@aztec/stdlib",
+        "@aztec/foundation",
+        "@aztec/bb.js",
+        "@aztec/native",
+        "@aztec/pxe",
+        "@aztec/ethereum",
+        "@aztec/l1-artifacts",
+        "better-sqlite3",
+      ];
+      const existing = Array.isArray(config.externals) ? config.externals : [];
+      config.externals = [
+        ...existing,
+        ({ request }, callback) => {
+          if (request && aztecExternals.some((p) => request === p || request.startsWith(p + "/"))) {
+            return callback(null, "commonjs " + request);
+          }
+          callback();
+        },
+      ];
+    }
     return config;
   },
 };
