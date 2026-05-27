@@ -103,7 +103,7 @@ RUN pnpm build
 # Carries node_modules across from the build stage; rebuilds the better-sqlite3
 # native binding to be safe against any toolchain skew between stages.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-trixie-slim AS runtime
 
 RUN corepack enable pnpm
 
