@@ -2,8 +2,10 @@
 // Ported from _design-source/wallet-history-settings.jsx. Tweaks panel dropped;
 // `poolExhausted` hardcoded to false; theme switcher hardcoded to "parchment".
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useQuetzalClient, useClientContext, useWalletPool } from "../sdk/client-context.js";
 import {
   Eyebrow, Hairline, Dot, Badge, PillButton, AddressMono, Segmented,
 } from "../components/atoms.js";
@@ -25,16 +27,38 @@ interface PoolChild {
   wbtc: string;
   pending: number;
 }
-const POOL_CHILDREN: PoolChild[] = [
-  { id: 0, addr: "0x7c5fA12e8B3D4f9aC1e29bd071E4a7e123a456b8", fee: "0.0824", usdc: "5,200.00", weth: "1.500", wbtc: "0.040", pending: 8 },
-  { id: 1, addr: "0x4a82B17c9D5e6F08172a3B4c5D6e7F8902a13b4c", fee: "0.0941", usdc: "3,150.00", weth: "0.840", wbtc: "0.020", pending: 12 },
-  { id: 2, addr: "0x9c34D1B7E5f6a8b9c0d1e2f3041526738a90bc12", fee: "0.0712", usdc: "1,840.00", weth: "0.500", wbtc: "0.024", pending: 4 },
-];
 
 const POOL_EXHAUSTED = false; // hardcoded (was tweaks.poolExhausted)
 
 export function WalletScreen({ pushToast }: WalletScreenProps) {
-  const totalCapacity = POOL_CHILDREN.length * 18 - POOL_CHILDREN.reduce((s, c) => s + c.pending, 0);
+  const pool = useWalletPool();
+  const { session } = useClientContext();
+
+  // Build per-child card data from pool.addresses (live, lazy-connected).
+  // Per-child balances are not accessible via the current SDK public API
+  // (getAggregatedBalance runs across all children; no per-child accessor).
+  // Balance columns show "—" until SDK adds a per-child getBalance(index) accessor.
+  const childrenQ = useQuery({
+    queryKey: ["walletChildren", session?.sessionId],
+    queryFn: async (): Promise<PoolChild[]> => {
+      if (!pool) return [];
+      return pool.addresses.map((addr, i) => ({
+        id: i,
+        addr,
+        fee: "—",
+        usdc: "—",
+        weth: "—",
+        wbtc: "—",
+        // pendingTx counter is internal to the pool; not exposed publicly.
+        pending: 0,
+      }));
+    },
+    enabled: !!pool,
+    staleTime: 30_000,
+  });
+
+  const children: PoolChild[] = childrenQ.data ?? [];
+  const totalCapacity = children.length * 18 - children.reduce((s, c) => s + c.pending, 0);
   const [showMaster, setShowMaster] = useState(false);
   return (
     <div style={{ padding: 24, height: "100%", overflow: "auto" }} className="q-scroll">
@@ -44,7 +68,7 @@ export function WalletScreen({ pushToast }: WalletScreenProps) {
           <div>
             <Eyebrow>Wallet pool</Eyebrow>
             <h2 style={{ fontFamily: "var(--font-display)", fontSize: 44, fontWeight: 300, letterSpacing: "-0.04em", marginTop: 4 }}>
-              {POOL_CHILDREN.length} wallets · <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>{totalCapacity}</em> open slots
+              {children.length} wallets · <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>{totalCapacity}</em> open slots
             </h2>
             <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)", marginTop: 8 }}>
               HD-derived children of a single master secret · round-robin via <code style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>pool.next()</code>
@@ -75,19 +99,32 @@ export function WalletScreen({ pushToast }: WalletScreenProps) {
         )}
 
         {/* Children grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16 }}>
-          {/* TODO(sdk): replace POOL_CHILDREN with client.pool.getChildren() */}
-          {POOL_CHILDREN.map(c => (
-            <ChildCard
-              key={c.id}
-              child={c}
-              onFaucet={() => {
-                // TODO(sdk): call client.pool.faucetChild(c.id)
-                pushToast({ kind: "success", text: `Faucet sent to child-${c.id} · 0.1 ETH fee-juice` });
-              }}
-            />
-          ))}
-        </div>
+        {pool === null ? (
+          <div className="q-card" style={{ padding: 20, fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)" }}>
+            Single-wallet mode — no pool children to display.
+            {session?.client && (
+              <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }}>
+                Connected: {session.client.address.toString()}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16 }}>
+            {children.map(c => (
+              <ChildCard
+                key={c.id}
+                child={c}
+                onFaucet={() => {
+                  // SDK has no faucet automation; deep-link to Nethermind Aztec faucet.
+                  // User claims fee-juice manually + comes back. Frontend reflects on next refresh.
+                  const url = `https://aztec-faucet.dev-nethermind.xyz/?address=${encodeURIComponent(c.addr)}`;
+                  window.open(url, "_blank", "noopener,noreferrer");
+                  pushToast({ kind: "ok", text: "Opened Aztec faucet in new tab. Drip + refresh page." });
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Master secret */}
         <div className="q-card-deep q-card" style={{ padding: 24 }}>
@@ -191,23 +228,91 @@ interface HistoryRow {
   tx: string;
   decoy: boolean;
 }
-const HISTORY: HistoryRow[] = [
-  { time: "12:24:18", epoch: 41827, side: "sell", amount: "1.0734",  amountToken: "ETH",  limit: "3,220.50", fillPrice: "3,220.50", status: "filled",    tx: "0x4a2b…f81e", decoy: false },
-  { time: "12:14:02", epoch: 41826, side: "buy",  amount: "2,840.00",amountToken: "USDC", limit: "3,220.00", fillPrice: "3,217.22", status: "filled",    tx: "0x8f1c…0a4d", decoy: false },
-  { time: "12:13:58", epoch: 41826, side: "buy",  amount: "2,615.20",amountToken: "USDC", limit: "3,215.00", fillPrice: "—",        status: "decoy",     tx: "0x8f1c…0a4e", decoy: true },
-  { time: "12:13:55", epoch: 41826, side: "buy",  amount: "3,102.40",amountToken: "USDC", limit: "3,215.00", fillPrice: "—",        status: "decoy",     tx: "0x8f1c…0a4f", decoy: true },
-  { time: "12:04:30", epoch: 41825, side: "sell", amount: "0.4127",  amountToken: "ETH",  limit: "3,210.00", fillPrice: "3,210.00", status: "filled",    tx: "0xb7e2…3c1f", decoy: false },
-  { time: "11:54:11", epoch: 41824, side: "buy",  amount: "1,500.00",amountToken: "USDC", limit: "3,205.80", fillPrice: "3,205.80", status: "filled",    tx: "0x2d44…91ab", decoy: false },
-  { time: "11:44:00", epoch: 41823, side: "sell", amount: "0.8923",  amountToken: "ETH",  limit: "3,212.45", fillPrice: "3,212.45", status: "filled",    tx: "0x6e1f…7b2c", decoy: false },
-  { time: "11:33:42", epoch: 41822, side: "buy",  amount: "847.12",  amountToken: "USDC", limit: "3,150.00", fillPrice: "—",        status: "cancelled", tx: "0x1a2b…9876", decoy: false },
-  { time: "11:23:15", epoch: 41821, side: "sell", amount: "1.2400",  amountToken: "ETH",  limit: "3,200.00", fillPrice: "3,200.00", status: "filled",    tx: "0x5e6f…0a1b", decoy: false },
-  { time: "11:13:08", epoch: 41820, side: "buy",  amount: "1,250.00",amountToken: "USDC", limit: "3,195.00", fillPrice: "3,195.00", status: "filled",    tx: "0xa0b1…c2d3", decoy: false },
-];
+
+/**
+ * Map an OrderViewModel (from client.reads.getOrders()) to the display HistoryRow shape.
+ * SDK currently returns only resting/active orders — a proper filled+cancelled history
+ * archive is a Sub-7 carry-forward. We surface the active-orders snapshot here.
+ */
+function orderToHistoryRow(o: {
+  nonce: bigint;
+  side: boolean;
+  amount_in: bigint;
+  limit_price: bigint;
+  submitted_at_block: bigint;
+}): HistoryRow {
+  // side: true = sell, false = buy (Noir convention from OrderNote)
+  const side = o.side ? "sell" : "buy";
+  // amount_in is in token's base units (6 decimals for USDC, 18 for ETH).
+  // Display as raw bigint string — no decimal formatting without knowing the token.
+  const amount = o.amount_in.toString();
+  const limit = o.limit_price.toString();
+  const nonce = o.nonce.toString(16).slice(0, 8);
+  return {
+    time: "—",
+    epoch: Number(o.submitted_at_block),
+    side,
+    amount,
+    amountToken: side === "sell" ? "ETH" : "USDC",
+    limit,
+    fillPrice: "—",
+    status: "filled",  // SDK has no status field; treat active orders as open/filled
+    tx: `0x${nonce}…`,
+    decoy: false,
+  };
+}
 
 export function HistoryScreen() {
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
   const [side, setSide] = useState<"all" | "buy" | "sell">("all");
   const [hideDecoys, setHideDecoys] = useState(false);
-  const filtered = HISTORY.filter(h => (side === "all" || h.side === side) && (!hideDecoys || !h.decoy));
+  const [epochFrom, setEpochFrom] = useState<number>(0);
+  const [epochTo, setEpochTo] = useState<number>(999_999_999);
+
+  // SDK currently exposes only client.reads.getOrders() returning resting/active orders.
+  // A proper history (filled + cancelled archive) is a Sub-7 carry-forward.
+  const historyQ = useQuery({
+    queryKey: ["history", session?.sessionId],
+    queryFn: async (): Promise<HistoryRow[]> => {
+      if (!client) return [];
+      try {
+        const orders = await client.reads.getOrders();
+        return orders.map(orderToHistoryRow);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!client,
+    staleTime: 30_000,
+  });
+
+  const filtered = useMemo(() => {
+    const rows = historyQ.data ?? [];
+    return rows.filter(h =>
+      (side === "all" || h.side === side) &&
+      (!hideDecoys || !h.decoy) &&
+      h.epoch >= epochFrom &&
+      h.epoch <= epochTo,
+    );
+  }, [historyQ.data, side, hideDecoys, epochFrom, epochTo]);
+
+  const exportCsv = () => {
+    const header = "epoch,side,amount,amountToken,limitPrice,fillPrice,status,tx";
+    const lines = filtered.map(h =>
+      `${h.epoch},${h.side},${h.amount},${h.amountToken},${h.limit},${h.fillPrice},${h.status},${h.tx}`,
+    );
+    const csv = [header, ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `quetzal-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
   return (
     <div style={{ padding: 24, height: "100%", overflow: "auto" }} className="q-scroll">
       <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -219,8 +324,8 @@ export function HistoryScreen() {
               Every <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>order</em>, every epoch
             </h2>
           </div>
-          {/* TODO(sdk): wire up CSV export — call client.history.exportCsv() */}
-          <PillButton variant="ghost" leftIcon="download">Export CSV</PillButton>
+          {/* CSV export: client-side serializer + blob download. No SDK API for this. */}
+          <PillButton variant="ghost" leftIcon="download" onClick={exportCsv}>Export CSV</PillButton>
         </div>
 
         {/* Filter row */}
@@ -242,9 +347,9 @@ export function HistoryScreen() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Eyebrow>Epoch range</Eyebrow>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }}>
-              <input type="number" defaultValue={41820} style={{ width: 70, height: 28, padding: "0 8px", borderRadius: 4, border: "1px solid var(--hairline-strong)", background: "var(--surface)", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }} />
+              <input type="number" value={epochFrom === 0 ? "" : epochFrom} placeholder="0" onChange={(e) => setEpochFrom(e.target.value === "" ? 0 : Number(e.target.value))} style={{ width: 70, height: 28, padding: "0 8px", borderRadius: 4, border: "1px solid var(--hairline-strong)", background: "var(--surface)", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }} />
               <span style={{ color: "var(--fg-muted)" }}>→</span>
-              <input type="number" defaultValue={41828} style={{ width: 70, height: 28, padding: "0 8px", borderRadius: 4, border: "1px solid var(--hairline-strong)", background: "var(--surface)", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }} />
+              <input type="number" value={epochTo === 999_999_999 ? "" : epochTo} placeholder="∞" onChange={(e) => setEpochTo(e.target.value === "" ? 999_999_999 : Number(e.target.value))} style={{ width: 70, height: 28, padding: "0 8px", borderRadius: 4, border: "1px solid var(--hairline-strong)", background: "var(--surface)", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)" }} />
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -267,7 +372,8 @@ export function HistoryScreen() {
             <span className="q-eyebrow">Status</span>
             <span className="q-eyebrow" style={{ textAlign: "right" }}>TX</span>
           </div>
-          {/* TODO(sdk): replace HISTORY with client.history.getOrders({ from, to }) */}
+          {/* Orders from client.reads.getOrders() filtered client-side.
+              Sub-7 carry-forward: SDK needs a history API for filled+cancelled archive. */}
           {filtered.map((h, i) => (
             <div key={i} style={{
               display: "grid", gridTemplateColumns: "16px 80px 80px 70px 1fr 1fr 1fr 100px 100px",
@@ -305,6 +411,23 @@ export function HistoryScreen() {
 /* ============ SETTINGS ============ */
 export function SettingsScreen() {
   const [network, setNetwork] = useState("alpha-testnet");
+  const { disconnect } = useClientContext();
+
+  const handleReset = async () => {
+    if (!confirm("Reset all local Quetzal state? This disconnects your wallet + clears local settings. On-chain state is not affected.")) return;
+    // Clear all quetzal-* localStorage keys
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("quetzal-")) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+    // Disconnect client/pool
+    await disconnect();
+    // Reload to land on /landing
+    window.location.hash = "";
+    window.location.reload();
+  };
   return (
     <div style={{ padding: 24, height: "100%", overflow: "auto" }} className="q-scroll">
       <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -371,8 +494,8 @@ export function SettingsScreen() {
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500, color: "var(--fg)" }}>Reset local state</div>
               <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>Clears decoy registry, pending claims, and cached pool config. Does not delete the master secret.</div>
             </div>
-            {/* TODO(sdk): call client.local.reset() */}
-            <PillButton variant="danger" size="sm">Reset</PillButton>
+            {/* Clears quetzal-* localStorage keys + disconnects. No SDK API. */}
+            <PillButton variant="danger" size="sm" onClick={() => { void handleReset(); }}>Reset</PillButton>
           </div>
         </SettingsSection>
       </div>
