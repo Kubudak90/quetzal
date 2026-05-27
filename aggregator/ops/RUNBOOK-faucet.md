@@ -8,6 +8,28 @@
 - Logs: `docker logs quetzal-faucet` (stdout) + `/root/quetzal-faucet/faucet/data/faucet.log` (audit JSONL)
 - Metrics: `curl -s https://faucet.quetzaldex.xyz/api/metrics`
 
+
+## Reverse proxy + TLS (Caddy)
+
+The VPS already runs Caddy on ports 80/443 with auto-Let's Encrypt for the
+existing tenant (`vipteam-api.arcstableswap.app`). Sub-7a adds a Caddy site
+block for our subdomain instead of standing up nginx separately:
+
+```bash
+# /etc/caddy/Caddyfile (appended):
+faucet.quetzaldex.xyz {
+    encode gzip
+    reverse_proxy localhost:3030
+}
+```
+
+After edit: `systemctl reload caddy`. Caddy obtains the cert via HTTP-01
+within ~5s. The first 100-200ms of the first request may block on cert
+issuance; subsequent requests are fast.
+
+The committed `infra/nginx/faucet.quetzaldex.xyz.conf` is a fallback for
+nginx-only hosts; the VPS uses Caddy (above) instead.
+
 ## Daily health check
 
 Run from any shell:
