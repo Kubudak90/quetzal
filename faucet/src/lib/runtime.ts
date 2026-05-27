@@ -1,0 +1,109 @@
+// Sub-7a Task 13: runtime singleton — wires loadConfig + RateLimiter +
+// L1Bridge + L2 mint helpers + AuditLog into a single cached object the
+// API routes consume via getRuntime().
+//
+// ── Adapted to Task 11 (commit 364522d) + efe7932 deviations ──────────────
+//
+// L1Bridge ctor signature is now { rpcUrl, privateKey, chainId, aztecNodeUrl }
+// (the plan in Task 13 referenced an earlier 2-arg shape that no longer
+// exists). chainId comes from config.l1ChainId (added in efe7932).
+// aztecNodeUrl reuses config.l2NodeUrl.
+//
+// L1Bridge.getFeeJuiceBalance() takes NO args — it auto-discovers the L1
+// fee-juice ERC20 from the Aztec node and returns `bigint | null` (null on
+// lookup failure). Drain detection uses getEthBalance() as the primary L1
+// liquidity signal because (a) it's never null, and (b) the operator pays
+// ETH for both gas AND the fee-juice deposit. We don't gate on
+// getFeeJuiceBalance() in the drain check to avoid spurious 503s when the
+// token-lookup side-channel transiently fails.
+
+import { loadConfig, type FaucetConfig } from "./config.js";
+import { RateLimiter } from "./rate-limit.js";
+import { L1Bridge } from "./l1-bridge.js";
+import { mintToPublic, getOperatorL2Balance, type MintResult } from "./l2-mint.js";
+import { AuditLog } from "./audit-log.js";
+
+export interface Runtime {
+  config: FaucetConfig;
+  rateLimiter: RateLimiter;
+  l1Bridge: L1Bridge;
+  mintTUSDC: (to: `0x${string}`, amount: bigint) => Promise<MintResult>;
+  mintTETH: (to: `0x${string}`, amount: bigint) => Promise<MintResult>;
+  checkDrained: () => Promise<boolean>;
+  auditLog: AuditLog;
+}
+
+let cached: Runtime | null = null;
+
+export function getRuntime(): Runtime {
+  if (cached) return cached;
+  const config = loadConfig();
+
+  const rateLimiter = new RateLimiter({
+    sqlitePath: config.sqlitePath,
+    cooldownSeconds: config.perIpCooldownSeconds,
+    dailyCap: config.globalDailyCap,
+  });
+
+  // L1Bridge ctor: { rpcUrl, privateKey, chainId, aztecNodeUrl }.
+  // (Plan's older 2-arg signature is gone — see lib/l1-bridge.ts header.)
+  const l1Bridge = new L1Bridge({
+    rpcUrl: config.l1RpcUrl,
+    privateKey: config.l1Pk,
+    chainId: config.l1ChainId,
+    aztecNodeUrl: config.l2NodeUrl,
+  });
+
+  const auditLog = new AuditLog(config.auditLogPath);
+
+  const mintTUSDC = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
+    mintToPublic(
+      { nodeUrl: config.l2NodeUrl, operatorSecret: config.l2Secret, tokenAddress: config.l2TUSDC },
+      to,
+      amount,
+    );
+  const mintTETH = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
+    mintToPublic(
+      { nodeUrl: config.l2NodeUrl, operatorSecret: config.l2Secret, tokenAddress: config.l2TETH },
+      to,
+      amount,
+    );
+
+  // Drain detection. Three signals:
+  //   1. L1 ETH balance < feeJuiceAmount/100 (very rough heuristic — fee-juice
+  //      deposits cost gas, not feeJuiceAmount, so this is a safety floor not
+  //      a precise threshold).
+  //   2. L2 tUSDC operator balance < tUSDCAmount * drainThresholdMultiplier.
+  //   3. L2 tETH operator balance < tETHAmount * drainThresholdMultiplier.
+  // L1 fee-juice ERC20 balance is INTENTIONALLY not part of the drain check:
+  // L1Bridge.getFeeJuiceBalance() returns `bigint | null` (null on
+  // auto-discovery failure), and we don't want a transient node hiccup to
+  // gate the whole faucet. If the L1 fee-juice runs dry, bridgeFeeJuice
+  // itself will throw and the pipeline turns it into a 503 — same outcome,
+  // less brittle.
+  const checkDrained = async (): Promise<boolean> => {
+    const ethBal = await l1Bridge.getEthBalance();
+    if (ethBal < config.feeJuiceAmount / 100n) return true;
+    const tUSDCBal = await getOperatorL2Balance({
+      nodeUrl: config.l2NodeUrl,
+      operatorSecret: config.l2Secret,
+      tokenAddress: config.l2TUSDC,
+    });
+    if (tUSDCBal < config.tUSDCAmount * BigInt(config.drainThresholdMultiplier)) return true;
+    const tETHBal = await getOperatorL2Balance({
+      nodeUrl: config.l2NodeUrl,
+      operatorSecret: config.l2Secret,
+      tokenAddress: config.l2TETH,
+    });
+    if (tETHBal < config.tETHAmount * BigInt(config.drainThresholdMultiplier)) return true;
+    return false;
+  };
+
+  cached = { config, rateLimiter, l1Bridge, mintTUSDC, mintTETH, checkDrained, auditLog };
+  return cached;
+}
+
+/** Test/teardown helper — clears the singleton. Not used by the live server. */
+export function _resetRuntimeForTesting(): void {
+  cached = null;
+}
