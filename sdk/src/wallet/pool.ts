@@ -32,20 +32,42 @@ interface PoolChild {
 }
 
 /**
+ * bn254 Fr modulus. Masking sha256 to 254 bits gives values up to 2^254 − 1,
+ * which is ~1.53× this modulus — so ~35% of raw hashes land in [p, 2^254) and
+ * `Fr.fromString` rejects them. Rejection-sampling below resolves it
+ * deterministically without changing the round-0 value for indices that
+ * land in-range.
+ */
+const P_BN254 = BigInt(
+  "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+);
+
+/**
  * Derive a child wallet secret from a master secret + index.
- * Formula: childSecret_i = sha256(masterHex_bytes || u32_be(i)),
- * with top 2 bits masked to fit into the bn254 field modulus.
+ *
+ * Formula (round 0): childSecret_i = sha256(masterHex_bytes || u32_be(i)),
+ * masked to 254 bits. If the result is ≥ p (bn254 Fr modulus), rehash with
+ * an extra `round` byte (1, 2, …) appended and retry. Round 0 preserves the
+ * original formula so addresses for in-range indices stay backward-compatible.
  */
 export function deriveChildSecret(masterHex: string, index: number): string {
-  const buf = Buffer.concat([
+  const baseBuf = Buffer.concat([
     Buffer.from(masterHex.slice(2), "hex"),
     Buffer.from(index.toString(16).padStart(8, "0"), "hex"),
   ]);
-  const digest = createHash("sha256").update(buf).digest("hex");
-  const masked = (BigInt("0x" + digest) & ((1n << 254n) - 1n))
-    .toString(16)
-    .padStart(64, "0");
-  return "0x" + masked;
+  for (let round = 0; round < 256; round++) {
+    const buf = round === 0
+      ? baseBuf
+      : Buffer.concat([baseBuf, Buffer.from([round])]);
+    const digest = createHash("sha256").update(buf).digest("hex");
+    const masked = BigInt("0x" + digest) & ((1n << 254n) - 1n);
+    if (masked < P_BN254) {
+      return "0x" + masked.toString(16).padStart(64, "0");
+    }
+  }
+  // Statistically impossible: 256 consecutive rounds all ≥ p has probability
+  // (~0.35)^256 ≈ 10^-117. If this fires, sha256 is broken.
+  throw new Error("deriveChildSecret: exhausted 256 rounds");
 }
 
 export class WalletPool {
