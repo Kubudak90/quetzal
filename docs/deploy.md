@@ -120,3 +120,4 @@ Status as of 2026-05-27: nameservers propagated (`ns1/ns2.vercel-dns.com`); A re
 ## Production deploys log
 
 - `2026-05-27` — initial deploy `dpl_Bb9hcxxud84qrMEQHar6igbUuu1U` (44.8 MB upload, ~3min build, Washington East)
+- `2026-05-27` — Sub-7a faucet **deployment pending operator action**. All committable artifacts shipped: 54 tests pass (53 unit + 1 opt-in integration), `pnpm -F @quetzal/faucet build` succeeds, Docker multi-stage Dockerfile + compose written, nginx + TLS template at `infra/nginx/faucet.quetzaldex.xyz.conf`, operator playbook at `aggregator/ops/RUNBOOK-faucet.md`. Operator next steps: (1) fund wallets per Prerequisites, (2) Vercel DNS A record `faucet.quetzaldex.xyz` → `194.163.136.1`, (3) follow first-time-deploy sequence in RUNBOOK + nginx README.

@@ -24,6 +24,83 @@ Look at:
 - `l2.operatorBalanceTETH` — should be ≥ 50 × 1e18 (50 tETH).
 - `rateLimit.totalRequests24h` — sanity check for traffic.
 
+## First-time deploy (one-shot)
+
+Run this once when bringing up a fresh VPS. Subsequent deploys use the "Deploying a new build" section below.
+
+### Prerequisites
+
+The operator's wallets must be pre-funded:
+
+| Resource | Where | Minimum | How to obtain |
+|---|---|---|---|
+| Sepolia ETH on `FAUCET_L1_PK` EOA | L1 | 0.5 ETH | https://sepoliafaucet.com/ or similar |
+| Fee-juice tokens on `FAUCET_L1_PK` | L1 ERC20 | 10000 (× 1e18) | Foundry scripts (see "Refill: L1 fee-juice" below) |
+| Fee-juice locked in FeeJuicePortal | L1 | 10000 (× 1e18) | After minting to EOA, approve + bridge into portal |
+| tUSDC mint rights | L2 admin | — | Already held by `quetzal.config.json:admin` |
+| tETH mint rights | L2 admin | — | Already held by `quetzal.config.json:admin` |
+| tUSDC balance on L2 admin | L2 | 1M (× 1e6) | `mint_to_public` from admin to self |
+| tETH balance on L2 admin | L2 | 500 (× 1e18) | `mint_to_public` from admin to self |
+
+### Bring-up sequence
+
+```
+# 1. Clone on VPS
+ssh root@194.163.136.1 'mkdir -p /root/quetzal-faucet && cd /root/quetzal-faucet && git clone https://github.com/Kubudak90/quetzal.git .'
+
+# 2. Fill in .env.faucet (paste secrets per template)
+ssh root@194.163.136.1 'cp /root/quetzal-faucet/faucet/.env.faucet.example /root/quetzal-faucet/faucet/.env.faucet'
+ssh root@194.163.136.1 'nano /root/quetzal-faucet/faucet/.env.faucet'
+
+# Required to fill in:
+#   FAUCET_L1_PK             (Sepolia EOA secret — funded per Prerequisites)
+#   FAUCET_L2_SECRET         (= quetzal.config.json:admin secret, from .env.testnet:AZTEC_ACCOUNT_SECRET)
+#   HCAPTCHA_SECRET_KEY      (from hCaptcha dashboard — or leave blank if using bypass-key only)
+#   FAUCET_HCAPTCHA_BYPASS_KEY  (long random string; used for CI + Sub-7b dev)
+
+# 3. Compile Noir + codegen TS bindings (required by faucet build)
+ssh root@194.163.136.1 'cd /root/quetzal-faucet && pnpm install && pnpm compile && pnpm codegen'
+
+# 4. Build + start the container
+ssh root@194.163.136.1 'cd /root/quetzal-faucet/faucet && docker-compose up -d --build'
+ssh root@194.163.136.1 'docker logs -f --tail 30 quetzal-faucet'
+
+# Wait for these log lines:
+#   Started PXE connected to chain 11155111 version 4127419662
+#   Server started on port 3030
+
+# 5. Local smoke test (port 3030 not yet TLS-fronted)
+ssh root@194.163.136.1 'curl -s http://localhost:3030/api/health | jq .'
+# Expected: status:"ok", balances populated, rollupVersion:4127419662
+
+# 6. Bypass-key drip test (substitute YOUR_BYPASS from .env.faucet)
+ssh root@194.163.136.1 'curl -s -X POST http://localhost:3030/api/drip \
+  -H "Content-Type: application/json" \
+  -d "{\"address\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"captchaToken\":\"$(grep FAUCET_HCAPTCHA_BYPASS_KEY /root/quetzal-faucet/faucet/.env.faucet | cut -d= -f2)\"}" | jq .'
+# Expected: success:true with claimData + tUSDCMint + tETHMint tx hashes
+```
+
+### Public-facing setup (DNS + TLS)
+
+See `/Users/huseyinarslan/Desktop/aztec-project/infra/nginx/README.md` for the DNS A-record + nginx + certbot walkthrough. Without this step the faucet is only reachable via `http://194.163.136.1:3030/` (no TLS, no CORS from the public Vercel frontend — Sub-7b won't be able to consume the API).
+
+### Post-deploy validation
+
+```
+# Should return success:true with valid claim data
+curl -s -X POST https://faucet.quetzaldex.xyz/api/drip \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: https://quetzaldex.xyz' \
+  -d "{\"address\":\"...\",\"captchaToken\":\"BYPASS\"}" | jq .
+
+# Optional: full chain E2E via scripts/wallet-pool-bootstrap.ts (run from local)
+QUETZAL_POOL_MASTER_SECRET=0x$(openssl rand -hex 32) \
+QUETZAL_POOL_N=1 \
+pnpm tsx scripts/wallet-pool-bootstrap.ts derive
+# Note the derived address, hit the faucet for it, then:
+pnpm tsx scripts/wallet-pool-bootstrap.ts deploy
+```
+
 ## Refill: L1 Sepolia ETH
 
 Get more Sepolia ETH from a faucet (e.g. https://sepoliafaucet.com/) and send to `FAUCET_L1_PK`'s address. Aim for ~0.5 ETH refill (~500 drips of headroom).
