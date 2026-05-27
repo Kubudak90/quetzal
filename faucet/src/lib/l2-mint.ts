@@ -52,7 +52,7 @@
 //    proofs. Same configuration used by every other testnet wallet in
 //    this repo (scripts/testnet-m2-token.ts, scripts/lib/aztec-wallet-bootstrap.ts).
 
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fr, Fq } from "@aztec/aztec.js/fields";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -73,6 +73,24 @@ export interface L2MintOpts {
    * already be deployed on L2 — we don't run `accountManager.deploy()` here.
    */
   operatorSecret: `0x${string}`;
+  /**
+   * Operator Schnorr salt as hex Fr (32 bytes). Must match what was used at
+   * account-creation time. Defaults to Fr.ZERO if not provided.
+   */
+  operatorSalt?: `0x${string}`;
+  /**
+   * Operator Schnorr signing key as hex Fq (32 bytes). REQUIRED when
+   * recreating an existing deployed account whose deploy used an explicit
+   * random signing key — without it, createSchnorrAccount(secret, salt)
+   * generates a fresh signing key and derives a DIFFERENT L2 address.
+   *
+   * Example: the m3-era admin (0x0524b493...) was deployed via
+   * scripts/testnet-m1-hello.ts → scripts/lib/aztec-wallet-bootstrap.ts which
+   * called `Fq.random()` and persisted the value to testnet-m1-state.json.
+   * To reach that same address from the faucet, FAUCET_L2_SIGNING_KEY must
+   * carry that persisted value.
+   */
+  operatorSigningKey?: `0x${string}`;
   /** Token contract address on L2. */
   tokenAddress: `0x${string}`;
 }
@@ -103,8 +121,12 @@ function cacheKey(nodeUrl: string, operatorSecret: `0x${string}`): string {
 async function getWalletEntry(
   nodeUrl: string,
   operatorSecret: `0x${string}`,
+  operatorSalt: `0x${string}` | undefined,
+  operatorSigningKey: `0x${string}` | undefined,
 ): Promise<WalletEntry> {
-  const key = cacheKey(nodeUrl, operatorSecret);
+  // Include salt + signingKey in the cache key — different keys derive different
+  // L2 addresses, so the cache must distinguish them.
+  const key = `${nodeUrl}::${operatorSecret}::${operatorSalt ?? "0"}::${operatorSigningKey ?? "default"}`;
   const existing = walletCache.get(key);
   if (existing) return existing;
 
@@ -115,14 +137,17 @@ async function getWalletEntry(
       ephemeral: false,
       pxe: { proverEnabled: true },
     });
-    // Salt is Fr.ZERO and signingKey defaults to a deterministic-from-secret
-    // value via createSchnorrAccount(secret, salt). The operator account must
-    // already be deployed on L2 (out-of-band, via the same M1 bootstrap flow
-    // used in scripts/testnet-m1-hello.ts).
-    const accountManager = await wallet.createSchnorrAccount(
-      Fr.fromString(operatorSecret),
-      Fr.ZERO,
-    );
+    const saltFr = operatorSalt ? Fr.fromString(operatorSalt) : Fr.ZERO;
+    const accountManager = operatorSigningKey
+      ? await wallet.createSchnorrAccount(
+          Fr.fromString(operatorSecret),
+          saltFr,
+          Fq.fromString(operatorSigningKey),
+        )
+      : await wallet.createSchnorrAccount(
+          Fr.fromString(operatorSecret),
+          saltFr,
+        );
     const operatorAddress = (await accountManager.getAccount()).getAddress();
     return { wallet, operatorAddress };
   })().catch((err) => {
@@ -147,6 +172,8 @@ async function getToken(opts: L2MintOpts): Promise<{
   const { wallet, operatorAddress } = await getWalletEntry(
     opts.nodeUrl,
     opts.operatorSecret,
+    opts.operatorSalt,
+    opts.operatorSigningKey,
   );
   const token = await TokenContract.at(AztecAddress.fromString(opts.tokenAddress), wallet);
   return { operatorAddress, token };

@@ -58,13 +58,25 @@ export function getRuntime(): Runtime {
 
   const mintTUSDC = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
     mintToPublic(
-      { nodeUrl: config.l2NodeUrl, operatorSecret: config.l2Secret, tokenAddress: config.l2TUSDC },
+      {
+        nodeUrl: config.l2NodeUrl,
+        operatorSecret: config.l2Secret,
+        operatorSalt: config.l2Salt,
+        operatorSigningKey: config.l2SigningKey,
+        tokenAddress: config.l2TUSDC,
+      },
       to,
       amount,
     );
   const mintTETH = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
     mintToPublic(
-      { nodeUrl: config.l2NodeUrl, operatorSecret: config.l2Secret, tokenAddress: config.l2TETH },
+      {
+        nodeUrl: config.l2NodeUrl,
+        operatorSecret: config.l2Secret,
+        operatorSalt: config.l2Salt,
+        operatorSigningKey: config.l2SigningKey,
+        tokenAddress: config.l2TETH,
+      },
       to,
       amount,
     );
@@ -87,12 +99,16 @@ export function getRuntime(): Runtime {
     const tUSDCBal = await getOperatorL2Balance({
       nodeUrl: config.l2NodeUrl,
       operatorSecret: config.l2Secret,
+      operatorSalt: config.l2Salt,
+      operatorSigningKey: config.l2SigningKey,
       tokenAddress: config.l2TUSDC,
     });
     if (tUSDCBal < config.tUSDCAmount * BigInt(config.drainThresholdMultiplier)) return true;
     const tETHBal = await getOperatorL2Balance({
       nodeUrl: config.l2NodeUrl,
       operatorSecret: config.l2Secret,
+      operatorSalt: config.l2Salt,
+      operatorSigningKey: config.l2SigningKey,
       tokenAddress: config.l2TETH,
     });
     if (tETHBal < config.tETHAmount * BigInt(config.drainThresholdMultiplier)) return true;

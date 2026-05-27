@@ -19,8 +19,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const node = createAztecNodeClient(rt.config.l2NodeUrl);
     const nodeInfo = await node.getNodeInfo();
 
-    const tUSDCBal = await getOperatorL2Balance({ nodeUrl: rt.config.l2NodeUrl, operatorSecret: rt.config.l2Secret, tokenAddress: rt.config.l2TUSDC });
-    const tETHBal = await getOperatorL2Balance({ nodeUrl: rt.config.l2NodeUrl, operatorSecret: rt.config.l2Secret, tokenAddress: rt.config.l2TETH });
+    const tUSDCBal = await getOperatorL2Balance({
+      nodeUrl: rt.config.l2NodeUrl,
+      operatorSecret: rt.config.l2Secret,
+      operatorSalt: rt.config.l2Salt,
+      operatorSigningKey: rt.config.l2SigningKey,
+      tokenAddress: rt.config.l2TUSDC,
+    });
+    const tETHBal = await getOperatorL2Balance({
+      nodeUrl: rt.config.l2NodeUrl,
+      operatorSecret: rt.config.l2Secret,
+      operatorSalt: rt.config.l2Salt,
+      operatorSigningKey: rt.config.l2SigningKey,
+      tokenAddress: rt.config.l2TETH,
+    });
 
     metrics.l1BalanceEth.set(Number(formatEther(ethBal)));
     if (feeJuiceBal !== null) metrics.l1BalanceFeeJuice.set(Number(feeJuiceBal));

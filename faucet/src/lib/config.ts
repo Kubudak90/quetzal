@@ -11,6 +11,18 @@ export interface FaucetConfig {
   l1ChainId: number;
   l2NodeUrl: string;
   l2Secret: `0x${string}`;
+  /**
+   * Optional Schnorr salt for recreating an existing deployed operator account.
+   * Defaults to Fr.ZERO in l2-mint.ts when undefined.
+   */
+  l2Salt?: `0x${string}`;
+  /**
+   * Optional Schnorr signing key for recreating an existing deployed operator
+   * account. REQUIRED when the on-chain admin's signing key wasn't derivable
+   * from the secret (e.g. the m3-era admin used `Fq.random()` in deploy and
+   * the value is persisted in testnet-m1-state.json).
+   */
+  l2SigningKey?: `0x${string}`;
   l2TUSDC: `0x${string}`;
   l2TETH: `0x${string}`;
   feeJuiceAmount: bigint;
@@ -61,6 +73,8 @@ export function loadConfig(): FaucetConfig {
     l1ChainId: asNumber("FAUCET_L1_CHAIN_ID", required("FAUCET_L1_CHAIN_ID")),
     l2NodeUrl: required("FAUCET_L2_NODE_URL"),
     l2Secret: required("FAUCET_L2_SECRET") as `0x${string}`,
+    l2Salt: (process.env.FAUCET_L2_SALT || undefined) as `0x${string}` | undefined,
+    l2SigningKey: (process.env.FAUCET_L2_SIGNING_KEY || undefined) as `0x${string}` | undefined,
     l2TUSDC: required("FAUCET_L2_TUSDC") as `0x${string}`,
     l2TETH: required("FAUCET_L2_TETH") as `0x${string}`,
     feeJuiceAmount: asBigint("FAUCET_FEE_JUICE_AMOUNT", required("FAUCET_FEE_JUICE_AMOUNT")),
