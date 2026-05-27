@@ -29,6 +29,7 @@ describe("RateLimiter", () => {
     const r = lim.checkAndRecord("1.2.3.4", clock);
     expect(r.allowed).toBe(false);
     expect(r.retryAfterSeconds).toBeGreaterThan(28_000);
+    expect(r.reason).toBe("per-ip");
   });
 
   test("request from same IP AFTER cooldown is allowed", () => {

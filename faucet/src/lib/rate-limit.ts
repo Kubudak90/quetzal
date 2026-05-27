@@ -6,6 +6,17 @@ export interface RateLimitResult {
   reason?: "per-ip" | "global-cap";
 }
 
+/**
+ * Wall-clock abstraction injected by callers for testability.
+ *
+ * **MUST return Unix seconds** (not milliseconds). The internal arithmetic
+ * uses `now - 86_400` for the 24-hour window and `now - cooldownSeconds` for
+ * the per-IP cooldown. Passing `Date.now` (milliseconds) collapses the daily
+ * window to 86.4 seconds and the cooldown to ~30ms — silent breakage with
+ * no runtime error.
+ *
+ * Production callers should use: `{ now: () => Math.floor(Date.now() / 1000) }`.
+ */
 export interface Clock { now(): number; }
 
 interface RateLimiterOpts {
@@ -26,6 +37,11 @@ export class RateLimiter {
 
   constructor(opts: RateLimiterOpts) {
     this.db = new Database(opts.sqlitePath);
+    // Single-process only. better-sqlite3 is synchronous, so check-then-record
+    // is effectively atomic WITHIN one Node process. Under PM2 cluster mode or
+    // multiple containers sharing the same SQLite file, the WAL does not
+    // serialize reads across processes — a distributed rate-limit layer
+    // (Redis, etc.) would be needed at that scale.
     this.db.pragma("journal_mode = WAL");
     this.db.prepare(
       `CREATE TABLE IF NOT EXISTS hits (
