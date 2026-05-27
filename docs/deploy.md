@@ -72,6 +72,26 @@ vercel env ls                              # list all
 vercel env pull .env.local                 # sync down for local dev
 ```
 
+## CI gate
+
+GitHub Actions runs on every `main` push + PR (`.github/workflows/ci.yml`, ~1m20s):
+
+| Step | What it gates |
+|---|---|
+| `pnpm -F @quetzal/sdk typecheck` | SDK type drift |
+| `pnpm -F @quetzal/frontend typecheck` | Frontend type drift |
+| `pnpm -F @quetzal/sdk test` | SDK unit suite (~98 tests, node:test) |
+| `pnpm -F @quetzal/cli test` | CLI unit suite (~74 tests, node:test) |
+| `pnpm -F @quetzal/frontend build` | Same build Vercel runs |
+
+**Not gated on CI** (intentional — would push CI from <2min to >15min):
+- CLI typecheck — depends on `contracts/*/target/*.json` (gitignored Noir artifacts); typecheck still runs locally pre-commit
+- L1 Foundry tests — needs `forge install` + Solidity toolchain
+- L2 Noir TXE tests — needs Docker + `nargo` via aztec-up
+- Integration tests under `tests/` — needs deployed contracts on Aztec sandbox
+
+For periodic full-stack gating, add a separate cron-triggered workflow.
+
 ## Production deploys log
 
 - `2026-05-27` — initial deploy `dpl_Bb9hcxxud84qrMEQHar6igbUuu1U` (44.8 MB upload, ~3min build, Washington East)
