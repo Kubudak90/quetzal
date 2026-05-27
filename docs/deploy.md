@@ -92,6 +92,21 @@ GitHub Actions runs on every `main` push + PR (`.github/workflows/ci.yml`, ~1m20
 
 For periodic full-stack gating, add a separate cron-triggered workflow.
 
+## Faucet service
+
+The Sub-7a Quetzal Faucet runs on the operator VPS (`194.163.136.1:3030`, exposed at `https://faucet.quetzaldex.xyz/`), separate from the Vercel-hosted frontend.
+
+| | |
+|---|---|
+| Endpoint | `POST https://faucet.quetzaldex.xyz/api/drip` |
+| Source | `faucet/` (workspace package `@quetzal/faucet`) |
+| Image | `quetzal-faucet:latest` (Docker, multi-stage Node 22 build) |
+| Restart policy | `unless-stopped` (docker-compose) |
+| Persistence | `./data/{faucet.sqlite, faucet.log}` (volume-mounted) |
+| Playbook | `aggregator/ops/RUNBOOK-faucet.md` |
+
+Deploy: `ssh root@194.163.136.1 'cd /root/quetzal-faucet && git pull && cd faucet && docker-compose up -d --build'`.
+
 ## Production deploys log
 
 - `2026-05-27` — initial deploy `dpl_Bb9hcxxud84qrMEQHar6igbUuu1U` (44.8 MB upload, ~3min build, Washington East)
