@@ -17,7 +17,7 @@
 # Stage 1: deps — install workspace deps from lockfile.
 # Cached aggressively when only source files change.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS deps
+FROM node:22-noble AS deps
 
 # pnpm via corepack (matches packageManager in repo root package.json: pnpm@9.12.0).
 RUN corepack enable pnpm
@@ -103,7 +103,7 @@ RUN pnpm build
 # Carries node_modules across from the build stage; rebuilds the better-sqlite3
 # native binding to be safe against any toolchain skew between stages.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-noble AS runtime
 
 RUN corepack enable pnpm
 
@@ -139,7 +139,7 @@ COPY --from=build /repo/tests ./tests
 COPY --from=build /repo/faucet ./faucet
 
 # Defense-in-depth: rebuild better-sqlite3 against this stage's libc/node. The
-# deps + runtime stages both use node:22-bookworm-slim so a rebuild SHOULD be a
+# deps + runtime stages both use node:22-noble so a rebuild SHOULD be a
 # no-op, but if the prebuilt binding ships with mismatched glibc symbols
 # `require('better-sqlite3')` will throw on first request. We rebuild from the
 # workspace root with --filter so pnpm resolves the package correctly via the
