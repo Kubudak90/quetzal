@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-const HexAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be 0x-prefixed hex32");
+// 0x-prefixed 32-byte hex — format check only. The stricter bn254-modulus +
+// non-zero check lives in @/lib/address.ts (added in Task 3) and is applied
+// at API-route boundary BEFORE this schema runs.
+const HexAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be 0x-prefixed 32-byte hex");
 
 export const DripRequestSchema = z.object({
   address: HexAddress,
