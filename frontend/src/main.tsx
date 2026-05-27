@@ -1,4 +1,7 @@
+import React from "react";
 import ReactDOM from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ClientProvider } from "./sdk/client-context.js";
 import App from "./App.js";
 
 declare global {
@@ -7,4 +10,22 @@ declare global {
   }
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Reads against a private L2 are expensive; cache aggressively + manual refetch
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <ClientProvider>
+        <App />
+      </ClientProvider>
+    </QueryClientProvider>
+  </React.StrictMode>,
+);

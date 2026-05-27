@@ -13,6 +13,7 @@ import { BridgeScreen } from "./screens/bridge.js";
 import {
   WalletScreen, HistoryScreen, SettingsScreen,
 } from "./screens/wallet-history-settings.js";
+import { useClientContext } from "./sdk/client-context.js";
 
 const VALID_ROUTES = ["landing", "setup", "trade", "bridge", "wallet", "history", "settings"] as const;
 type Route = (typeof VALID_ROUTES)[number];
@@ -39,6 +40,8 @@ function toToastState(t: ToastIn): ToastState {
   return { kind: t.kind, text: t.text, title: t.text, tone };
 }
 
+const PROTECTED_ROUTES = ["trade", "bridge", "wallet", "history", "settings"] as const;
+
 export default function App() {
   const [route, _setRoute] = useState<Route>(routeFromHash());
   const setRoute = (r: Route) => {
@@ -51,6 +54,15 @@ export default function App() {
     window.addEventListener("hashchange", h);
     return () => window.removeEventListener("hashchange", h);
   }, []);
+
+  // Protected-route guard: redirect to setup if not connected
+  const { session } = useClientContext();
+  useEffect(() => {
+    if (!session && (PROTECTED_ROUTES as readonly string[]).includes(route)) {
+      setRoute("setup");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, session]);
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

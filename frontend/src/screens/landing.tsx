@@ -1,12 +1,14 @@
 // Quetzal — Landing + First-launch setup
 // Ported from _design-source/landing-setup.jsx. Tweaks panel dropped.
 
-import { useState, Fragment } from "react";
+import { useState, Fragment, useCallback } from "react";
 import type { CSSProperties } from "react";
 import {
   Eyebrow, Hairline, PillButton, AddressMono, Segmented,
   FeatherGlyph, FeatherWatermark, Badge,
 } from "../components/atoms.js";
+import { useClientContext } from "../sdk/client-context.js";
+import type { NetworkName } from "@quetzal/sdk";
 
 /* ============ LANDING ============ */
 export function LandingScreen({ onStart }: { onStart: () => void }) {
@@ -109,13 +111,71 @@ function LandingStat({ n, label }: { n: string; label: string }) {
   );
 }
 
+/** Generate a fresh 32-byte hex master secret */
+function generateMasterSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return "0x" + Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /* ============ FIRST-LAUNCH SETUP ============ */
 export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(0); // 0=mode, 1=secret, 2=size+net, 3=faucet
   const [mode, setMode] = useState<string | null>(null);
   const [n, setN] = useState(3);
-  const [network, setNetwork] = useState("alpha-testnet");
+  const [network, setNetwork] = useState<NetworkName>("alpha-testnet");
   const [funded, setFunded] = useState<boolean[]>([false, false, false]);
+
+  // Master secret: generated fresh on mount; user can regenerate or import
+  const [generatedSecret, setGeneratedSecret] = useState(() => generateMasterSecret());
+  const [importedSecret, setImportedSecret] = useState("");
+  // The effective secret: imported takes precedence if non-empty
+  const masterSecret = importedSecret.trim() || generatedSecret;
+
+  // Local error display for connect failures
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const { connectAztecWallet, connectWalletPool, connecting, lastError } = useClientContext();
+
+  const regenerateSecret = useCallback(() => {
+    setGeneratedSecret(generateMasterSecret());
+    setImportedSecret("");
+  }, []);
+
+  const copySecret = useCallback(() => {
+    void navigator.clipboard.writeText(generatedSecret);
+  }, [generatedSecret]);
+
+  /** Called from the Aztec Wallet mode button on step 0 */
+  const handleConnectAztecWallet = useCallback(async () => {
+    setLocalError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const provider = (window as any).aztec;
+    if (!provider) {
+      setLocalError("Aztec Wallet not detected. Install the browser extension.");
+      return;
+    }
+    try {
+      await connectAztecWallet({ provider, network });
+      onComplete();
+    } catch {
+      // lastError is already populated by the context
+    }
+  }, [connectAztecWallet, network, onComplete]);
+
+  /** Called from the final "Enter Quetzal" button on step 3 */
+  const handleConnectPool = useCallback(async () => {
+    setLocalError(null);
+    try {
+      await connectWalletPool({ masterSecret, n, network });
+      onComplete();
+    } catch {
+      // lastError is already populated by the context
+    }
+  }, [connectWalletPool, masterSecret, n, network, onComplete]);
+
+  /** The inline error to show: prefer local override, fall back to context error */
+  const displayError = localError ?? (lastError ? `${lastError.code}: ${lastError.message}` : null);
 
   function fund(i: number) {
     const next = [...funded];
@@ -186,10 +246,31 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
               />
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 32 }}>
-              <PillButton size="lg" variant="primary" disabled={!mode} onClick={() => mode === "wallet-pool" ? setStep(1) : onComplete()} rightIcon="arrow-right">
-                {mode === "aztec-wallet" ? "Connect Aztec Wallet" : "Continue"}
+              <PillButton
+                size="lg"
+                variant="primary"
+                disabled={!mode || connecting}
+                onClick={() => {
+                  if (mode === "wallet-pool") {
+                    setStep(1);
+                  } else if (mode === "aztec-wallet") {
+                    void handleConnectAztecWallet();
+                  }
+                }}
+                rightIcon={connecting && mode === "aztec-wallet" ? undefined : "arrow-right"}
+              >
+                {connecting && mode === "aztec-wallet"
+                  ? "Connecting..."
+                  : mode === "aztec-wallet"
+                  ? "Connect Aztec Wallet"
+                  : "Continue"}
               </PillButton>
             </div>
+            {displayError && mode === "aztec-wallet" && (
+              <div style={{ marginTop: 12, color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "right" }}>
+                {displayError}
+              </div>
+            )}
           </div>
         )}
 
@@ -213,12 +294,12 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
                   fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg)",
                   wordBreak: "break-all", lineHeight: 1.5,
                 }}>
-                  0x9d2c1f8a4b3e7d6c5f1e2a9b8c7d6e5f<br/>
-                  4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8
+                  {generatedSecret.slice(0, 34)}<br/>
+                  {generatedSecret.slice(34)}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-                  <PillButton size="sm" variant="ink" leftIcon="copy">Copy</PillButton>
-                  <PillButton size="sm" variant="ghost" leftIcon="refresh-cw">Regenerate</PillButton>
+                  <PillButton size="sm" variant="ink" leftIcon="copy" onClick={copySecret}>Copy</PillButton>
+                  <PillButton size="sm" variant="ghost" leftIcon="refresh-cw" onClick={regenerateSecret}>Regenerate</PillButton>
                 </div>
               </div>
               <div className="q-card" style={{ padding: 24 }}>
@@ -227,11 +308,17 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
                 <p style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--fg-muted)", marginTop: 8, lineHeight: 1.5 }}>
                   Paste an existing 64-character hex secret to restore your pool. Children derive deterministically — same secret, same addresses.
                 </p>
-                <textarea placeholder="0x…" style={{
-                  width: "100%", height: 80, marginTop: 16, padding: 12,
-                  background: "var(--surface)", border: "1px solid var(--hairline-strong)", borderRadius: 6,
-                  fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)", resize: "none",
-                }} />
+                <textarea
+                  placeholder="0x…"
+                  value={importedSecret}
+                  onChange={(e) => setImportedSecret(e.target.value)}
+                  style={{
+                    width: "100%", height: 80, marginTop: 16, padding: 12,
+                    background: "var(--surface)", border: "1px solid var(--hairline-strong)", borderRadius: 6,
+                    fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)", resize: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
@@ -269,7 +356,7 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
               <div>
                 <Eyebrow>Network</Eyebrow>
                 <div style={{ marginTop: 8 }}>
-                  <Segmented value={network} onChange={setNetwork} fullWidth options={[
+                  <Segmented value={network} onChange={(id) => setNetwork(id as NetworkName)} fullWidth options={[
                     { id: "alpha-testnet", label: "alpha-testnet" },
                     { id: "sandbox",       label: "sandbox" },
                     { id: "mainnet",       label: "mainnet" },
@@ -330,11 +417,26 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
-              <PillButton size="lg" variant="ghost" onClick={() => setStep(2)} leftIcon="arrow-left">Back</PillButton>
-              <PillButton size="lg" variant="primary" disabled={!fundedSafe.slice(0, 1).some(Boolean)} onClick={onComplete} rightIcon="arrow-right">
-                {allFunded ? "Enter Quetzal" : `Continue with ${fundedSafe.filter(Boolean).length}/${n} funded`}
+              <PillButton size="lg" variant="ghost" onClick={() => setStep(2)} leftIcon="arrow-left" disabled={connecting}>Back</PillButton>
+              <PillButton
+                size="lg"
+                variant="primary"
+                disabled={!fundedSafe.slice(0, 1).some(Boolean) || connecting}
+                onClick={() => void handleConnectPool()}
+                rightIcon={connecting ? undefined : "arrow-right"}
+              >
+                {connecting
+                  ? "Connecting..."
+                  : allFunded
+                  ? "Enter Quetzal"
+                  : `Continue with ${fundedSafe.filter(Boolean).length}/${n} funded`}
               </PillButton>
             </div>
+            {displayError && (
+              <div style={{ marginTop: 12, color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "right" }}>
+                {displayError}
+              </div>
+            )}
           </div>
         )}
       </div>
