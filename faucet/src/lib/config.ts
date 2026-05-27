@@ -7,7 +7,8 @@ export interface FaucetConfig {
   nodeEnv: string;
   l1RpcUrl: string;
   l1Pk: `0x${string}`;
-  l1FeeJuicePortal: `0x${string}`;
+  l1FeeJuicePortal?: `0x${string}`;
+  l1ChainId: number;
   l2NodeUrl: string;
   l2Secret: `0x${string}`;
   l2TUSDC: `0x${string}`;
@@ -56,7 +57,8 @@ export function loadConfig(): FaucetConfig {
     nodeEnv: required("FAUCET_NODE_ENV"),
     l1RpcUrl: required("FAUCET_L1_RPC_URL"),
     l1Pk: required("FAUCET_L1_PK") as `0x${string}`,
-    l1FeeJuicePortal: required("FAUCET_L1_FEE_JUICE_PORTAL") as `0x${string}`,
+    l1FeeJuicePortal: (process.env.FAUCET_L1_FEE_JUICE_PORTAL || undefined) as `0x${string}` | undefined,
+    l1ChainId: asNumber("FAUCET_L1_CHAIN_ID", required("FAUCET_L1_CHAIN_ID")),
     l2NodeUrl: required("FAUCET_L2_NODE_URL"),
     l2Secret: required("FAUCET_L2_SECRET") as `0x${string}`,
     l2TUSDC: required("FAUCET_L2_TUSDC") as `0x${string}`,

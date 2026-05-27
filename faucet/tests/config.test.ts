@@ -7,6 +7,7 @@ const MINIMAL_ENV: Record<string, string> = {
   FAUCET_L1_RPC_URL: "https://sepolia.example",
   FAUCET_L1_PK: "0x" + "11".repeat(32),
   FAUCET_L1_FEE_JUICE_PORTAL: "0x" + "22".repeat(20),
+  FAUCET_L1_CHAIN_ID: "11155111",
   FAUCET_L2_NODE_URL: "https://node.example",
   FAUCET_L2_SECRET: "0x" + "33".repeat(32),
   FAUCET_L2_TUSDC: "0x" + "44".repeat(32),
@@ -42,12 +43,26 @@ describe("loadConfig", () => {
     expect(cfg.tUSDCAmount).toBe(1_000_000_000n);
     expect(cfg.allowedOrigins.length).toBe(1);
     expect(cfg.drainThresholdMultiplier).toBe(10);
+    expect(cfg.l1ChainId).toBe(11155111);
   });
 
   test("throws ConfigError when a required key is missing", () => {
     Object.assign(process.env, { ...MINIMAL_ENV });
     delete process.env.FAUCET_L1_PK;
     expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  test("throws ConfigError when FAUCET_L1_CHAIN_ID is missing", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV });
+    delete process.env.FAUCET_L1_CHAIN_ID;
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  test("does NOT throw when FAUCET_L1_FEE_JUICE_PORTAL is missing (now optional)", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV });
+    delete process.env.FAUCET_L1_FEE_JUICE_PORTAL;
+    const cfg = loadConfig();
+    expect(cfg.l1FeeJuicePortal).toBeUndefined();
   });
 
   test("parses comma-separated allowed origins + /regex/ entries", () => {
