@@ -1,6 +1,7 @@
 // Quetzal — shared screen-level components (TypeScript)
 // All depend on atoms. Aztec tokens loaded via CSS vars.
 
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import { Eyebrow, Dot, Badge, PillButton } from "./atoms.js";
 
@@ -344,6 +345,80 @@ export function PoolCapacityBar({ current, max = 18 }: PoolCapacityBarProps) {
 }
 
 /* ============================================================
+   PairSelector — token pair picker (compact)
+   ============================================================ */
+interface PairOption {
+  id: string;
+  label: string;
+  priceLabel?: string;
+}
+interface PairSelectorProps {
+  value: string;
+  options: PairOption[];
+  onChange: (id: string) => void;
+}
+export function PairSelector({ value, options, onChange }: PairSelectorProps) {
+  const [open, setOpen] = useState(false);
+  const cur = options.find(o => o.id === value) ?? options[0];
+  if (!cur) return null;
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen(!open)} style={{
+        display: "flex", alignItems: "center", gap: 10,
+        background: "transparent", border: "1px solid var(--hairline-strong)",
+        borderRadius: 6, height: 48, padding: "0 14px", cursor: "pointer", width: "100%",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+          <TokenPair pair={cur.id} />
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, color: "var(--fg)" }}>{cur.label}</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <div data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{cur.priceLabel}</div>
+        </div>
+        <i data-lucide={open ? "chevron-up" : "chevron-down"} style={{ width: 14, height: 14, color: "var(--fg-muted)", strokeWidth: 1.5 } as CSSProperties}></i>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+          background: "var(--surface)", border: "1px solid var(--hairline-strong)",
+          borderRadius: 6, boxShadow: "var(--shadow-pop)", zIndex: 20,
+          overflow: "hidden",
+        }}>
+          {options.map(opt => (
+            <button key={opt.id} onClick={() => { onChange(opt.id); setOpen(false); }} style={{
+              display: "flex", alignItems: "center", gap: 10, width: "100%",
+              background: "transparent", border: "none", padding: "10px 14px", cursor: "pointer",
+              borderBottom: "1px solid var(--hairline)", textAlign: "left",
+            }}>
+              <TokenPair pair={opt.id} />
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--fg)", flex: 1 }}>{opt.label}</div>
+              <div data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{opt.priceLabel}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   TokenPair — two overlapping token glyphs
+   ============================================================ */
+interface TokenPairProps {
+  pair: string;
+}
+export function TokenPair({ pair }: TokenPairProps) {
+  const tokens = pair.split("/");
+  return (
+    <div style={{ display: "flex", alignItems: "center" }}>
+      {tokens.map((t, i) => (
+        <TokenGlyph key={i} token={t} style={{ marginLeft: i > 0 ? -6 : 0, zIndex: tokens.length - i }} />
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================
    TokenGlyph — circular token icon (used by PairChip internally)
    ============================================================ */
 interface TokenGlyphProps {
@@ -351,7 +426,7 @@ interface TokenGlyphProps {
   size?: number;
   style?: CSSProperties;
 }
-function TokenGlyph({ token, size = 22, style }: TokenGlyphProps) {
+export function TokenGlyph({ token, size = 22, style }: TokenGlyphProps) {
   type TokenColors = { bg: string; fg: string; char: string };
   const colors: Record<string, TokenColors> = {
     USDC: { bg: "#2775CA", fg: "#fff", char: "$" },
