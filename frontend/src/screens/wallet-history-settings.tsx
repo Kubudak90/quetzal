@@ -485,6 +485,29 @@ export function SettingsScreen() {
           </SettingRow>
         </SettingsSection>
 
+        <SettingsSection title="Help">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500, color: "var(--fg)" }}>Onboarding tour</div>
+              <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>Walk through Quetzal's privacy features again.</div>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("quetzal-tour-seen");
+                alert("Tour will fire next time you visit Trade.");
+              }}
+              style={{
+                background: "transparent", border: "1px solid var(--hairline-strong)",
+                borderRadius: 8, padding: "8px 14px",
+                fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)",
+                cursor: "pointer",
+              }}
+            >
+              Replay onboarding tour
+            </button>
+          </div>
+        </SettingsSection>
+
         <SettingsSection title="Danger zone">
           <div style={{
             border: "1px solid rgba(255,26,26,0.35)", background: "rgba(255,26,26,0.04)",

@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import {
   Dot, AddressMono, QuetzalLogo, Toast, StepDivider,
+  Eyebrow, PillButton, FeatherWatermark,
 } from "./components/atoms.js";
 import { LandingScreen, SetupScreen } from "./screens/landing.js";
 import { TradeScreen } from "./screens/trade.js";
@@ -109,8 +110,29 @@ export default function App() {
     document.body.className = rootClasses;
   }, [rootClasses]);
 
-  // TODO: re-enable onboarding tour (TourOverlay JSX stripped; tourSteps content lives in
-  // commit history at frontend/_design-source/app.jsx).
+  // Onboarding tour state
+  const [tourStep, setTourStep] = useState<number>(-1); // -1 = not active
+  // First-visit-to-trade trigger
+  useEffect(() => {
+    if (route === "trade" && session && tourStep === -1) {
+      const seen = localStorage.getItem("quetzal-tour-seen");
+      if (seen !== "1") setTourStep(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, session]);
+
+  const tourSteps: TourStep[] = [
+    { title: "Wallet pool", body: "Quetzal uses N HD-derived child wallets in round-robin. Manage them at /wallet.", target: "nav-wallet" },
+    { title: "Decoys", body: "Decoys submit unfillable orders alongside yours so observers can't pick out which is real. Pick 0–4.", target: "decoy-area" },
+    { title: "Round-amount advisory", body: "Round numbers (1 USDC, 100 ETH) are easy to fingerprint. The form warns inline and suggests a perturbed amount.", target: "advisory-area" },
+    { title: "Round-trip warning", body: "On Bridge → Exit, if your withdrawal matches a recent deposit, you'll be warned that the two could be linked.", target: "nav-bridge" },
+    { title: "Epoch clearing", body: "Orders are matched in 10-minute batches. Your order lands at the next epoch close at a single uniform price.", target: "epoch-card" },
+  ];
+
+  const handleTourSkip = () => {
+    setTourStep(-1);
+    localStorage.setItem("quetzal-tour-seen", "1");
+  };
 
   return (
     <div className={rootClasses} style={{
@@ -135,6 +157,65 @@ export default function App() {
       </div>
 
       <Toast toast={toast} />
+
+      {/* Onboarding tour: 5 steps fired on first /trade visit */}
+      {tourStep >= 0 && tourStep < tourSteps.length && (
+        <TourOverlay
+          step={tourSteps[tourStep]}
+          index={tourStep}
+          total={tourSteps.length}
+          onNext={() => setTourStep((s) => s + 1)}
+          onSkip={handleTourSkip}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============ ONBOARDING TOUR ============ */
+interface TourStep {
+  title: string;
+  body: string;
+  target: string;
+}
+
+function TourOverlay({
+  step, index, total, onNext, onSkip,
+}: {
+  step: TourStep;
+  index: number;
+  total: number;
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 200,
+      background: "rgba(26, 20, 0, 0.55)",
+      backdropFilter: "blur(2px)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <div className="q-card" style={{
+        maxWidth: 480, padding: 32, position: "relative",
+        background: "var(--surface-card)",
+      }}>
+        <FeatherWatermark size={180} opacity={0.06} style={{ position: "absolute", top: -20, right: -20 }} />
+        <div style={{ position: "relative" }}>
+          <Eyebrow>Tour · {index + 1} / {total}</Eyebrow>
+          <h3 style={{ fontFamily: "var(--font-display)", fontSize: 32, fontWeight: 300, letterSpacing: "-0.03em", marginTop: 8 }}>
+            {step.title}
+          </h3>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)", marginTop: 12, lineHeight: 1.55 }}>
+            {step.body}
+          </p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, gap: 8 }}>
+            <button onClick={onSkip} style={{ background: "transparent", border: "none", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg-muted)", cursor: "pointer", textDecoration: "underline" }}>Skip tour</button>
+            <PillButton variant="primary" onClick={index === total - 1 ? onSkip : onNext} rightIcon={index === total - 1 ? "check" : "arrow-right"}>
+              {index === total - 1 ? "Done" : "Next"}
+            </PillButton>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
