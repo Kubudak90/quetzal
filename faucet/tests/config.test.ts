@@ -60,4 +60,24 @@ describe("loadConfig", () => {
     expect(cfg.allowedOrigins[0]).toBe("https://quetzaldex.xyz");
     expect(cfg.allowedOrigins[1]).toBeInstanceOf(RegExp);
   });
+
+  test("rejects single-slash CORS wildcard (degenerate regex)", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_ALLOWED_ORIGINS: "/" });
+    const cfg = loadConfig();
+    // "/" stays a plain string, not promoted to an empty regex that matches all
+    expect(cfg.allowedOrigins).toEqual(["/"]);
+  });
+
+  test("rejects two-slash degenerate (//)", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_ALLOWED_ORIGINS: "//" });
+    const cfg = loadConfig();
+    expect(cfg.allowedOrigins).toEqual(["//"]);
+  });
+
+  test("accepts minimal three-char regex /a/", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_ALLOWED_ORIGINS: "/a/" });
+    const cfg = loadConfig();
+    expect(cfg.allowedOrigins[0]).toBeInstanceOf(RegExp);
+    expect((cfg.allowedOrigins[0] as RegExp).source).toBe("a");
+  });
 });

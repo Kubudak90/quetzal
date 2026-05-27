@@ -43,7 +43,7 @@ function asNumber(name: string, raw: string): number {
 
 function parseAllowedOrigins(raw: string): Array<string | RegExp> {
   return raw.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
-    if (s.startsWith("/") && s.endsWith("/")) {
+    if (s.length >= 3 && s.startsWith("/") && s.endsWith("/")) {
       return new RegExp(s.slice(1, -1));
     }
     return s;
