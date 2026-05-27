@@ -107,6 +107,16 @@ The Sub-7a Quetzal Faucet runs on the operator VPS (`194.163.136.1:3030`, expose
 
 Deploy: `ssh root@194.163.136.1 'cd /root/quetzal-faucet && git pull && cd faucet && docker-compose up -d --build'`.
 
+### One-time setup (DNS + TLS)
+
+See `infra/nginx/README.md` for the operator walkthrough. Steps:
+1. Add Vercel DNS A record: `faucet.quetzaldex.xyz` → `194.163.136.1`.
+2. Install nginx + certbot on VPS.
+3. Copy `infra/nginx/faucet.quetzaldex.xyz.conf` to `/etc/nginx/sites-available/`.
+4. Run `certbot --nginx -d faucet.quetzaldex.xyz`.
+
+Status as of 2026-05-27: nameservers propagated (`ns1/ns2.vercel-dns.com`); A record + cert still pending operator action.
+
 ## Production deploys log
 
 - `2026-05-27` — initial deploy `dpl_Bb9hcxxud84qrMEQHar6igbUuu1U` (44.8 MB upload, ~3min build, Washington East)
