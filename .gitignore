@@ -64,3 +64,9 @@ deploy-bridge-state.json
 quetzal.config.m3-backup.json
 .vercel
 frontend/tsconfig.tsbuildinfo
+
+# Sub-7a faucet
+faucet/.next/
+faucet/.env.faucet
+faucet/data/
+faucet/tsconfig.tsbuildinfo
