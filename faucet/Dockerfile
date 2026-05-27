@@ -17,7 +17,7 @@
 # Stage 1: deps — install workspace deps from lockfile.
 # Cached aggressively when only source files change.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS deps
+FROM node:22-trixie-slim AS deps
 
 # pnpm via corepack (matches packageManager in repo root package.json: pnpm@9.12.0).
 RUN corepack enable pnpm
@@ -110,18 +110,13 @@ RUN corepack enable pnpm
 # wget is used by HEALTHCHECK + docker-compose healthcheck. ca-certificates so
 # outbound HTTPS to the L2 PXE / L1 RPC works. python3/make/g++ are present
 # in case the `pnpm rebuild better-sqlite3` below has to fall back to
-# compiling the binding from source (matching node versions should make this
-# a no-op, but we pay the ~80MB once to avoid runtime failures on first req).
-# @aztec/bb.js's prebuilt nodejs_module.node was compiled against GLIBCXX_3.4.32
-# (gcc 13+ toolchain). Bookworm's libstdc++6 ships GLIBCXX up to 3.4.30, so the
-# native module fails to dlopen at runtime. We pull libstdc++6 from Debian
-# trixie (which has GCC 13.3 / GLIBCXX 3.4.33+) without switching the base image.
-RUN echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list.d/trixie.list \
-    && printf 'Package: *\nPin: release n=trixie\nPin-Priority: 100\n' > /etc/apt/preferences.d/trixie \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends -t trixie libstdc++6 \
+# compiling the binding from source.
+#
+# Base is node:22-trixie-slim (Debian 13). Trixie ships libstdc++6 14.2 which
+# provides GLIBCXX 3.4.33+, required by @aztec/bb.js's prebuilt native module.
+# (Bookworm-slim only goes up to 3.4.30 and breaks at dlopen.)
+RUN apt-get update \
     && apt-get install -y --no-install-recommends wget ca-certificates python3 make g++ \
-    && rm /etc/apt/sources.list.d/trixie.list /etc/apt/preferences.d/trixie \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
