@@ -1,10 +1,15 @@
 import { describe, test, expect, beforeEach } from "vitest";
 import { RateLimiter } from "@/lib/rate-limit";
 
-function makeLimiter(opts?: Partial<{ cooldownSeconds: number; dailyCap: number }>) {
+function makeLimiter(opts?: Partial<{
+  perIpMaxDripsPerWindow: number;
+  perIpWindowSeconds: number;
+  dailyCap: number;
+}>) {
   return new RateLimiter({
     sqlitePath: ":memory:",
-    cooldownSeconds: opts?.cooldownSeconds ?? 28_800,
+    perIpMaxDripsPerWindow: opts?.perIpMaxDripsPerWindow ?? 4,
+    perIpWindowSeconds: opts?.perIpWindowSeconds ?? 28_800,
     dailyCap: opts?.dailyCap ?? 500,
   });
 }
@@ -14,39 +19,59 @@ const clock = { now: () => now };
 
 beforeEach(() => { now = 1_700_000_000; });
 
-describe("RateLimiter", () => {
-  test("first request for an IP is allowed", () => {
-    const lim = makeLimiter();
-    const r = lim.checkAndRecord("1.2.3.4", clock);
-    expect(r.allowed).toBe(true);
-    expect(r.retryAfterSeconds).toBeUndefined();
+describe("RateLimiter — per-IP count-in-window", () => {
+  test("first N hits from same IP are allowed (default 4 per 8h)", () => {
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 4, perIpWindowSeconds: 28_800 });
+    for (let i = 0; i < 4; i++) {
+      const r = lim.checkAndRecord("1.2.3.4", clock);
+      expect(r.allowed).toBe(true);
+      now += 10;
+    }
   });
 
-  test("second request from same IP within cooldown is throttled", () => {
-    const lim = makeLimiter();
-    lim.checkAndRecord("1.2.3.4", clock);
-    now += 100;
+  test("(N+1)-th hit within window is throttled", () => {
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 4, perIpWindowSeconds: 28_800 });
+    for (let i = 0; i < 4; i++) {
+      lim.checkAndRecord("1.2.3.4", clock);
+      now += 10;
+    }
     const r = lim.checkAndRecord("1.2.3.4", clock);
     expect(r.allowed).toBe(false);
-    expect(r.retryAfterSeconds).toBeGreaterThan(28_000);
     expect(r.reason).toBe("per-ip");
+    expect(r.retryAfterSeconds).toBeGreaterThan(28_000);
   });
 
-  test("request from same IP AFTER cooldown is allowed", () => {
-    const lim = makeLimiter();
+  test("hits older than window do not count", () => {
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 2, perIpWindowSeconds: 100 });
     lim.checkAndRecord("1.2.3.4", clock);
-    now += 28_801;
+    now += 50;
+    lim.checkAndRecord("1.2.3.4", clock);
+    now += 60; // first hit now 110s old — out of window
     const r = lim.checkAndRecord("1.2.3.4", clock);
     expect(r.allowed).toBe(true);
   });
 
-  test("different IPs do not share cooldown", () => {
-    const lim = makeLimiter();
+  test("retryAfterSeconds = (oldest in-window hit's age subtracted from window)", () => {
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 2, perIpWindowSeconds: 100 });
+    lim.checkAndRecord("1.2.3.4", clock);
+    now += 10;
+    lim.checkAndRecord("1.2.3.4", clock);
+    now += 5;
+    const r = lim.checkAndRecord("1.2.3.4", clock);
+    expect(r.allowed).toBe(false);
+    // Oldest hit was 15s ago in a 100s window → retry in 85s.
+    expect(r.retryAfterSeconds).toBe(85);
+  });
+
+  test("different IPs do not share counts", () => {
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 1, perIpWindowSeconds: 100 });
     lim.checkAndRecord("1.2.3.4", clock);
     const r = lim.checkAndRecord("5.6.7.8", clock);
     expect(r.allowed).toBe(true);
   });
+});
 
+describe("RateLimiter — global cap and stats", () => {
   test("global daily cap blocks all requests at the limit", () => {
     const lim = makeLimiter({ dailyCap: 2 });
     expect(lim.checkAndRecord("1.1.1.1", clock).allowed).toBe(true);
@@ -58,7 +83,7 @@ describe("RateLimiter", () => {
   });
 
   test("stats: totalRequests24h and throttled24h", () => {
-    const lim = makeLimiter();
+    const lim = makeLimiter({ perIpMaxDripsPerWindow: 1 });
     lim.checkAndRecord("1.1.1.1", clock);
     now += 1; lim.checkAndRecord("1.1.1.1", clock);
     now += 1; lim.checkAndRecord("2.2.2.2", clock);

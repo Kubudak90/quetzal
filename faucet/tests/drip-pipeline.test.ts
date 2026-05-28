@@ -5,7 +5,7 @@ import { RateLimiter } from "@/lib/rate-limit";
 function mkDeps(overrides: Partial<DripDeps> = {}): DripDeps {
   return {
     verifyCaptcha: vi.fn().mockResolvedValue(true),
-    rateLimiter: new RateLimiter({ sqlitePath: ":memory:", cooldownSeconds: 28800, dailyCap: 500 }),
+    rateLimiter: new RateLimiter({ sqlitePath: ":memory:", perIpMaxDripsPerWindow: 4, perIpWindowSeconds: 28_800, dailyCap: 500 }),
     clock: { now: () => 1_700_000_000 },
     bridgeFeeJuice: vi.fn().mockResolvedValue({
       l1TxHash: "0x" + "aa".repeat(32),
@@ -73,7 +73,9 @@ describe("runDripPipeline", () => {
   });
 
   test("rate-limited -> 429 with retryAfter", async () => {
-    const deps = mkDeps();
+    const deps = mkDeps({
+      rateLimiter: new RateLimiter({ sqlitePath: ":memory:", perIpMaxDripsPerWindow: 1, perIpWindowSeconds: 28_800, dailyCap: 500 }),
+    });
     await runDripPipeline({ address: "0x" + "11".repeat(32), captchaToken: "v", ip: "5.5.5.5", deps });
     const r2 = await runDripPipeline({ address: "0x" + "22".repeat(32), captchaToken: "v", ip: "5.5.5.5", deps });
     expect(r2.status).toBe(429);

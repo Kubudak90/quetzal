@@ -10,10 +10,10 @@ export interface RateLimitResult {
  * Wall-clock abstraction injected by callers for testability.
  *
  * **MUST return Unix seconds** (not milliseconds). The internal arithmetic
- * uses `now - 86_400` for the 24-hour window and `now - cooldownSeconds` for
- * the per-IP cooldown. Passing `Date.now` (milliseconds) collapses the daily
- * window to 86.4 seconds and the cooldown to ~30ms — silent breakage with
- * no runtime error.
+ * uses `now - 86_400` for the 24-hour window and `now - perIpWindowSeconds`
+ * for the per-IP window. Passing `Date.now` (milliseconds) collapses the daily
+ * window to 86.4 seconds and the per-IP window to milliseconds — silent
+ * breakage with no runtime error.
  *
  * Production callers should use: `{ now: () => Math.floor(Date.now() / 1000) }`.
  */
@@ -21,28 +21,30 @@ export interface Clock { now(): number; }
 
 interface RateLimiterOpts {
   sqlitePath: string;
-  cooldownSeconds: number;
+  perIpMaxDripsPerWindow: number;
+  perIpWindowSeconds: number;
   dailyCap: number;
 }
 
 /**
- * SQLite-backed per-IP cooldown + global daily cap.
+ * SQLite-backed per-IP count-in-window + global daily cap.
  * Schema bootstrap uses prepare().run() per statement (safer than multi-statement
  * helpers; same end state).
  */
 export class RateLimiter {
   private readonly db: Database.Database;
-  private readonly cooldown: number;
+  private readonly perIpMax: number;
+  private readonly perIpWindow: number;
   private readonly cap: number;
 
   constructor(opts: RateLimiterOpts) {
     this.db = new Database(opts.sqlitePath);
+    this.db.pragma("journal_mode = WAL");
     // Single-process only. better-sqlite3 is synchronous, so check-then-record
     // is effectively atomic WITHIN one Node process. Under PM2 cluster mode or
     // multiple containers sharing the same SQLite file, the WAL does not
     // serialize reads across processes — a distributed rate-limit layer
     // (Redis, etc.) would be needed at that scale.
-    this.db.pragma("journal_mode = WAL");
     this.db.prepare(
       `CREATE TABLE IF NOT EXISTS hits (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,29 +55,35 @@ export class RateLimiter {
     ).run();
     this.db.prepare("CREATE INDEX IF NOT EXISTS idx_hits_ts ON hits(ts)").run();
     this.db.prepare("CREATE INDEX IF NOT EXISTS idx_hits_ip_ts ON hits(ip, ts)").run();
-    this.cooldown = opts.cooldownSeconds;
+    this.perIpMax = opts.perIpMaxDripsPerWindow;
+    this.perIpWindow = opts.perIpWindowSeconds;
     this.cap = opts.dailyCap;
   }
 
   checkAndRecord(ip: string, clock: Clock): RateLimitResult {
     const now = clock.now();
-    const since = now - 86_400;
+    const since24h = now - 86_400;
     const countRow = this.db
       .prepare("SELECT COUNT(*) AS n FROM hits WHERE ts >= ? AND allowed = 1")
-      .get(since) as { n: number };
+      .get(since24h) as { n: number };
     if (countRow.n >= this.cap) {
       this.recordHit(ip, now, false);
       return { allowed: false, reason: "global-cap" };
     }
-    const lastRow = this.db
-      .prepare("SELECT ts FROM hits WHERE ip = ? AND allowed = 1 ORDER BY ts DESC LIMIT 1")
-      .get(ip) as { ts: number } | undefined;
-    if (lastRow && now - lastRow.ts < this.cooldown) {
+    const windowStart = now - this.perIpWindow;
+    const ipHits = this.db
+      .prepare(
+        "SELECT ts FROM hits WHERE ip = ? AND allowed = 1 AND ts >= ? ORDER BY ts ASC"
+      )
+      .all(ip, windowStart) as Array<{ ts: number }>;
+    if (ipHits.length >= this.perIpMax) {
       this.recordHit(ip, now, false);
+      const oldest = ipHits[0]!.ts;
+      const retryAfterSeconds = this.perIpWindow - (now - oldest);
       return {
         allowed: false,
         reason: "per-ip",
-        retryAfterSeconds: this.cooldown - (now - lastRow.ts),
+        retryAfterSeconds,
       };
     }
     this.recordHit(ip, now, true);
