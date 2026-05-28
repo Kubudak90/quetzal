@@ -43,8 +43,14 @@ export class SchnorrSecretAdapter implements WalletAdapter {
     );
     const account = await accountManager.getAccount();
     this.embeddedWallet = wallet;
+    // Return the EmbeddedWallet itself (extends BaseWallet → has executeUtility
+    // via PXE delegation), NOT the Account. Account has getAddress()/getCompleteAddress()
+    // but lacks the executeUtility/sendTx methods that
+    // ContractFunctionInteraction.{simulate,send} call into. The address comes
+    // from the account; all contract calls use { from: address } to identify caller.
+    // Mirrors scripts/seed-lp.ts and cli/src/wallet.ts which pass EmbeddedWallet.
     return {
-      wallet: account as unknown as import("@aztec/aztec.js/wallet").Wallet,
+      wallet: wallet as unknown as import("@aztec/aztec.js/wallet").Wallet,
       address: account.getAddress(),
     };
   }
