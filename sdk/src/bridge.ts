@@ -1,8 +1,10 @@
 // sdk/src/bridge.ts
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
+import { computeSecretHash } from "@aztec/stdlib/hash";
+import type { WalletClient } from "viem";
 import type { QuetzalClient } from "./client.js";
-import type { ScheduledExit, QuetzalContracts } from "./types.js";
+import type { ScheduledExit, QuetzalContracts, NetworkConfig } from "./types.js";
 import { BridgeError, ConfigError } from "./errors.js";
 import { buildSplitSchedule, loadBridgeState, saveBridgeState } from "./privacy/bridge-schedule.js";
 import { queryRecentDeposits, isRoundTripRisk } from "./privacy/bridge-history.js";
@@ -45,6 +47,87 @@ export interface BridgeExitInput {
 export interface BridgeTickInput {
   autoClaim?: boolean;
 }
+
+// ─── L1 bridge ABI fragments (TokenBridge.sol, contracts-l1/src/TokenBridge.sol) ──
+
+const ERC20_APPROVE_ABI = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+// NOTE: actual on-chain ABI differs from the Sub-7c plan's draft ABI in two
+// ways verified against contracts-l1/out/TokenBridge.sol/TokenBridge.json:
+//   1. The L1 ERC20 getter is `l1Token()`, NOT `underlyingToken()` (which is
+//      the FeeJuicePortal's name — different contract).
+//   2. The emitted event is `DepositInitiated`, NOT `DepositToAztecPublic`
+//      (also a FeeJuicePortal artifact). DepositInitiated has shape:
+//        (address indexed sender,
+//         bytes32 indexed l2Recipient,
+//         uint256 amount,
+//         bytes32 secretHash,
+//         uint256 messageIndex,
+//         bool    isPrivate)
+//      Topic0: 0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909
+//      Data layout (non-indexed): amount | secretHash | messageIndex | isPrivate
+const BRIDGE_DEPOSIT_ABI = [
+  {
+    type: "function",
+    name: "depositToL2Public",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "l2Recipient", type: "bytes32" },
+      { name: "secretHash", type: "bytes32" },
+    ],
+    outputs: [
+      { name: "messageHash", type: "bytes32" },
+      { name: "messageIndex", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "depositToL2Private",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "secretHash", type: "bytes32" },
+    ],
+    outputs: [
+      { name: "messageHash", type: "bytes32" },
+      { name: "messageIndex", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "l1Token",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "event",
+    name: "DepositInitiated",
+    inputs: [
+      { name: "sender", type: "address", indexed: true },
+      { name: "l2Recipient", type: "bytes32", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "secretHash", type: "bytes32", indexed: false },
+      { name: "messageIndex", type: "uint256", indexed: false },
+      { name: "isPrivate", type: "bool", indexed: false },
+    ],
+  },
+] as const;
+
+const DEPOSIT_INITIATED_TOPIC =
+  "0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909" as const;
 
 // ─── Validators / helpers ────────────────────────────────────────────────────
 
@@ -103,12 +186,43 @@ function toFr(v: Fr | string): Fr {
   return new Fr(BigInt(v));
 }
 
+function resolveL1Bridge(
+  l1: NonNullable<NetworkConfig["l1"]>,
+  token: string,
+): `0x${string}` {
+  const map: Record<string, string | undefined> = {
+    tUSDC: l1.usdcBridge,
+    aUSDC: l1.usdcBridge,
+    tETH: l1.wethBridge,
+    aWETH: l1.wethBridge,
+    tBTC: l1.wbtcBridge,
+    aWBTC: l1.wbtcBridge,
+  };
+  const addr = map[token];
+  if (!addr) {
+    throw new BridgeError(
+      "UNKNOWN",
+      `unknown token alias '${token}' for L1 bridge. Known: tUSDC/aUSDC, tETH/aWETH, tBTC/aWBTC.`,
+    );
+  }
+  return addr as `0x${string}`;
+}
+
 // ─── Module-level helpers (exported for test mockability) ────────────────────
 
 export const _internals = {
   async getNode(nodeUrl: string) {
     const { createAztecNodeClient } = await import("@aztec/aztec.js/node");
     return createAztecNodeClient(nodeUrl);
+  },
+  async getViem() {
+    const viem = await import("viem");
+    const chains = await import("viem/chains");
+    return {
+      createPublicClient: viem.createPublicClient,
+      http: viem.http,
+      sepolia: chains.sepolia,
+    };
   },
 };
 
@@ -118,16 +232,123 @@ export class BridgeApi {
   constructor(private client: QuetzalClient) {}
 
   /**
-   * L1->L2 deposit.  Not yet wired in the SDK body: the canonical reference
-   * implementation is the operator runbook for Sub-5b (scripts/deploy-bridge.ts);
-   * the SDK API surface is reserved for a future operator-facing wiring task.
+   * L1->L2 deposit. Browser-friendly viem-backed implementation:
+   *   1. Validate token alias → L1 bridge address (via config.l1.{usdc,weth,wbtc}Bridge).
+   *   2. Read the underlying L1 ERC20 from `TokenBridge.l1Token()`.
+   *   3. Generate a fresh claim secret (Fr.random) + poseidon2 hash; the
+   *      secret never leaves the browser. The caller uses it later for
+   *      client.bridge.claim().
+   *   4. ERC20.approve(bridge, amount).
+   *   5. TokenBridge.depositToL2{Public,Private}(amount, l2Recipient, secretHash).
+   *   6. Parse the DepositInitiated event log → messageIndex.
+   *
+   * NOTE on private deposits: the current implementation re-uses the same
+   * secretHash for both `secretHashForRedeemingMintedNotes` and
+   * `secretHashForL2MessageConsumption` (depositToL2Private only takes one
+   * secretHash today). Production hardening (separate secrets) is deferred
+   * to Sub-7d.
    */
-  async deposit(input: BridgeDepositInput): Promise<BridgeDepositResult> {
-    void input;
-    throw new BridgeError(
-      "UNKNOWN",
-      "BridgeApi.deposit is not implemented yet; use the Sub-5b deploy-bridge script for L1 deposits.",
+  async deposit(
+    input: BridgeDepositInput,
+    l1Wallet: WalletClient,
+  ): Promise<BridgeDepositResult> {
+    const l1 = this.client.config.l1;
+    if (!l1) {
+      throw new BridgeError(
+        "UNKNOWN",
+        "config.l1 (usdcBridge/wethBridge/wbtcBridge) is required for deposit",
+      );
+    }
+    const l1Bridge = resolveL1Bridge(l1, input.token);
+
+    const account = l1Wallet.account;
+    if (!account) {
+      throw new BridgeError(
+        "UNKNOWN",
+        "l1Wallet must be a connected viem WalletClient with an account",
+      );
+    }
+
+    const { createPublicClient, http, sepolia } = await _internals.getViem();
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(l1.rpcUrl ?? "https://sepolia.drpc.org"),
+    });
+
+    // Read L1 ERC20 from the bridge (TokenBridge.l1Token()).
+    const l1TokenAddr = (await publicClient.readContract({
+      address: l1Bridge,
+      abi: BRIDGE_DEPOSIT_ABI,
+      functionName: "l1Token",
+    })) as `0x${string}`;
+
+    // Generate the L1→L2 claim secret in the browser (never leaves it).
+    const secretFr = Fr.random();
+    const secretHashFr = await computeSecretHash(secretFr);
+    const secretHashHex = secretHashFr.toString() as `0x${string}`;
+
+    // Recipient on L2: padded to 32 bytes (Aztec address format).
+    const l2RecipientBytes32 = this.client.address.toString() as `0x${string}`;
+
+    // 1. approve the bridge to spend the user's ERC20.
+    const approveHash = await l1Wallet.writeContract({
+      address: l1TokenAddr,
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [l1Bridge, input.amount],
+      account,
+      chain: sepolia,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: approveHash });
+
+    // 2. bridge deposit (Public takes l2Recipient + secretHash; Private takes only secretHash).
+    let depositHash: `0x${string}`;
+    if (input.isPrivate) {
+      depositHash = await l1Wallet.writeContract({
+        address: l1Bridge,
+        abi: BRIDGE_DEPOSIT_ABI,
+        functionName: "depositToL2Private",
+        args: [input.amount, secretHashHex],
+        account,
+        chain: sepolia,
+      });
+    } else {
+      depositHash = await l1Wallet.writeContract({
+        address: l1Bridge,
+        abi: BRIDGE_DEPOSIT_ABI,
+        functionName: "depositToL2Public",
+        args: [input.amount, l2RecipientBytes32, secretHashHex],
+        account,
+        chain: sepolia,
+      });
+    }
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash });
+
+    // Parse the DepositInitiated event log for messageIndex.
+    const depositLog = receipt.logs.find(
+      (log: { topics?: readonly string[]; data?: string }) =>
+        log.topics?.[0]?.toLowerCase() === DEPOSIT_INITIATED_TOPIC,
     );
+    if (!depositLog) {
+      throw new BridgeError(
+        "UNKNOWN",
+        "deposit succeeded but DepositInitiated event not found in receipt logs",
+      );
+    }
+    // Non-indexed data layout per TokenBridge.sol DepositInitiated:
+    //   amount (32) | secretHash (32) | messageIndex (32) | isPrivate (32)
+    // messageIndex is the 3rd 32-byte word (offset 64 bytes = 128 hex chars after "0x").
+    const data = (depositLog as { data: string }).data;
+    const messageIndexHex = ("0x" +
+      data.slice(2 + 32 * 2 * 2, 2 + 32 * 3 * 2)) as `0x${string}`;
+    const messageIndex = BigInt(messageIndexHex);
+
+    return {
+      l1TxHash: depositHash,
+      messageIndex,
+      secret: secretFr.toString(),
+      secretHash: secretHashHex,
+    };
   }
 
   /**
