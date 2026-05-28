@@ -4,7 +4,7 @@ import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useQuetzalClient, useClientContext } from "../../sdk/client-context.js";
-import { Eyebrow, PillButton, Field } from "../../components/atoms.js";
+import { Eyebrow, PillButton, Field, Segmented, Tooltip } from "../../components/atoms.js";
 import { RoundAmountAdvisory } from "../../components/screens-shared.js";
 import {
   addPendingWithdraw,
@@ -71,6 +71,7 @@ export function ExitTab({ pushToast }: { pushToast: PushToast }) {
 
   const [token, setToken] = useState("USDC");
   const [amount, setAmount] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
   const [recipient, setRecipient] = useState("0x9Aa12B3C4d5E6f7890aB1c2D3e4F5067890aBcDe");
   const [splitInto, setSplitInto] = useState(1);
   const [interval, setIntervalDays] = useState(7);
@@ -90,12 +91,13 @@ export function ExitTab({ pushToast }: { pushToast: PushToast }) {
   const showRoundTrip = !isNaN(parsed) && parsed >= 2400 && parsed <= 2600;
 
   const exitMut = useMutation({
-    mutationFn: async (input: { token: string; amount: bigint; l1Recipient: string; splitInto: number; intervalDays: number; ackRound: boolean; ackDelay: boolean }) => {
+    mutationFn: async (input: { token: string; amount: bigint; l1Recipient: string; isPrivate: boolean; splitInto: number; intervalDays: number; ackRound: boolean; ackDelay: boolean }) => {
       if (!client) throw new Error("Not connected");
       return await client.bridge.exit({
         token: input.token,
         amount: input.amount,
         l1Recipient: input.l1Recipient,
+        isPrivate: input.isPrivate,
         splitInto: input.splitInto > 1 ? input.splitInto : undefined,
         intervalDays: input.splitInto > 1 ? input.intervalDays : undefined,
         ackRound: input.ackRound,
@@ -112,13 +114,12 @@ export function ExitTab({ pushToast }: { pushToast: PushToast }) {
         // Sub-7c D2 (Task 13): persist for L1 withdraw polling. The polling
         // panel watches buildOutboxProof; once the L2 epoch finalises on L1,
         // the user can click "Withdraw" which calls prepareL1Withdraw +
-        // MetaMask sign+send. Carryforward (Sub-7d): the exit form doesn't
-        // expose an isPrivate toggle yet — defaults to public.
+        // MetaMask sign+send. isPrivate routes to withdrawPrivate vs withdraw.
         addPendingWithdraw({
           token: vars.token,
           amount: vars.amount.toString(),
           l1Recipient: vars.l1Recipient as `0x${string}`,
-          isPrivate: false,
+          isPrivate: vars.isPrivate,
           l2TxHash: exitResult.l2TxHash as `0x${string}`,
           status: "pending",
           createdAt: Date.now(),
@@ -139,6 +140,26 @@ export function ExitTab({ pushToast }: { pushToast: PushToast }) {
     <>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
       <div className="q-card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Privacy mode */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Eyebrow>Privacy mode</Eyebrow>
+            <Tooltip body="Private exits burn from your private L2 balance; only you can claim the L1 withdrawal. Public exits spend from your public L2 balance and are linkable on-chain.">
+              <i data-lucide="help-circle" style={{ width: 12, height: 12, color: "var(--fg-muted)", strokeWidth: 1.5 } as CSSProperties}></i>
+            </Tooltip>
+          </div>
+          <Segmented
+            value={visibility}
+            onChange={(v) => setVisibility(v as "private" | "public")}
+            fullWidth
+            size="lg"
+            options={[
+              { id: "private", label: "Private", dot: "private", activeBg: "var(--aztec-ink)", activeFg: "var(--aztec-parchment)" },
+              { id: "public",  label: "Public",  dot: "public",  activeBg: "var(--surface)",  activeFg: "var(--fg)" },
+            ]}
+          />
+        </div>
 
         {/* Token + amount + recipient */}
         <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8 }}>
@@ -231,6 +252,7 @@ export function ExitTab({ pushToast }: { pushToast: PushToast }) {
             token,
             amount: parseAmount(amount, 6),
             l1Recipient: recipient,
+            isPrivate: visibility === "private",
             splitInto,
             intervalDays: interval,
             ackRound,

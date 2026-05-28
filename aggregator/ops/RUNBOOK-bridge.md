@@ -53,7 +53,6 @@ location.reload();
 
 ## Known carry-forwards (Sub-7d)
 
-- ExitTab has no public/private toggle — addPendingWithdraw hardcodes `isPrivate: false`.
 - Token-alias normalisation now accepts UI ids ("USDC"/"WETH"/"wBTC") + t*/a* aliases, but new tokens require an SDK update.
 - bridge.tsx is over 1000 lines; consider splitting into per-tab files.
 - The split-into-N scheduled exit path does not yet auto-add pending-withdraw rows on tick.
