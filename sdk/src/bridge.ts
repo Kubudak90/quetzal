@@ -103,6 +103,15 @@ function toFr(v: Fr | string): Fr {
   return new Fr(BigInt(v));
 }
 
+// ─── Module-level helpers (exported for test mockability) ────────────────────
+
+export const _internals = {
+  async getNode(nodeUrl: string) {
+    const { createAztecNodeClient } = await import("@aztec/aztec.js/node");
+    return createAztecNodeClient(nodeUrl);
+  },
+};
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export class BridgeApi {
@@ -119,6 +128,27 @@ export class BridgeApi {
       "UNKNOWN",
       "BridgeApi.deposit is not implemented yet; use the Sub-5b deploy-bridge script for L1 deposits.",
     );
+  }
+
+  /**
+   * Returns `true` when the given L1→L2 deposit message hash has membership in
+   * the Aztec inbox tree — i.e. the sequencer has finalised it and a claim can
+   * now succeed.  Browser UI polls this every 30 s to flip a pending claim from
+   * 'Waiting' to 'Ready to claim'.
+   *
+   * @param messageHash  0x-prefixed 32-byte hex string (64 hex chars + "0x" = 66 chars total)
+   * @throws {BridgeError} if messageHash is malformed
+   */
+  async getMessageReady(messageHash: `0x${string}`): Promise<boolean> {
+    if (!messageHash.startsWith("0x") || messageHash.length !== 66) {
+      throw new BridgeError(
+        "UNKNOWN",
+        `messageHash must be a 0x-prefixed 32-byte hex string (66 chars), got: ${messageHash}`,
+      );
+    }
+    const node = await _internals.getNode(this.client.config.nodeUrl);
+    const witness = await node.getL1ToL2MessageMembershipWitness("latest", Fr.fromHexString(messageHash));
+    return witness !== undefined;
   }
 
   async claim(input: BridgeClaimInput): Promise<{ l2TxHash: string }> {
