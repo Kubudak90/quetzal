@@ -31,7 +31,8 @@ export interface FaucetConfig {
   hcaptchaSecretKey: string;
   hcaptchaBypassKey: string;
   globalDailyCap: number;
-  perIpCooldownSeconds: number;
+  perIpMaxDripsPerWindow: number;
+  perIpWindowSeconds: number;
   allowedOrigins: Array<string | RegExp>;
   drainThresholdMultiplier: number;
   sqlitePath: string;
@@ -83,7 +84,8 @@ export function loadConfig(): FaucetConfig {
     hcaptchaSecretKey: required("HCAPTCHA_SECRET_KEY"),
     hcaptchaBypassKey: required("FAUCET_HCAPTCHA_BYPASS_KEY"),
     globalDailyCap: asNumber("FAUCET_GLOBAL_DAILY_CAP", required("FAUCET_GLOBAL_DAILY_CAP")),
-    perIpCooldownSeconds: asNumber("FAUCET_PER_IP_COOLDOWN_SECONDS", required("FAUCET_PER_IP_COOLDOWN_SECONDS")),
+    perIpMaxDripsPerWindow: asNumber("FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW", required("FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW")),
+    perIpWindowSeconds: asNumber("FAUCET_PER_IP_WINDOW_SECONDS", required("FAUCET_PER_IP_WINDOW_SECONDS")),
     allowedOrigins: parseAllowedOrigins(required("FAUCET_ALLOWED_ORIGINS")),
     drainThresholdMultiplier: asNumber("FAUCET_DRAIN_THRESHOLD_MULTIPLIER", required("FAUCET_DRAIN_THRESHOLD_MULTIPLIER")),
     sqlitePath: required("FAUCET_SQLITE_PATH"),

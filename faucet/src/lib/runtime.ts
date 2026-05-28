@@ -41,8 +41,8 @@ export function getRuntime(): Runtime {
 
   const rateLimiter = new RateLimiter({
     sqlitePath: config.sqlitePath,
-    perIpMaxDripsPerWindow: 4,
-    perIpWindowSeconds: config.perIpCooldownSeconds,
+    perIpMaxDripsPerWindow: config.perIpMaxDripsPerWindow,
+    perIpWindowSeconds: config.perIpWindowSeconds,
     dailyCap: config.globalDailyCap,
   });
 

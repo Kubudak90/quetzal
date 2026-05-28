@@ -18,7 +18,8 @@ const MINIMAL_ENV: Record<string, string> = {
   HCAPTCHA_SECRET_KEY: "test-secret",
   FAUCET_HCAPTCHA_BYPASS_KEY: "BYPASS",
   FAUCET_GLOBAL_DAILY_CAP: "500",
-  FAUCET_PER_IP_COOLDOWN_SECONDS: "28800",
+  FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW: "4",
+  FAUCET_PER_IP_WINDOW_SECONDS: "28800",
   FAUCET_ALLOWED_ORIGINS: "https://quetzaldex.xyz",
   FAUCET_DRAIN_THRESHOLD_MULTIPLIER: "10",
   FAUCET_SQLITE_PATH: ":memory:",
@@ -44,6 +45,8 @@ describe("loadConfig", () => {
     expect(cfg.allowedOrigins.length).toBe(1);
     expect(cfg.drainThresholdMultiplier).toBe(10);
     expect(cfg.l1ChainId).toBe(11155111);
+    expect(cfg.perIpMaxDripsPerWindow).toBe(4);
+    expect(cfg.perIpWindowSeconds).toBe(28_800);
   });
 
   test("throws ConfigError when a required key is missing", () => {
