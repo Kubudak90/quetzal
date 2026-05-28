@@ -17,9 +17,6 @@ importers:
       '@aztec/wallets':
         specifier: 4.2.1
         version: 4.2.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
-      '@quetzal/sdk':
-        specifier: workspace:*
-        version: link:sdk
     devDependencies:
       '@aztec/stdlib':
         specifier: 4.2.1
@@ -39,6 +36,9 @@ importers:
       '@aztec/foundation':
         specifier: 4.2.1
         version: 4.2.1
+      '@quetzal/sdk':
+        specifier: workspace:*
+        version: link:../sdk
       fastify:
         specifier: ^4.28.0
         version: 4.29.1
@@ -8167,7 +8167,7 @@ snapshots:
 
   '@scure/bip32@1.7.0':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 
@@ -11265,7 +11265,7 @@ snapshots:
   ox@0.6.7(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
@@ -11279,7 +11279,7 @@ snapshots:
   ox@0.6.9(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
