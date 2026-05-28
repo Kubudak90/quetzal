@@ -20,7 +20,16 @@ export interface BridgeDepositInput {
 export interface BridgeDepositResult {
   l1TxHash: string;
   messageIndex: bigint;
+  /**
+   * Fr preimage of secretHash. MUST be persisted by the caller (e.g., localStorage)
+   * before this function returns — loss is permanent and the deposit cannot be claimed.
+   * Never transmit to a server.
+   */
   secret?: string;
+  /**
+   * SHA-256 hash of `secret`. Safe to log; used by the L1 bridge contract and
+   * `BridgeApi.getMessageReady` polling.
+   */
   secretHash?: string;
 }
 
@@ -126,7 +135,7 @@ const BRIDGE_DEPOSIT_ABI = [
   },
 ] as const;
 
-const DEPOSIT_INITIATED_TOPIC =
+export const DEPOSIT_INITIATED_TOPIC =
   "0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909" as const;
 
 // ─── Validators / helpers ────────────────────────────────────────────────────
@@ -221,6 +230,7 @@ export const _internals = {
     return {
       createPublicClient: viem.createPublicClient,
       http: viem.http,
+      decodeEventLog: viem.decodeEventLog,
       sepolia: chains.sepolia,
     };
   },
@@ -269,8 +279,9 @@ export class BridgeApi {
       );
     }
 
-    const { createPublicClient, http, sepolia } = await _internals.getViem();
+    const { createPublicClient, http, decodeEventLog, sepolia } = await _internals.getViem();
     const publicClient = createPublicClient({
+      // TODO(Sub-7d): derive chain from l1Wallet.chain instead of hardcoding sepolia
       chain: sepolia,
       transport: http(l1.rpcUrl ?? "https://sepolia.drpc.org"),
     });
@@ -291,6 +302,7 @@ export class BridgeApi {
     const l2RecipientBytes32 = this.client.address.toString() as `0x${string}`;
 
     // 1. approve the bridge to spend the user's ERC20.
+    // TODO(Sub-7d): derive chain from l1Wallet.chain instead of hardcoding sepolia
     const approveHash = await l1Wallet.writeContract({
       address: l1TokenAddr,
       abi: ERC20_APPROVE_ABI,
@@ -304,6 +316,7 @@ export class BridgeApi {
     // 2. bridge deposit (Public takes l2Recipient + secretHash; Private takes only secretHash).
     let depositHash: `0x${string}`;
     if (input.isPrivate) {
+      // TODO(Sub-7d): derive chain from l1Wallet.chain instead of hardcoding sepolia
       depositHash = await l1Wallet.writeContract({
         address: l1Bridge,
         abi: BRIDGE_DEPOSIT_ABI,
@@ -313,6 +326,7 @@ export class BridgeApi {
         chain: sepolia,
       });
     } else {
+      // TODO(Sub-7d): derive chain from l1Wallet.chain instead of hardcoding sepolia
       depositHash = await l1Wallet.writeContract({
         address: l1Bridge,
         abi: BRIDGE_DEPOSIT_ABI,
@@ -335,13 +349,15 @@ export class BridgeApi {
         "deposit succeeded but DepositInitiated event not found in receipt logs",
       );
     }
-    // Non-indexed data layout per TokenBridge.sol DepositInitiated:
-    //   amount (32) | secretHash (32) | messageIndex (32) | isPrivate (32)
-    // messageIndex is the 3rd 32-byte word (offset 64 bytes = 128 hex chars after "0x").
-    const data = (depositLog as { data: string }).data;
-    const messageIndexHex = ("0x" +
-      data.slice(2 + 32 * 2 * 2, 2 + 32 * 3 * 2)) as `0x${string}`;
-    const messageIndex = BigInt(messageIndexHex);
+    // Decode via viem (typed, robust against event-schema drift) rather than
+    // manual byte-slice arithmetic.
+    const decoded = decodeEventLog({
+      abi: BRIDGE_DEPOSIT_ABI,
+      eventName: "DepositInitiated",
+      topics: (depositLog as { topics: [`0x${string}`, ...`0x${string}`[]] }).topics,
+      data: (depositLog as { data: `0x${string}` }).data,
+    });
+    const messageIndex = (decoded.args as { messageIndex: bigint }).messageIndex;
 
     return {
       l1TxHash: depositHash,

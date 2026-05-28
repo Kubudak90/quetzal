@@ -1,7 +1,12 @@
 // sdk/src/bridge.test.ts
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { validateBridgeExitInput, BridgeApi, _internals } from "./bridge.js";
+import {
+  validateBridgeExitInput,
+  BridgeApi,
+  _internals,
+  DEPOSIT_INITIATED_TOPIC,
+} from "./bridge.js";
 import { BridgeError } from "./errors.js";
 
 // ─── Minimal mock client shape for BridgeApi tests ───────────────────────────
@@ -106,12 +111,14 @@ describe("validateBridgeExitInput", () => {
 // ─── BridgeApi.deposit ───────────────────────────────────────────────────────
 
 describe("BridgeApi.deposit", () => {
-  // DepositInitiated topic hash (matches contracts-l1/src/TokenBridge.sol)
-  const DEPOSIT_INITIATED_TOPIC =
-    "0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909";
+  // DepositInitiated topic hash imported from bridge.ts (deduped against
+  // the production constant — contracts-l1/src/TokenBridge.sol).
 
   // Build a 32-byte hex chunk from a bigint, no 0x.
   const u256Hex = (v: bigint): string => v.toString(16).padStart(64, "0");
+
+  // Build a 32-byte hex chunk from a 0x-prefixed hex string (left-pad to 64).
+  const bytes32Hex = (hex: string): string => hex.replace(/^0x/, "").padStart(64, "0");
 
   function makeMockClientWithL1(
     l1: {
@@ -144,26 +151,73 @@ describe("BridgeApi.deposit", () => {
       : any;
   }
 
-  test("happy path: approves + bridges + returns secret + messageIndex", async () => {
+  const APPROVE_HASH =
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const DEPOSIT_HASH =
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const L1_TOKEN_ADDR = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
+  const SENDER_ADDR = "0xfaceb00cfaceb00cfaceb00cfaceb00cfaceb00c";
+  // Padded indexed bytes32 topics matching the DepositInitiated event:
+  //   topics = [topic0, sender(address-padded-to-32), l2Recipient(bytes32)]
+  const SENDER_TOPIC = ("0x" + bytes32Hex(SENDER_ADDR)) as `0x${string}`;
+  const L2_RECIPIENT_TOPIC = ("0x" +
+    bytes32Hex(
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    )) as `0x${string}`;
+
+  // Real viem decodeEventLog (used to drive the same path the production
+  // code does — confirms the ABI + topic ordering all line up).
+  const setupViemMock = (eventData: string) => {
+    const origGetViem = _internals.getViem;
+    let realDecodeEventLog: typeof import("viem").decodeEventLog;
+    return {
+      install: async () => {
+        const viem = await import("viem");
+        realDecodeEventLog = viem.decodeEventLog;
+        _internals.getViem = async () => ({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          createPublicClient: (() => ({
+            readContract: async () => L1_TOKEN_ADDR,
+            waitForTransactionReceipt: async ({ hash }: { hash: string }) => {
+              if (hash === APPROVE_HASH) return { logs: [] };
+              return {
+                logs: [
+                  {
+                    topics: [DEPOSIT_INITIATED_TOPIC, SENDER_TOPIC, L2_RECIPIENT_TOPIC],
+                    data: eventData,
+                  },
+                ],
+              };
+            },
+          })) as unknown as typeof import("viem").createPublicClient,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          http: ((_url?: string) => undefined) as any,
+          decodeEventLog: realDecodeEventLog,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          sepolia: { id: 11155111 } as any,
+        });
+      },
+      restore: () => {
+        _internals.getViem = origGetViem;
+      },
+    };
+  };
+
+  test("happy path (public): approves + bridges + returns secret + messageIndex", async () => {
     const writeCalls: Array<{ functionName: string; args: readonly unknown[] }> = [];
-    const APPROVE_HASH =
-      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const DEPOSIT_HASH =
-      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const MESSAGE_INDEX = 42n;
-    const L1_TOKEN_ADDR = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
 
     // event data layout (non-indexed, in order):
     //   amount (uint256) | secretHash (bytes32) | messageIndex (uint256) | isPrivate (bool)
     const eventData =
       "0x" +
       u256Hex(1_000_000n) +
-      u256Hex(0n) + // secretHash placeholder (filled in below would shift to dynamic — kept 0n here)
+      u256Hex(0n) +
       u256Hex(MESSAGE_INDEX) +
       u256Hex(0n);
 
     const mockWallet = {
-      account: { address: "0xfaceb00cfaceb00cfaceb00cfaceb00cfaceb00c" as const },
+      account: { address: SENDER_ADDR as `0x${string}` },
       writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
         writeCalls.push({ functionName: args.functionName, args: args.args });
         if (args.functionName === "approve") return APPROVE_HASH;
@@ -171,28 +225,8 @@ describe("BridgeApi.deposit", () => {
       },
     };
 
-    const origGetViem = _internals.getViem;
-    _internals.getViem = async () => ({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createPublicClient: (() => ({
-        readContract: async () => L1_TOKEN_ADDR,
-        waitForTransactionReceipt: async ({ hash }: { hash: string }) => {
-          if (hash === APPROVE_HASH) return { logs: [] };
-          return {
-            logs: [
-              {
-                topics: [DEPOSIT_INITIATED_TOPIC],
-                data: eventData,
-              },
-            ],
-          };
-        },
-      })) as unknown as typeof import("viem").createPublicClient,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      http: ((_url?: string) => undefined) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sepolia: { id: 11155111 } as any,
-    });
+    const viemMock = setupViemMock(eventData);
+    await viemMock.install();
 
     try {
       const api = new BridgeApi(
@@ -215,8 +249,61 @@ describe("BridgeApi.deposit", () => {
       assert.strictEqual(writeCalls.length, 2);
       assert.strictEqual(writeCalls[0].functionName, "approve");
       assert.strictEqual(writeCalls[1].functionName, "depositToL2Public");
+      // depositToL2Public(amount, l2Recipient, secretHash) -> 3 args
+      assert.strictEqual(writeCalls[1].args.length, 3);
     } finally {
-      _internals.getViem = origGetViem;
+      viemMock.restore();
+    }
+  });
+
+  test("happy path (private): isPrivate:true uses depositToL2Private with 2 args", async () => {
+    const writeCalls: Array<{ functionName: string; args: readonly unknown[] }> = [];
+    const MESSAGE_INDEX = 99n;
+
+    const eventData =
+      "0x" +
+      u256Hex(2_500_000n) +
+      u256Hex(0n) +
+      u256Hex(MESSAGE_INDEX) +
+      u256Hex(1n); // isPrivate = true
+
+    const mockWallet = {
+      account: { address: SENDER_ADDR as `0x${string}` },
+      writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
+        writeCalls.push({ functionName: args.functionName, args: args.args });
+        if (args.functionName === "approve") return APPROVE_HASH;
+        return DEPOSIT_HASH;
+      },
+    };
+
+    const viemMock = setupViemMock(eventData);
+    await viemMock.install();
+
+    try {
+      const api = new BridgeApi(
+        makeMockClientWithL1({
+          usdcBridge: "0x000000000000000000000000000000000000a55c",
+          rpcUrl: "https://sepolia.mock",
+        }),
+      );
+      const result = await api.deposit(
+        { token: "tUSDC", amount: 2_500_000n, isPrivate: true },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockWallet as any,
+      );
+      assert.strictEqual(result.l1TxHash, DEPOSIT_HASH);
+      assert.strictEqual(result.messageIndex, MESSAGE_INDEX);
+      assert.ok(result.secret, "expected secret");
+      assert.match(result.secret!, /^0x[0-9a-f]{1,64}$/);
+      assert.ok(result.secretHash, "expected secretHash");
+      assert.match(result.secretHash!, /^0x[0-9a-f]{1,64}$/);
+      assert.strictEqual(writeCalls.length, 2);
+      assert.strictEqual(writeCalls[0].functionName, "approve");
+      assert.strictEqual(writeCalls[1].functionName, "depositToL2Private");
+      // depositToL2Private(amount, secretHash) -> 2 args (no l2Recipient)
+      assert.strictEqual(writeCalls[1].args.length, 2);
+    } finally {
+      viemMock.restore();
     }
   });
 
