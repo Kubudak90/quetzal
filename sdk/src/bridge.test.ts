@@ -6,6 +6,7 @@ import {
   BridgeApi,
   _internals,
   DEPOSIT_INITIATED_TOPIC,
+  INBOX_MESSAGE_SENT_TOPIC,
 } from "./bridge.js";
 import { BridgeError } from "./errors.js";
 
@@ -167,7 +168,12 @@ describe("BridgeApi.deposit", () => {
 
   // Real viem decodeEventLog (used to drive the same path the production
   // code does — confirms the ABI + topic ordering all line up).
-  const setupViemMock = (eventData: string) => {
+  // Optionally includes an L1Inbox.MessageSent log in the deposit receipt so
+  // Sub-7c Task 12 messageHash extraction can be exercised.
+  const setupViemMock = (
+    eventData: string,
+    messageSent?: { hash: `0x${string}`; checkpointNumber?: bigint; index?: bigint },
+  ) => {
     const origGetViem = _internals.getViem;
     let realDecodeEventLog: typeof import("viem").decodeEventLog;
     return {
@@ -180,14 +186,32 @@ describe("BridgeApi.deposit", () => {
             readContract: async () => L1_TOKEN_ADDR,
             waitForTransactionReceipt: async ({ hash }: { hash: string }) => {
               if (hash === APPROVE_HASH) return { logs: [] };
-              return {
-                logs: [
-                  {
-                    topics: [DEPOSIT_INITIATED_TOPIC, SENDER_TOPIC, L2_RECIPIENT_TOPIC],
-                    data: eventData,
-                  },
-                ],
-              };
+              const logs: Array<{ topics: readonly `0x${string}`[]; data: `0x${string}` }> = [
+                {
+                  topics: [DEPOSIT_INITIATED_TOPIC, SENDER_TOPIC, L2_RECIPIENT_TOPIC],
+                  data: eventData as `0x${string}`,
+                },
+              ];
+              if (messageSent) {
+                // MessageSent topics = [topic0, checkpointNumber(indexed),
+                //                       hash(indexed)] ; data = index | rollingHash (padded to 32)
+                const checkpoint = messageSent.checkpointNumber ?? 7n;
+                const index = messageSent.index ?? 99n;
+                const checkpointTopic = ("0x" + u256Hex(checkpoint)) as `0x${string}`;
+                // rollingHash is bytes16 — viem ABI-decodes from the 32-byte
+                // slot with the value left-aligned in the first 16 bytes.
+                const indexHex = u256Hex(index);
+                const rollingHex = "00".repeat(16) + "00".repeat(16);
+                logs.push({
+                  topics: [
+                    INBOX_MESSAGE_SENT_TOPIC,
+                    checkpointTopic,
+                    messageSent.hash,
+                  ],
+                  data: ("0x" + indexHex + rollingHex) as `0x${string}`,
+                });
+              }
+              return { logs };
             },
           })) as unknown as typeof import("viem").createPublicClient,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -302,6 +326,88 @@ describe("BridgeApi.deposit", () => {
       assert.strictEqual(writeCalls[1].functionName, "depositToL2Private");
       // depositToL2Private(amount, secretHash) -> 2 args (no l2Recipient)
       assert.strictEqual(writeCalls[1].args.length, 2);
+    } finally {
+      viemMock.restore();
+    }
+  });
+
+  test("Sub-7c Task 12: messageHash parsed from L1Inbox.MessageSent log", async () => {
+    const MESSAGE_INDEX = 42n;
+    const EXPECTED_MSG_HASH = ("0x" +
+      "deadbeef".repeat(8)) as `0x${string}`; // 64 hex chars
+
+    const eventData =
+      "0x" +
+      u256Hex(1_000_000n) +
+      u256Hex(0n) +
+      u256Hex(MESSAGE_INDEX) +
+      u256Hex(0n);
+
+    const mockWallet = {
+      account: { address: SENDER_ADDR as `0x${string}` },
+      writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
+        return args.functionName === "approve" ? APPROVE_HASH : DEPOSIT_HASH;
+      },
+    };
+
+    const viemMock = setupViemMock(eventData, { hash: EXPECTED_MSG_HASH });
+    await viemMock.install();
+    try {
+      const api = new BridgeApi(
+        makeMockClientWithL1({
+          usdcBridge: "0x000000000000000000000000000000000000a55c",
+          rpcUrl: "https://sepolia.mock",
+        }),
+      );
+      const result = await api.deposit(
+        { token: "tUSDC", amount: 1_000_000n, isPrivate: false },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockWallet as any,
+      );
+      assert.strictEqual(
+        result.messageHash,
+        EXPECTED_MSG_HASH,
+        "messageHash should be parsed from the L1Inbox.MessageSent log",
+      );
+    } finally {
+      viemMock.restore();
+    }
+  });
+
+  test("Sub-7c Task 12: messageHash undefined when MessageSent log missing (defensive)", async () => {
+    const MESSAGE_INDEX = 42n;
+    const eventData =
+      "0x" +
+      u256Hex(1_000_000n) +
+      u256Hex(0n) +
+      u256Hex(MESSAGE_INDEX) +
+      u256Hex(0n);
+
+    const mockWallet = {
+      account: { address: SENDER_ADDR as `0x${string}` },
+      writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
+        return args.functionName === "approve" ? APPROVE_HASH : DEPOSIT_HASH;
+      },
+    };
+
+    const viemMock = setupViemMock(eventData /* no messageSent */);
+    await viemMock.install();
+    try {
+      const api = new BridgeApi(
+        makeMockClientWithL1({
+          usdcBridge: "0x000000000000000000000000000000000000a55c",
+          rpcUrl: "https://sepolia.mock",
+        }),
+      );
+      const result = await api.deposit(
+        { token: "tUSDC", amount: 1_000_000n, isPrivate: false },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockWallet as any,
+      );
+      // messageIndex still surfaces (DepositInitiated event), but messageHash
+      // is undefined so the UI falls back to "polling disabled" semantics.
+      assert.strictEqual(result.messageIndex, MESSAGE_INDEX);
+      assert.strictEqual(result.messageHash, undefined);
     } finally {
       viemMock.restore();
     }

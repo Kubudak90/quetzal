@@ -31,6 +31,17 @@ export interface BridgeDepositResult {
    * `BridgeApi.getMessageReady` polling.
    */
   secretHash?: string;
+  /**
+   * L1→L2 inbox message hash (0x-prefixed 32-byte hex). This is what
+   * `BridgeApi.getMessageReady` takes — it's the L1Inbox tree leaf value.
+   *
+   * Source: parsed from the `MessageSent(uint256 indexed checkpointNumber,
+   * uint256 index, bytes32 indexed hash, bytes16 rollingHash)` event that
+   * `IInbox.sendL2Message()` emits inside the same deposit tx. May be `undefined`
+   * if no matching MessageSent log was found in the receipt (defensive fallback;
+   * UI should treat as "polling disabled" in that case).
+   */
+  messageHash?: `0x${string}`;
 }
 
 export interface BridgeClaimInput {
@@ -162,6 +173,32 @@ const BRIDGE_DEPOSIT_ABI = [
 
 export const DEPOSIT_INITIATED_TOPIC =
   "0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909" as const;
+
+// L1Inbox.MessageSent(uint256 indexed checkpointNumber, uint256 index,
+// bytes32 indexed hash, bytes16 rollingHash). The `hash` topic IS the
+// L1→L2 message hash that getMessageReady() polls (i.e., the leaf value of
+// the inbox tree). Verified via:
+//   keccak256("MessageSent(uint256,uint256,bytes32,bytes16)")
+// Layout: topics = [topic0, checkpointNumber, hash] ; indexed hash is topics[2].
+export const INBOX_MESSAGE_SENT_TOPIC =
+  "0xe3afb584bcff3adb9d452d2e1ccbcd4aee164ae2a8cdab637aecf866a53fbb77" as const;
+
+// Minimal ABI fragment to let viem.decodeEventLog parse MessageSent without
+// pulling in the full IInbox ABI. The contract isn't TokenBridge — it's the
+// L1Inbox emitting from within TokenBridge.depositToL2{Public,Private}() — so
+// we keep it scoped here.
+const INBOX_MESSAGE_SENT_ABI = [
+  {
+    type: "event",
+    name: "MessageSent",
+    inputs: [
+      { name: "checkpointNumber", type: "uint256", indexed: true },
+      { name: "index", type: "uint256", indexed: false },
+      { name: "hash", type: "bytes32", indexed: true },
+      { name: "rollingHash", type: "bytes16", indexed: false },
+    ],
+  },
+] as const;
 
 // Verified against contracts-l1/out/TokenBridge.sol/TokenBridge.json.
 // Note: two separate functions (withdraw / withdrawPrivate) rather than one
@@ -418,11 +455,38 @@ export class BridgeApi {
     });
     const messageIndex = (decoded.args as { messageIndex: bigint }).messageIndex;
 
+    // Sub-7c Task 12: parse the L1Inbox.MessageSent event from the same receipt
+    // to surface the L1→L2 message hash (the leaf value of the inbox tree).
+    // ClaimTab polls this via getMessageReady() until the sequencer finalises
+    // the message. Solidity write-function return values do NOT survive a
+    // JSON-RPC call, so this MUST come from event logs.
+    let messageHash: `0x${string}` | undefined;
+    const messageSentLog = receipt.logs.find(
+      (log: { topics?: readonly string[]; data?: string }) =>
+        log.topics?.[0]?.toLowerCase() === INBOX_MESSAGE_SENT_TOPIC,
+    );
+    if (messageSentLog) {
+      try {
+        const decodedSent = decodeEventLog({
+          abi: INBOX_MESSAGE_SENT_ABI,
+          eventName: "MessageSent",
+          topics: (messageSentLog as { topics: [`0x${string}`, ...`0x${string}`[]] }).topics,
+          data: (messageSentLog as { data: `0x${string}` }).data,
+        });
+        messageHash = (decodedSent.args as { hash: `0x${string}` }).hash;
+      } catch {
+        // Defensive: if the Inbox schema drifts, fall through with undefined.
+        // UI treats undefined as "polling disabled" (acceptable degradation;
+        // user can still claim manually after the ~4-15min L1→L2 window).
+      }
+    }
+
     return {
       l1TxHash: depositHash,
       messageIndex,
       secret: secretFr.toString(),
       secretHash: secretHashHex,
+      messageHash,
     };
   }
 

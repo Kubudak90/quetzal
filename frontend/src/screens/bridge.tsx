@@ -4,7 +4,7 @@
 
 import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
 import { useL1WalletClient, useL1Account } from "../l1/hooks.js";
 import {
@@ -178,12 +178,12 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
         amount: parseAmount(amount, 6).toString(),
         secret: result.secret ?? "",
         secretHash: result.secretHash ?? "",
-        // TODO(Sub-7c Task 12): messageHash computation needs to be added to
-        // BridgeDepositResult OR computed in ClaimTab from stored fields. The
-        // L1Inbox key isn't in the DepositInitiated event — it's derived off-chain
-        // from sha256(sender, chainId, version, recipient, content). For now an
-        // empty placeholder; getMessageReady polling will be a no-op until populated.
-        messageHash: "",
+        // Sub-7c Task 12: SDK now parses messageHash from the L1Inbox.MessageSent
+        // event emitted in the deposit tx (BridgeApi.deposit Option B). If the
+        // event was missing (defensive fallback), messageHash is undefined and
+        // the polling query falls back to a no-op (button stays Waiting; user
+        // can still claim manually after the ~4-15min L1→L2 sync window).
+        messageHash: result.messageHash ?? "",
         messageIndex: result.messageIndex.toString(),
         isPrivate: visibility === "private",
         createdAt: Date.now(),
@@ -385,6 +385,30 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
     refetchInterval: false,
   });
 
+  const claims = pendingClaimsQ.data ?? [];
+
+  // Sub-7c Task 12 (D1): poll getMessageReady() every 30s per pending claim.
+  // Returns true once the sequencer has finalised the L1→L2 message into the
+  // inbox tree, at which point claim_{public,private} on L2 will succeed.
+  //
+  // messageHash is parsed from the L1Inbox.MessageSent event during deposit
+  // (BridgeApi.deposit, Sub-7c Task 12 Option B). For older pending claims
+  // persisted before this code shipped (messageHash="") polling is skipped
+  // and the button falls back to enabled — caller can still claim manually.
+  const readyQueries = useQueries({
+    queries: claims.map((claim) => ({
+      queryKey: ["bridge", "msg-ready", claim.messageIndex],
+      queryFn: async (): Promise<boolean> => {
+        if (!client) return false;
+        if (!claim.messageHash) return false;
+        return await client.bridge.getMessageReady(claim.messageHash as `0x${string}`);
+      },
+      enabled: !!client && !!claim.messageHash,
+      refetchInterval: 30_000,
+      staleTime: 25_000,
+    })),
+  });
+
   const claimMut = useMutation({
     mutationFn: async (input: { token: string; amount: bigint; isPrivate: boolean; secret: string; messageIndex: string }) => {
       if (!client) throw new Error("Not connected");
@@ -404,8 +428,6 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
     onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Claim failed" }),
   });
 
-  const claims = pendingClaimsQ.data ?? [];
-
   return (
     <div className="q-card" style={{ padding: 0, overflow: "hidden" }}>
       <div style={{ padding: "18px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -418,7 +440,13 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
           <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--fg-muted)" }}>No pending deposits.</div>
         </div>
       ) : (
-        claims.map(c => (
+        claims.map((c, i) => {
+          const readyQ = readyQueries[i];
+          // Treat "no messageHash" (legacy claim) as ready=true so the row
+          // remains actionable — fall back to user-driven retry on revert.
+          const isReady = !c.messageHash || readyQ?.data === true;
+          const isPolling = !!c.messageHash && readyQ?.isFetching && readyQ.data !== true;
+          return (
           <div key={c.messageIndex} style={{
             display: "grid", gridTemplateColumns: "auto 1fr 1fr 80px 120px", gap: 16,
             alignItems: "center", padding: "16px 20px",
@@ -436,13 +464,17 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
               <AddressMono value={c.secret} />
             </div>
             <div>
-              <Badge tone="filled">Ready</Badge>
+              {isReady ? (
+                <Badge tone="filled">Ready</Badge>
+              ) : (
+                <Badge tone="warn">{isPolling ? "Polling" : "Waiting"}</Badge>
+              )}
             </div>
             <div style={{ textAlign: "right" }}>
               <PillButton
                 size="sm"
                 variant="primary"
-                disabled={claimMut.isPending}
+                disabled={claimMut.isPending || !isReady}
                 onClick={() => claimMut.mutate({
                   token: c.token,
                   amount: BigInt(c.amount),
@@ -450,13 +482,14 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
                   secret: c.secret,
                   messageIndex: c.messageIndex,
                 })}
-                rightIcon="check"
+                rightIcon={isReady ? "check" : "clock"}
               >
-                {claimMut.isPending ? "Claiming…" : "Claim"}
+                {claimMut.isPending ? "Claiming…" : isReady ? "Claim" : "⏳ Waiting"}
               </PillButton>
             </div>
           </div>
-        ))
+          );
+        })
       )}
     </div>
   );
