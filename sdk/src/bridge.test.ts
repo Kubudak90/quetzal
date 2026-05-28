@@ -573,4 +573,23 @@ describe("BridgeApi.prepareL1Withdraw", () => {
       },
     );
   });
+
+  // Sub-7c D2 follow-up: bare UI ids ("USDC"/"WETH"/"wBTC") that the frontend
+  // tabs pass through must resolve to the same bridge as the t*/a* aliases.
+  // Pre-fix: every L1 withdraw threw `unknown token alias 'USDC'` silently.
+  test("Sub-7c D2 follow-up: bare UI id 'USDC' resolves to usdcBridge", async () => {
+    const client = makeMockClientWithL1({ usdcBridge: "0x" + "aa".repeat(20) });
+    const bridge = new BridgeApi(client);
+    const result = await bridge.prepareL1Withdraw({
+      token: "USDC",
+      amount: 1_000_000n,
+      l1Recipient: "0xcF582A37AaE1E580b63666587FFa42d84169bA62" as `0x${string}`,
+      isPrivate: false,
+      siblingPath: [("0x" + "11".repeat(32)) as `0x${string}`],
+      l2Epoch: 100n,
+      leafIndex: 5n,
+    });
+    assert.strictEqual(result.to, "0x" + "aa".repeat(20));
+    assert.match(result.data, /^0x[0-9a-f]+$/);
+  });
 });

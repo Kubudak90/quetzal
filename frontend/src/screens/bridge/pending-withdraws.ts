@@ -9,7 +9,7 @@ export interface PendingWithdraw {
   l1Recipient: `0x${string}`;
   isPrivate: boolean;
   l2TxHash: `0x${string}`;
-  status: "pending" | "ready" | "complete";
+  status: "pending" | "complete";
   createdAt: number;
   l2BlockNumber?: string;
   leafIndex?: string;

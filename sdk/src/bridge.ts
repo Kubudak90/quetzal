@@ -256,12 +256,18 @@ function requireContracts(client: QuetzalClient): QuetzalContracts {
 }
 
 function resolveTokenAddress(contracts: QuetzalContracts, alias: string): string {
-  // Accept legacy (tUSDC/tETH/tBTC) and bridged (aUSDC/aWETH/aWBTC) names.
+  // Accept legacy (tUSDC/tETH/tBTC), bridged (aUSDC/aWETH/aWBTC), and bare UI
+  // ids (USDC/WETH/wBTC/ETH/BTC) as aliases for the same underlying contracts.
   const map: Record<string, string | undefined> = {
+    USDC: contracts.tUSDC,
     tUSDC: contracts.tUSDC,
     aUSDC: contracts.tUSDC,
+    WETH: contracts.tETH,
+    ETH: contracts.tETH,
     tETH: contracts.tETH,
     aWETH: contracts.tETH,
+    wBTC: contracts.tBTC,
+    BTC: contracts.tBTC,
     tBTC: contracts.tBTC,
     aWBTC: contracts.tBTC,
   };
@@ -269,7 +275,7 @@ function resolveTokenAddress(contracts: QuetzalContracts, alias: string): string
   if (!addr) {
     throw new BridgeError(
       "UNKNOWN",
-      `unknown token alias '${alias}'. Known: tUSDC/aUSDC, tETH/aWETH, tBTC/aWBTC.`,
+      `unknown token alias '${alias}'. Known: USDC/tUSDC/aUSDC, WETH/ETH/tETH/aWETH, wBTC/BTC/tBTC/aWBTC.`,
     );
   }
   return addr;
@@ -294,11 +300,18 @@ function resolveL1Bridge(
   l1: NonNullable<NetworkConfig["l1"]>,
   token: string,
 ): `0x${string}` {
+  // Accept legacy (tUSDC/tETH/tBTC), bridged (aUSDC/aWETH/aWBTC), and bare UI
+  // ids (USDC/WETH/wBTC/ETH/BTC) as aliases for the same L1 bridge contracts.
   const map: Record<string, string | undefined> = {
+    USDC: l1.usdcBridge,
     tUSDC: l1.usdcBridge,
     aUSDC: l1.usdcBridge,
+    WETH: l1.wethBridge,
+    ETH: l1.wethBridge,
     tETH: l1.wethBridge,
     aWETH: l1.wethBridge,
+    wBTC: l1.wbtcBridge,
+    BTC: l1.wbtcBridge,
     tBTC: l1.wbtcBridge,
     aWBTC: l1.wbtcBridge,
   };
@@ -306,7 +319,7 @@ function resolveL1Bridge(
   if (!addr) {
     throw new BridgeError(
       "UNKNOWN",
-      `unknown token alias '${token}' for L1 bridge. Known: tUSDC/aUSDC, tETH/aWETH, tBTC/aWBTC.`,
+      `unknown token alias '${token}' for L1 bridge. Known: USDC/tUSDC/aUSDC, WETH/ETH/tETH/aWETH, wBTC/BTC/tBTC/aWBTC.`,
     );
   }
   return addr as `0x${string}`;
