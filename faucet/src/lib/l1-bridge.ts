@@ -109,6 +109,13 @@ export class L1Bridge {
   private _l1Client: ReturnType<typeof createExtendedL1Client> | null = null;
   private _portalManager: Promise<L1FeeJuicePortalManager> | null = null;
 
+  // Task #376: serialise bridgeFeeJuice across parallel callers so the
+  // shared viem WalletClient never sees two in-flight depositToAztecPublic
+  // submissions racing on the same fresh nonce. The chain head always
+  // settles to `undefined` (via .then(noop, noop) below) so a failing
+  // bridge call doesn't poison the queue for the next caller.
+  private _bridgeChain: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly config: L1BridgeConfig) {
     this.aztecNode = createAztecNodeClient(config.aztecNodeUrl);
   }
@@ -189,55 +196,75 @@ export class L1Bridge {
     recipient: `0x${string}`,
     amount: bigint,
   ): Promise<BridgeFeeJuiceResult> {
-    const recipientAddr = AztecAddress.fromString(recipient);
-    const portalManager = await this.getPortalManager();
-    const l1Client = this.getL1Client();
+    // ── Task #376: serial mutex around the body ─────────────────────────
+    // Two parallel /api/drip requests previously shared one viem
+    // WalletClient and fetched the same fresh nonce, producing 503
+    // "Nonce provided lower than current" on the second submit. Chain
+    // this work onto _bridgeChain so callers run one-at-a-time. The chain
+    // head is rewritten to always settle to `undefined` so a failing
+    // bridge doesn't poison subsequent callers — the rejection only
+    // propagates through `ours` to this call's caller.
+    const run = async (): Promise<BridgeFeeJuiceResult> => {
+      const recipientAddr = AztecAddress.fromString(recipient);
+      const portalManager = await this.getPortalManager();
+      const l1Client = this.getL1Client();
 
-    // Capture pre-block so the post-call event-log search has a tight window.
-    let preBlock: bigint | undefined;
-    try {
-      preBlock = await l1Client.getBlockNumber();
-    } catch {
-      // Non-critical — fall back to a wider lookback window below.
-    }
+      // Capture pre-block so the post-call event-log search has a tight window.
+      let preBlock: bigint | undefined;
+      try {
+        preBlock = await l1Client.getBlockNumber();
+      } catch {
+        // Non-critical — fall back to a wider lookback window below.
+      }
 
-    // `mint=false` → use the faucet's pre-funded L1 fee-juice balance.
-    // (testnet's open mint handler isn't used here.)
-    const claim = await portalManager.bridgeTokensPublic(recipientAddr, amount, false);
+      // `mint=false` → use the faucet's pre-funded L1 fee-juice balance.
+      // (testnet's open mint handler isn't used here.)
+      const claim = await portalManager.bridgeTokensPublic(recipientAddr, amount, false);
 
-    // Look up the L1 tx hash via the DepositToAztecPublic event log, matched
-    // by messageHash (the `key` field). Non-critical — proceed without it on
-    // failure.
-    let l1TxHash: `0x${string}` | undefined;
-    try {
-      const nodeInfo = await this.aztecNode.getNodeInfo();
-      const portalAddr = nodeInfo.l1ContractAddresses.feeJuicePortalAddress.toString() as Hex;
-      const postBlock = await l1Client.getBlockNumber();
-      const fromBlock = preBlock ?? (postBlock > 10n ? postBlock - 10n : 0n);
-      const logs = await l1Client.getLogs({
-        address: portalAddr,
-        event: parseAbiItem(
-          "event DepositToAztecPublic(bytes32 indexed to, uint256 amount, bytes32 secretHash, bytes32 key, uint256 index)",
-        ),
-        fromBlock,
-        toBlock: postBlock + 1n,
-      });
-      const match = logs.find(
-        (l) => l.args.key?.toLowerCase() === claim.messageHash.toLowerCase(),
-      );
-      l1TxHash = match?.transactionHash as `0x${string}` | undefined;
-    } catch (err) {
-      log.error(`[l1-bridge] L1 tx hash lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+      // Look up the L1 tx hash via the DepositToAztecPublic event log, matched
+      // by messageHash (the `key` field). Non-critical — proceed without it on
+      // failure.
+      let l1TxHash: `0x${string}` | undefined;
+      try {
+        const nodeInfo = await this.aztecNode.getNodeInfo();
+        const portalAddr = nodeInfo.l1ContractAddresses.feeJuicePortalAddress.toString() as Hex;
+        const postBlock = await l1Client.getBlockNumber();
+        const fromBlock = preBlock ?? (postBlock > 10n ? postBlock - 10n : 0n);
+        const logs = await l1Client.getLogs({
+          address: portalAddr,
+          event: parseAbiItem(
+            "event DepositToAztecPublic(bytes32 indexed to, uint256 amount, bytes32 secretHash, bytes32 key, uint256 index)",
+          ),
+          fromBlock,
+          toBlock: postBlock + 1n,
+        });
+        const match = logs.find(
+          (l) => l.args.key?.toLowerCase() === claim.messageHash.toLowerCase(),
+        );
+        l1TxHash = match?.transactionHash as `0x${string}` | undefined;
+      } catch (err) {
+        log.error(`[l1-bridge] L1 tx hash lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
-    return {
-      l1TxHash,
-      messageHashHex: claim.messageHash as `0x${string}`,
-      messageLeafIndex: claim.messageLeafIndex,
-      claimSecretHex: claim.claimSecret.toString() as `0x${string}`,
-      claimSecretHashHex: claim.claimSecretHash.toString() as `0x${string}`,
-      claimAmount: claim.claimAmount,
+      return {
+        l1TxHash,
+        messageHashHex: claim.messageHash as `0x${string}`,
+        messageLeafIndex: claim.messageLeafIndex,
+        claimSecretHex: claim.claimSecret.toString() as `0x${string}`,
+        claimSecretHashHex: claim.claimSecretHash.toString() as `0x${string}`,
+        claimAmount: claim.claimAmount,
+      };
     };
+
+    // Wait for any prior bridge to settle (success OR failure), then run ours.
+    const ours = this._bridgeChain.then(() => run(), () => run());
+    // Replace the chain head with our promise — but swallow its result for
+    // the chain so the NEXT caller doesn't see our throw.
+    this._bridgeChain = ours.then(
+      () => undefined,
+      () => undefined,
+    );
+    return ours;
   }
 
   private viemChain(): Chain {
