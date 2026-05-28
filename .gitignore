@@ -70,3 +70,7 @@ faucet/.next/
 faucet/.env.faucet
 faucet/data/
 faucet/tsconfig.tsbuildinfo
+
+# Sub-8.2a LP seed script — operator-side runtime state (records the seed
+# txHash + position nonce; safe to delete to re-seed a fresh pool).
+seed-lp-state.json
