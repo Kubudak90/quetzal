@@ -401,7 +401,15 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
       queryFn: async (): Promise<boolean> => {
         if (!client) return false;
         if (!claim.messageHash) return false;
-        return await client.bridge.getMessageReady(claim.messageHash as `0x${string}`);
+        try {
+          return await client.bridge.getMessageReady(claim.messageHash as `0x${string}`);
+        } catch {
+          // Malformed messageHash (legacy/corrupt persisted row): treat as
+          // not-ready, but don't propagate the error — the row stays visible
+          // with a Waiting label instead of flipping to red error state.
+          // Polling is a read path, not a user-initiated write.
+          return false;
+        }
       },
       enabled: !!client && !!claim.messageHash,
       refetchInterval: 30_000,
@@ -446,6 +454,11 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
           // remains actionable — fall back to user-driven retry on revert.
           const isReady = !c.messageHash || readyQ?.data === true;
           const isPolling = !!c.messageHash && readyQ?.isFetching && readyQ.data !== true;
+          // Per-row gating: claimMut is shared across all rows, but only THIS
+          // row's claim should disable its own button. Without this, a claim
+          // in flight for row A would disable every other ready row too.
+          const isThisRowPending =
+            claimMut.isPending && claimMut.variables?.messageIndex === c.messageIndex;
           return (
           <div key={c.messageIndex} style={{
             display: "grid", gridTemplateColumns: "auto 1fr 1fr 80px 120px", gap: 16,
@@ -474,7 +487,7 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
               <PillButton
                 size="sm"
                 variant="primary"
-                disabled={claimMut.isPending || !isReady}
+                disabled={isThisRowPending || !isReady}
                 onClick={() => claimMut.mutate({
                   token: c.token,
                   amount: BigInt(c.amount),
@@ -484,7 +497,7 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
                 })}
                 rightIcon={isReady ? "check" : "clock"}
               >
-                {claimMut.isPending ? "Claiming…" : isReady ? "Claim" : "⏳ Waiting"}
+                {isThisRowPending ? "Claiming…" : isReady ? "Claim" : "⏳ Waiting"}
               </PillButton>
             </div>
           </div>

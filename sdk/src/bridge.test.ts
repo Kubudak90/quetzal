@@ -170,9 +170,13 @@ describe("BridgeApi.deposit", () => {
   // code does — confirms the ABI + topic ordering all line up).
   // Optionally includes an L1Inbox.MessageSent log in the deposit receipt so
   // Sub-7c Task 12 messageHash extraction can be exercised.
+  // If `malformedMessageSent` is set, emits a log with the right topic0 but
+  // wrong shape (only 2 topics instead of 3) so the production try/catch
+  // around decodeEventLog is exercised — verifies graceful degradation.
   const setupViemMock = (
     eventData: string,
     messageSent?: { hash: `0x${string}`; checkpointNumber?: bigint; index?: bigint },
+    malformedMessageSent?: boolean,
   ) => {
     const origGetViem = _internals.getViem;
     let realDecodeEventLog: typeof import("viem").decodeEventLog;
@@ -209,6 +213,18 @@ describe("BridgeApi.deposit", () => {
                     messageSent.hash,
                   ],
                   data: ("0x" + indexHex + rollingHex) as `0x${string}`,
+                });
+              }
+              if (malformedMessageSent) {
+                // Right topic0, wrong shape: only 2 topics instead of 3 (missing
+                // the indexed `hash` topic). viem.decodeEventLog will throw
+                // because the indexed args don't match the ABI fragment.
+                logs.push({
+                  topics: [
+                    INBOX_MESSAGE_SENT_TOPIC,
+                    ("0x" + u256Hex(7n)) as `0x${string}`,
+                  ],
+                  data: "0x" as `0x${string}`,
                 });
               }
               return { logs };
@@ -408,6 +424,52 @@ describe("BridgeApi.deposit", () => {
       // is undefined so the UI falls back to "polling disabled" semantics.
       assert.strictEqual(result.messageIndex, MESSAGE_INDEX);
       assert.strictEqual(result.messageHash, undefined);
+    } finally {
+      viemMock.restore();
+    }
+  });
+
+  test("Sub-7c Task 12: messageHash undefined when MessageSent log is malformed (defensive)", async () => {
+    // Right topic0 but wrong shape (only 2 topics instead of the expected 3).
+    // The production try/catch around viem.decodeEventLog should swallow the
+    // error and surface messageHash: undefined — exactly the same graceful
+    // degradation as the "log missing" case. UI then treats this as "polling
+    // disabled" and falls back to user-driven manual claim.
+    const MESSAGE_INDEX = 42n;
+    const eventData =
+      "0x" +
+      u256Hex(1_000_000n) +
+      u256Hex(0n) +
+      u256Hex(MESSAGE_INDEX) +
+      u256Hex(0n);
+
+    const mockWallet = {
+      account: { address: SENDER_ADDR as `0x${string}` },
+      writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
+        return args.functionName === "approve" ? APPROVE_HASH : DEPOSIT_HASH;
+      },
+    };
+
+    const viemMock = setupViemMock(eventData, undefined, true /* malformedMessageSent */);
+    await viemMock.install();
+    try {
+      const api = new BridgeApi(
+        makeMockClientWithL1({
+          usdcBridge: "0x000000000000000000000000000000000000a55c",
+          rpcUrl: "https://sepolia.mock",
+        }),
+      );
+      const result = await api.deposit(
+        { token: "tUSDC", amount: 1_000_000n, isPrivate: false },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mockWallet as any,
+      );
+      assert.strictEqual(result.messageIndex, MESSAGE_INDEX);
+      assert.strictEqual(
+        result.messageHash,
+        undefined,
+        "messageHash should be undefined when MessageSent log is malformed (try/catch swallows the decode error)",
+      );
     } finally {
       viemMock.restore();
     }
