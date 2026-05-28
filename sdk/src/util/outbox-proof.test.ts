@@ -46,4 +46,16 @@ describe("buildOutboxProof", () => {
       OutboxProofShapeError,
     );
   });
+
+  test("rejects malformed l2TxHash (wrong length)", async () => {
+    await assert.rejects(
+      () =>
+        buildOutboxProof(
+          "https://node.example",
+          "0x1234",
+          "0x" + "11".repeat(32),
+        ),
+      OutboxProofShapeError,
+    );
+  });
 });

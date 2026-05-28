@@ -64,6 +64,12 @@ export type { WalletPoolOptions } from "./wallet/pool.js";
 // Utility surface (re-exported so CLI / front-end can drop the local copies)
 export { randomField, parseField } from "./util/field.js";
 export { computeWithdrawContent } from "./util/sha256-content.js";
+export {
+  buildOutboxProof,
+  OutboxProofShapeError,
+  OutboxProofNotReadyError,
+} from "./util/outbox-proof.js";
+export type { OutboxProof } from "./util/outbox-proof.js";
 
 // Privacy sub-modules — convenient namespace import
 export * as privacy from "./privacy/index.js";

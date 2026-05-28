@@ -44,8 +44,8 @@ export async function buildOutboxProof(
   l2TxHash: string,
   expectedContent: string,
 ): Promise<OutboxProof> {
-  if (!l2TxHash.startsWith("0x")) {
-    throw new OutboxProofShapeError(`l2TxHash must be 0x-prefixed, got: ${l2TxHash}`);
+  if (!l2TxHash.startsWith("0x") || l2TxHash.length !== 66) {
+    throw new OutboxProofShapeError(`l2TxHash must be 0x + 32 bytes (66 chars), got: ${l2TxHash}`);
   }
   if (!expectedContent.startsWith("0x") || expectedContent.length !== 66) {
     throw new OutboxProofShapeError(
