@@ -6,6 +6,7 @@ import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
+import { useL1WalletClient } from "../l1/hooks.js";
 import {
   Eyebrow, Hairline, Dot, Badge, PillButton, Field, AddressMono, Tooltip, Segmented,
 } from "../components/atoms.js";
@@ -166,6 +167,7 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
   const client = useQuetzalClient();
   const { session } = useClientContext();
   const qc = useQueryClient();
+  const l1Wallet = useL1WalletClient();
 
   const [token, setToken] = useState("USDC");
   const [amount, setAmount] = useState("");
@@ -183,11 +185,15 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
   const depositMut = useMutation({
     mutationFn: async (input: { token: string; amount: bigint; isPrivate: boolean }) => {
       if (!client) throw new Error("Not connected");
-      return await client.bridge.deposit({
-        token: input.token,
-        amount: input.amount,
-        isPrivate: input.isPrivate,
-      });
+      if (!l1Wallet) throw new Error("L1 wallet not connected — click 'Connect L1' in the top bar");
+      return await client.bridge.deposit(
+        {
+          token: input.token,
+          amount: input.amount,
+          isPrivate: input.isPrivate,
+        },
+        l1Wallet,
+      );
     },
     onSuccess: (result) => {
       addLocalPendingClaim({

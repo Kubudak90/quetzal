@@ -15,6 +15,7 @@ import {
   WalletScreen, HistoryScreen, SettingsScreen,
 } from "./screens/wallet-history-settings.js";
 import { useClientContext } from "./sdk/client-context.js";
+import { L1ConnectButton } from "./l1/connect-button.js";
 
 const VALID_ROUTES = ["landing", "setup", "trade", "bridge", "wallet", "history", "settings"] as const;
 type Route = (typeof VALID_ROUTES)[number];
@@ -282,6 +283,7 @@ function TopBar({ route, setRoute, secondsLeft, theme, onToggleTheme }: TopBarPr
             <i data-lucide={theme === "dark" ? "sun" : "moon"} style={{ width: 14, height: 14, strokeWidth: 1.5 } as CSSProperties}></i>
           </button>
         )}
+        {showEpoch && <L1ConnectButton />}
         {route !== "landing" && route !== "setup" && (
           <div style={{
             display: "inline-flex", alignItems: "center", gap: 8,
