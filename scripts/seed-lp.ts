@@ -55,7 +55,9 @@ if (!NODE_URL.includes("testnet")) {
 const M1_STATE  = "testnet-m1-state.json";
 const CONFIG    = "quetzal.config.json";
 const STATE     = "seed-lp-state.json";
-const PXE_DIR   = "./testnet-m3-pxe"; // re-use M3 PXE (admin already registered)
+// PXE dir. Defaults to Sub-9 testnet-m4-pxe (post-clean-slate redeploy).
+// Override via SEED_LP_PXE_DIR to re-use a different PXE (e.g. testnet-m3-pxe).
+const PXE_DIR   = process.env.SEED_LP_PXE_DIR ?? "./testnet-m4-pxe";
 
 // Seed amounts. tUSDC has 6 decimals, tETH 18 decimals.
 const ONE_TUSDC = 10n ** 6n;

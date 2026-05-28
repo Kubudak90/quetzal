@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { QuetzalClient } from "../client.js";
-import type { NetworkName, NetworkConfig } from "../types.js";
+import type { NetworkName, NetworkConfig, QuetzalContracts } from "../types.js";
 import { ConfigError } from "../errors.js";
 
 export const PXE_TAGGING_CAP = 18; // 2 below Aztec's ~20 for safety buffer
@@ -23,6 +23,13 @@ export interface WalletPoolOptions {
   network: NetworkName;
   nodeUrl?: string;
   l1?: NetworkConfig["l1"];
+  /**
+   * Optional Quetzal protocol deployment metadata. When present, each child
+   * QuetzalClient registers the protocol contracts against its PXE so
+   * reads/writes (orders, pools, reads APIs) resolve addresses without the
+   * caller passing them on every method call.
+   */
+  contracts?: QuetzalContracts;
 }
 
 interface PoolChild {
@@ -100,6 +107,7 @@ export class WalletPool {
         nodeUrl: opts.nodeUrl,
         account: { type: "schnorr", secret: childHex },
         l1: opts.l1,
+        contracts: opts.contracts,
       });
       children.push({ client, index: i, pendingTx: 0 });
     }

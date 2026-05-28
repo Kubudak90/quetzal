@@ -41,6 +41,9 @@ testnet-m*-pxe/
 testnet-state.json
 wallet_data_*/
 
+# Sub-9 clean-slate redeploy state (runtime-only, contains new contract addrs + admin recreation).
+redeploy-testnet-state.json
+
 # Sub-6a testnet runner state (contains alice keys + nonces; runtime-only. Do NOT commit.)
 testnet-sub6-state.json
 

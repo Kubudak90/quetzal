@@ -9,7 +9,9 @@ import {
   ConfigError,
   QuetzalError,
   type NetworkName,
+  type QuetzalContracts,
 } from "@quetzal/sdk";
+import { loadContractsFromEnv } from "./contracts-env";
 
 /**
  * Quetzal frontend SDK context.
@@ -36,8 +38,8 @@ interface ClientContextValue {
   session: QuetzalSession | null;
   connecting: boolean;
   lastError: QuetzalError | null;
-  connectAztecWallet: (opts: { provider: unknown; network: NetworkName; nodeUrl?: string }) => Promise<void>;
-  connectWalletPool: (opts: { masterSecret: string; n: number; network: NetworkName; nodeUrl?: string }) => Promise<void>;
+  connectAztecWallet: (opts: { provider: unknown; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => Promise<void>;
+  connectWalletPool: (opts: { masterSecret: string; n: number; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
@@ -49,15 +51,17 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   const [lastError, setLastError] = useState<QuetzalError | null>(null);
   const [sessionCounter, setSessionCounter] = useState(0);
 
-  const connectAztecWallet = useCallback(async (opts: { provider: unknown; network: NetworkName; nodeUrl?: string }) => {
+  const connectAztecWallet = useCallback(async (opts: { provider: unknown; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => {
     setConnecting(true);
     setLastError(null);
     try {
+      const contracts = opts.contracts ?? loadContractsFromEnv();
       const client = await QuetzalClient.connect({
         network: opts.network,
         nodeUrl: opts.nodeUrl,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         account: { type: "aztec-wallet", provider: opts.provider as any },
+        contracts,
       });
       setSessionCounter((c) => {
         const nextId = c + 1;
@@ -79,15 +83,17 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const connectWalletPool = useCallback(async (opts: { masterSecret: string; n: number; network: NetworkName; nodeUrl?: string }) => {
+  const connectWalletPool = useCallback(async (opts: { masterSecret: string; n: number; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => {
     setConnecting(true);
     setLastError(null);
     try {
+      const contracts = opts.contracts ?? loadContractsFromEnv();
       const pool = await WalletPool.fromMaster({
         masterSecret: opts.masterSecret,
         n: opts.n,
         network: opts.network,
         nodeUrl: opts.nodeUrl,
+        contracts,
       });
       const client = pool.next();
       setSessionCounter((c) => {
