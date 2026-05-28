@@ -6,11 +6,17 @@ import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
-import { useL1WalletClient } from "../l1/hooks.js";
+import { useL1WalletClient, useL1Account } from "../l1/hooks.js";
 import {
   Eyebrow, Hairline, Dot, Badge, PillButton, Field, AddressMono, Tooltip, Segmented,
 } from "../components/atoms.js";
 import { RoundAmountAdvisory, TokenGlyph } from "../components/screens-shared.js";
+import {
+  addPendingClaim,
+  loadPendingClaims,
+  removePendingClaim,
+  type PendingClaim,
+} from "./bridge/pending-claims.js";
 
 // ─── Amount helper ─────────────────────────────────────────────────────────────
 /** Parse a display amount string (e.g. "1,234.56") to bigint with given decimals. */
@@ -27,37 +33,8 @@ function parseAmount(s: string, decimals: number = 6): bigint {
 }
 
 // ─── localStorage helpers for pending claims ───────────────────────────────────
-// SDK has no client.bridge.getPendingClaims() — pending claims are tracked in
-// localStorage after each deposit() call.
-interface LocalPendingClaim {
-  token: string;
-  amount: string; // bigint stringified
-  secret: string;
-  secretHash: string;
-  messageIndex: string;
-  isPrivate: boolean;
-  createdAt: number;
-}
-
-function addLocalPendingClaim(c: LocalPendingClaim) {
-  const list = loadLocalPendingClaims();
-  list.push(c);
-  localStorage.setItem("quetzal-pending-claims", JSON.stringify(list));
-}
-
-function loadLocalPendingClaims(): LocalPendingClaim[] {
-  try {
-    const raw = localStorage.getItem("quetzal-pending-claims");
-    return raw ? (JSON.parse(raw) as LocalPendingClaim[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function removeLocalPendingClaim(secret: string) {
-  const list = loadLocalPendingClaims().filter((c) => c.secret !== secret);
-  localStorage.setItem("quetzal-pending-claims", JSON.stringify(list));
-}
+// Pending claims persistence lives in ./bridge/pending-claims.ts (Sub-7c C1).
+// PendingClaim is keyed by messageIndex (unique per L1 bridge tx).
 
 // ─── Browser-compatible bridge-state helpers ───────────────────────────────────
 // SDK's loadBridgeState() / saveBridgeState() from @quetzal/sdk/privacy/bridge-schedule
@@ -168,6 +145,7 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
   const { session } = useClientContext();
   const qc = useQueryClient();
   const l1Wallet = useL1WalletClient();
+  const { isConnected: l1Connected } = useL1Account();
 
   const [token, setToken] = useState("USDC");
   const [amount, setAmount] = useState("");
@@ -178,10 +156,9 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
 
   const tokenData = tokenById(token);
 
-  // Sub-6b 2.8 deviation: SDK bridge.deposit is currently reserved (throws BridgeError).
-  // The CLI / scripts/testnet-sub5b-bridge.ts is canonical for L1 deposits.
-  // When the SDK ships its own deposit impl this call will work; for now it
-  // surfaces a clear error to the user.
+  // Sub-7c A3 shipped SDK bridge.deposit (viem-backed). DepositTab calls it
+  // directly with l1Wallet from useL1WalletClient(). Pending claims persist to
+  // localStorage via ./bridge/pending-claims.ts (Sub-7c C1).
   const depositMut = useMutation({
     mutationFn: async (input: { token: string; amount: bigint; isPrivate: boolean }) => {
       if (!client) throw new Error("Not connected");
@@ -196,26 +173,29 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
       );
     },
     onSuccess: (result) => {
-      addLocalPendingClaim({
+      const claim: PendingClaim = {
         token,
         amount: parseAmount(amount, 6).toString(),
         secret: result.secret ?? "",
         secretHash: result.secretHash ?? "",
+        // TODO(Sub-7c Task 12): messageHash computation needs to be added to
+        // BridgeDepositResult OR computed in ClaimTab from stored fields. The
+        // L1Inbox key isn't in the DepositInitiated event — it's derived off-chain
+        // from sha256(sender, chainId, version, recipient, content). For now an
+        // empty placeholder; getMessageReady polling will be a no-op until populated.
+        messageHash: "",
         messageIndex: result.messageIndex.toString(),
         isPrivate: visibility === "private",
         createdAt: Date.now(),
-      });
+      };
+      addPendingClaim(claim);
       setStep(2);
       pushToast({ kind: "ok", text: `Deposit submitted: L1 tx ${String(result.l1TxHash).slice(0, 10)}…` });
       void qc.invalidateQueries({ queryKey: ["pendingClaims", session?.sessionId] });
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("not yet implemented")) {
-        pushToast({ kind: "warn", text: "SDK bridge.deposit reserved (Sub-6b carry-forward). Use scripts/testnet-sub5b-bridge.ts for L1 deposits." });
-      } else {
-        pushToast({ kind: "warn", text: msg });
-      }
+      pushToast({ kind: "warn", text: msg.slice(0, 200) });
       setStep(0);
     },
   });
@@ -234,6 +214,20 @@ function DepositTab({ pushToast }: { pushToast: PushToast }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
 
       <div className="q-card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* L1 connection warning */}
+        {!l1Connected && (
+          <div style={{
+            background: "rgba(212,162,74,0.08)",
+            border: "1px solid rgba(212,162,74,0.4)",
+            borderRadius: 6, padding: "12px 14px",
+            display: "flex", alignItems: "flex-start", gap: 10,
+            fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--fg)",
+          }}>
+            <i data-lucide="alert-triangle" style={{ width: 14, height: 14, color: "var(--proving)", strokeWidth: 1.5, marginTop: 2, flexShrink: 0 } as CSSProperties}></i>
+            <span>Connect MetaMask on Sepolia before submitting a deposit. Use the "Connect L1" button in the top bar.</span>
+          </div>
+        )}
 
         {/* token + amount */}
         <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8 }}>
@@ -384,9 +378,10 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
   const qc = useQueryClient();
 
   // Pending claims are tracked in localStorage (SDK has no getPendingClaims() API).
+  // See ./bridge/pending-claims.ts (Sub-7c C1).
   const pendingClaimsQ = useQuery({
     queryKey: ["pendingClaims", session?.sessionId],
-    queryFn: () => loadLocalPendingClaims(),
+    queryFn: () => loadPendingClaims(),
     refetchInterval: false,
   });
 
@@ -402,7 +397,7 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
       });
     },
     onSuccess: (result, vars) => {
-      removeLocalPendingClaim(vars.secret);
+      removePendingClaim(vars.messageIndex);
       void qc.invalidateQueries({ queryKey: ["pendingClaims", session?.sessionId] });
       pushToast({ kind: "ok", text: `Claimed on L2: ${String(result.l2TxHash).slice(0, 10)}…` });
     },
@@ -424,7 +419,7 @@ function ClaimTab({ pushToast }: { pushToast: PushToast }) {
         </div>
       ) : (
         claims.map(c => (
-          <div key={c.secret} style={{
+          <div key={c.messageIndex} style={{
             display: "grid", gridTemplateColumns: "auto 1fr 1fr 80px 120px", gap: 16,
             alignItems: "center", padding: "16px 20px",
             borderBottom: "1px solid var(--hairline)",
