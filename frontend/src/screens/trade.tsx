@@ -189,10 +189,37 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
         decoyCount: input.decoys,
       });
     },
-    onSuccess: () => {
+    onSuccess: (result, vars) => {
       void qc.invalidateQueries({ queryKey: ["orders", session?.sessionId] });
       setAmount("");
       pushToast({ kind: "ok", text: "Order placed." });
+
+      // ── Sub-8.5: broadcast reveal to aggregator ──────────────────────────
+      const aggregatorUrl = import.meta.env.VITE_AGGREGATOR_URL as string | undefined;
+      if (aggregatorUrl && result) {
+        const orderNonce =
+          "orderNonce" in result
+            ? `0x${result.orderNonce.toString(16)}`
+            : `0x${result.realNonce.toString(16)}`;
+        const realSide = vars.side === "sell";
+        const revealPayload: Record<string, unknown> = {
+          epoch_id: result.epoch,
+          order_nonce: orderNonce,
+          side: realSide,
+          amount_in: vars.amount.toString(),
+          limit_price: vars.limitPrice.toString(),
+          submitted_at_block: result.blockNumber,
+          owner: client.address.toString(),
+          submission_tx_hash: result.txHash || undefined,
+        };
+        void client.aggregator.directReveal(aggregatorUrl, revealPayload).then((ok) => {
+          if (ok) {
+            pushToast({ kind: "ok", text: "Order revealed to aggregator." });
+          } else {
+            pushToast({ kind: "warn", text: "Aggregator unreachable — order won't clear until you retry." });
+          }
+        });
+      }
     },
     onError: (e) => {
       pushToast({ kind: "warn", text: e instanceof Error ? e.message : "Order failed" });

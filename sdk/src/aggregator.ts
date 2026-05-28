@@ -177,4 +177,25 @@ export class AggregatorApi {
     );
     return { pushed, skipped };
   }
+
+  /**
+   * Post a reveal directly to a known aggregator URL. Bypasses the on-chain
+   * AggregatorRegistry — for use when the aggregator URL is known
+   * out-of-band (e.g., a Vercel env var pointing at our prod aggregator).
+   *
+   * Returns true on HTTP 200, false otherwise. Doesn't throw on network
+   * errors — caller handles UX via try/catch.
+   */
+  async directReveal(url: string, payload: Record<string, unknown>): Promise<boolean> {
+    try {
+      const res = await fetch(`${url}/reveal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
 }

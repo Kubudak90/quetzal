@@ -174,6 +174,7 @@ export class OrdersApi {
       nonce: txNonce,
       orderNonce,
       epoch,
+      blockNumber: receipt?.blockNumber ?? 0,
     };
   }
 
@@ -244,7 +245,7 @@ export class OrdersApi {
       .submit_order_bulk(sides, amounts, limits, nonces, orderNonces, pathLens, pathArrays)
       .send({ from: this.client.address });
     const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
-      | { txHash?: { toString: () => string } }
+      | { txHash?: { toString: () => string }; blockNumber?: number }
       | undefined;
 
     // Record nonces in maker-local decoy registry
@@ -269,6 +270,7 @@ export class OrdersApi {
       realNonce: orderNonces[0]!,
       decoyNonces: orderNonces.slice(1, decoyCount + 1),
       epoch,
+      blockNumber: receipt?.blockNumber ?? 0,
     };
   }
 

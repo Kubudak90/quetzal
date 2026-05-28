@@ -182,6 +182,42 @@ This MVP is testnet-only. Before mainnet:
 - [ ] **Onbox audit + Slither-equivalent** for the on-chain submission path
 - [ ] **Key rotation procedure** for the L2 wallet secret
 
+## Verification (Sub-8.5: soft-launch direct-reveal path)
+
+After deploying the Sub-8.5 frontend (which wires `VITE_AGGREGATOR_URL`), you
+can verify reveals are landing in the aggregator queue by:
+
+```bash
+# 1. Place an order via the UI at https://aztec-project.vercel.app/trade
+#    Watch DevTools Network tab — you should see a POST to
+#    http://194.163.136.1:3001/reveal returning HTTP 200.
+
+# 2. Query the queue size from the VPS:
+ssh root@194.163.136.1 'curl -s http://localhost:3001/health | jq ".queueSize"'
+# Expected: increments by 1 per order placed.
+
+# 3. Send a test reveal manually:
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "epoch_id": 1,
+    "order_nonce": "0xdeadbeefdeadbeef",
+    "side": true,
+    "amount_in": "1000000",
+    "limit_price": "3000000000",
+    "submitted_at_block": 42,
+    "owner": "0xabcdef1234567890"
+  }' \
+  http://194.163.136.1:3001/reveal
+# Expected: {"ok":true}
+```
+
+**Important**: The Sub-8.5 soft-launch path uses `client.aggregator.directReveal`
+(not `broadcastReveal`). `directReveal` bypasses the on-chain `AggregatorRegistry`
+and POSTs directly to the URL in `VITE_AGGREGATOR_URL`. This is intentional:
+the aggregator is not yet bonded-registered with the `AggregatorRegistry` contract
+(that's Sub-8.1.next). Once registered, the standard `broadcastReveal` flow
+(registry-based discovery) will be used instead.
+
 ## On-call playbook (current MVP)
 
 If `/health` is unreachable:

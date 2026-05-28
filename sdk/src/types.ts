@@ -68,6 +68,7 @@ export interface PlaceOrderResult {
   nonce: bigint;
   orderNonce: bigint;
   epoch: number;
+  blockNumber: number;
 }
 
 export interface CurrentEpoch {
@@ -84,4 +85,5 @@ export interface BulkPlaceOrderResult {
   realNonce: bigint;
   decoyNonces: bigint[];
   epoch: number;
+  blockNumber: number;
 }
