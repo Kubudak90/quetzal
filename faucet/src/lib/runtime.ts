@@ -93,9 +93,14 @@ export function getRuntime(): Runtime {
   // gate the whole faucet. If the L1 fee-juice runs dry, bridgeFeeJuice
   // itself will throw and the pipeline turns it into a 503 — same outcome,
   // less brittle.
+  // ETH drain floor in wei. Each bridgeTokensPublic + L2 mint pair costs
+  // ~0.001 ETH (Sepolia). 0.01 ETH = ~10 drips of gas headroom; below
+  // that we mark drained so the operator gets a degraded signal before
+  // the next drip would silently fail at L1 tx broadcast.
+  const ETH_DRAIN_FLOOR_WEI = 10_000_000_000_000_000n; // 0.01 ETH
   const checkDrained = async (): Promise<boolean> => {
     const ethBal = await l1Bridge.getEthBalance();
-    if (ethBal < config.feeJuiceAmount / 100n) return true;
+    if (ethBal < ETH_DRAIN_FLOOR_WEI) return true;
     const tUSDCBal = await getOperatorL2Balance({
       nodeUrl: config.l2NodeUrl,
       operatorSecret: config.l2Secret,
