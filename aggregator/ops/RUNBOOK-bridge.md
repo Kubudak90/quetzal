@@ -51,6 +51,17 @@ localStorage.removeItem("quetzal-pending-withdraws");
 location.reload();
 ```
 
+## Validation runs
+
+| Date | Sub | Script | Results doc | Verdict |
+|---|---|---|---|---|
+| 2026-05-28 | 8.3 | `scripts/testnet-bridge-e2e.ts` | [sub8-3-bridge-e2e-results.md](./sub8-3-bridge-e2e-results.md) | _see results doc_ |
+
+`scripts/testnet-bridge-e2e.ts` is the canonical resume-safe round-trip
+runner (deposit → claim → exit → outbox-proof → L1 withdraw). Rerun it
+after every Sub-7c-touching contract or SDK change. State file
+(`testnet-bridge-e2e-state.json`) is gitignored — delete to start fresh.
+
 ## Known carry-forwards (Sub-7d)
 
 - Token-alias normalisation now accepts UI ids ("USDC"/"WETH"/"wBTC") + t*/a* aliases, but new tokens require an SDK update.

@@ -74,3 +74,7 @@ faucet/tsconfig.tsbuildinfo
 # Sub-8.2a LP seed script — operator-side runtime state (records the seed
 # txHash + position nonce; safe to delete to re-seed a fresh pool).
 seed-lp-state.json
+
+# Sub-8.3 bridge E2E runner state (contains live testnet tx hashes + secret
+# preimage for the L1→L2 claim; safe to delete to start a fresh round trip).
+testnet-bridge-e2e-state.json
