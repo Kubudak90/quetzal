@@ -140,10 +140,10 @@ export class BridgeApi {
    * @throws {BridgeError} if messageHash is malformed
    */
   async getMessageReady(messageHash: `0x${string}`): Promise<boolean> {
-    if (!messageHash.startsWith("0x") || messageHash.length !== 66) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(messageHash)) {
       throw new BridgeError(
         "UNKNOWN",
-        `messageHash must be a 0x-prefixed 32-byte hex string (66 chars), got: ${messageHash}`,
+        `messageHash must be 0x + 32 bytes (66 chars) of valid hex, got: ${messageHash}`,
       );
     }
     const node = await _internals.getNode(this.client.config.nodeUrl);

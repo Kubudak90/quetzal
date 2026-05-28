@@ -66,6 +66,21 @@ describe("BridgeApi.getMessageReady", () => {
       },
     );
   });
+
+  test("rejects message hash with invalid hex characters", async () => {
+    // "0x" + "ZZ".repeat(32) = 66 chars, correct prefix and length, invalid hex
+    const badHash = ("0x" + "ZZ".repeat(32)) as `0x${string}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = new BridgeApi(makeMockClient() as any);
+    await assert.rejects(
+      () => api.getMessageReady(badHash),
+      (err: Error) => {
+        assert.ok(err instanceof BridgeError);
+        assert.match(err.message, /messageHash/);
+        return true;
+      },
+    );
+  });
 });
 
 describe("validateBridgeExitInput", () => {
