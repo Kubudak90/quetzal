@@ -83,6 +83,15 @@ COPY cli ./cli
 COPY tests ./tests
 COPY contracts ./contracts
 
+# Re-link the per-workspace node_modules symlink farm.  pnpm's deps stage
+# installs into /repo/node_modules/.pnpm/ but the symlink farms inside
+# /repo/aggregator/node_modules/, /repo/sdk/node_modules/, etc. get clobbered
+# by the host COPYs above (host doesn't carry node_modules — see
+# Dockerfile.dockerignore).  Re-running `pnpm install` with the cached store
+# is a no-op for content but rebuilds the per-pkg symlinks `pnpm start` needs
+# to resolve fastify/sdk/etc.  --frozen-lockfile=false matches deps stage.
+RUN pnpm install --frozen-lockfile=false --prefer-offline
+
 # Pre-create the snapshots dir so the bind-mount volume picks up clean perms.
 RUN mkdir -p /repo/aggregator/data && chmod 0755 /repo/aggregator/data
 
