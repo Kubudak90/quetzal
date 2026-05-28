@@ -16,6 +16,13 @@ export {
 export { BridgeApi, validateBridgeExitInput } from "./bridge.js";
 export { ReadsApi } from "./reads.js";
 export { AggregatorApi, hashUrl } from "./aggregator.js";
+export {
+  PoolsApi,
+  PoolError,
+  computeDeposit,
+  computeBucketBounds,
+  depositRegime,
+} from "./pools.js";
 
 export type {
   OrderSide,
@@ -44,6 +51,17 @@ export type {
 
 export type { OrderViewModel, PoolViewModel, PositionViewModel } from "./reads.js";
 export type { AggregatorEntry } from "./aggregator.js";
+export type {
+  PoolState,
+  BucketState,
+  PositionView,
+  DepositInput,
+  DepositResult,
+  WithdrawInput,
+  WithdrawResult,
+  DepositEstimate,
+  DepositRegime,
+} from "./pools.js";
 
 export {
   QuetzalError,

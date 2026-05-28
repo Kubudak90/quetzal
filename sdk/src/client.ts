@@ -14,6 +14,7 @@ import { OrdersApi } from "./orders.js";
 import { BridgeApi } from "./bridge.js";
 import { ReadsApi } from "./reads.js";
 import { AggregatorApi } from "./aggregator.js";
+import { PoolsApi } from "./pools.js";
 
 /**
  * Discriminated union covering all supported account types.
@@ -57,6 +58,7 @@ export class QuetzalClient {
   private _bridge?: BridgeApi;
   private _reads?: ReadsApi;
   private _aggregator?: AggregatorApi;
+  private _pools?: PoolsApi;
 
   private constructor(
     public readonly address: AztecAddress,
@@ -80,6 +82,10 @@ export class QuetzalClient {
   get aggregator(): AggregatorApi {
     if (!this._aggregator) this._aggregator = new AggregatorApi(this);
     return this._aggregator;
+  }
+  get pools(): PoolsApi {
+    if (!this._pools) this._pools = new PoolsApi(this);
+    return this._pools;
   }
 
   /**

@@ -10,6 +10,7 @@ import {
   Eyebrow, Hairline, Dot, Badge, PillButton, AddressMono, Segmented,
 } from "../components/atoms.js";
 import { PoolCapacityBar, TokenGlyph } from "../components/screens-shared.js";
+import { LiquidityPanel } from "./wallet/liquidity-panel.js";
 
 interface ToastIn { kind: string; text: string }
 type PushToast = (t: ToastIn) => void;
@@ -33,6 +34,7 @@ const POOL_EXHAUSTED = false; // hardcoded (was tweaks.poolExhausted)
 export function WalletScreen({ pushToast }: WalletScreenProps) {
   const pool = useWalletPool();
   const { session } = useClientContext();
+  const [walletTab, setWalletTab] = useState<"pool" | "liquidity">("pool");
 
   // Build per-child card data from pool.addresses (live, lazy-connected).
   // Per-child balances are not accessible via the current SDK public API
@@ -79,6 +81,37 @@ export function WalletScreen({ pushToast }: WalletScreenProps) {
             <PillButton variant="ink" leftIcon="droplet">Faucet all</PillButton>
           </div>
         </div>
+
+        {/* Subtab selector: Pool | Liquidity */}
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--hairline)" }}>
+          {(["pool", "liquidity"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setWalletTab(tab)}
+              style={{
+                padding: "10px 20px",
+                background: "transparent",
+                border: "none",
+                borderBottom: walletTab === tab ? "2px solid var(--aztec-ink)" : "2px solid transparent",
+                fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 500,
+                color: walletTab === tab ? "var(--fg)" : "var(--fg-muted)",
+                cursor: "pointer",
+                textTransform: "capitalize",
+                transition: "color 120ms, border-color 120ms",
+              }}
+            >
+              {tab === "pool" ? "Wallet Pool" : "Liquidity"}
+            </button>
+          ))}
+        </div>
+
+        {/* Liquidity subtab */}
+        {walletTab === "liquidity" && (
+          <LiquidityPanel pushToast={pushToast} />
+        )}
+
+        {/* Pool subtab — only rendered when that tab is active */}
+        {walletTab === "pool" && (<>
 
         {/* Pool exhaustion banner (conditional — hardcoded false; the next task wires it from real state) */}
         {POOL_EXHAUSTED && (
@@ -153,6 +186,7 @@ export function WalletScreen({ pushToast }: WalletScreenProps) {
             Whoever holds this secret controls every child wallet in the pool. Store it in a password manager. Never paste it into a website.
           </div>
         </div>
+        </>)}
       </div>
     </div>
   );
