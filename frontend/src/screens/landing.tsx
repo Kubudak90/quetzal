@@ -1,14 +1,16 @@
 // Quetzal — Landing + First-launch setup
 // Ported from _design-source/landing-setup.jsx. Tweaks panel dropped.
 
-import { useState, Fragment, useCallback } from "react";
+import { useState, useEffect, Fragment, useCallback } from "react";
 import type { CSSProperties } from "react";
 import {
-  Eyebrow, Hairline, PillButton, AddressMono, Segmented,
-  FeatherGlyph, FeatherWatermark, Badge,
+  Eyebrow, Hairline, PillButton, Segmented,
+  FeatherGlyph, FeatherWatermark,
 } from "../components/atoms.js";
 import { useClientContext } from "../sdk/client-context.js";
 import type { NetworkName } from "@quetzal/sdk";
+import { WizardStep3 } from "../onboarding/wizard-step3.js";
+import { loadSession } from "../onboarding/persistence.js";
 
 /* ============ LANDING ============ */
 export function LandingScreen({ onStart }: { onStart: () => void }) {
@@ -124,8 +126,6 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   const [mode, setMode] = useState<string | null>(null);
   const [n, setN] = useState(3);
   const [network, setNetwork] = useState<NetworkName>("alpha-testnet");
-  const [funded, setFunded] = useState<boolean[]>([false, false, false]);
-
   // Master secret: generated fresh on mount; user can regenerate or import
   const [generatedSecret, setGeneratedSecret] = useState(() => generateMasterSecret());
   const [importedSecret, setImportedSecret] = useState("");
@@ -136,6 +136,18 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   const [localError, setLocalError] = useState<string | null>(null);
 
   const { connectAztecWallet, connectWalletPool, connecting, lastError } = useClientContext();
+
+  useEffect(() => {
+    const session = loadSession();
+    if (session && session.deployedAddresses.length >= session.poolSize) {
+      void connectWalletPool({
+        masterSecret: session.masterSecret,
+        n: session.poolSize,
+        network: session.network,
+      }).then(() => onComplete());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const regenerateSecret = useCallback(() => {
     setGeneratedSecret(generateMasterSecret());
@@ -176,17 +188,6 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
 
   /** The inline error to show: prefer local override, fall back to context error */
   const displayError = localError ?? (lastError ? `${lastError.code}: ${lastError.message}` : null);
-
-  function fund(i: number) {
-    const next = [...funded];
-    while (next.length <= i) next.push(false);
-    next[i] = true;
-    setFunded(next);
-  }
-
-  // Ensure funded array is long enough as n grows
-  const fundedSafe: boolean[] = Array.from({ length: Math.max(n, funded.length) }, (_, i) => funded[i] ?? false);
-  const allFunded = fundedSafe.slice(0, n).every(Boolean);
 
   return (
     <div style={{
@@ -372,72 +373,17 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
           </div>
         )}
 
-        {/* STEP 3 — Faucet helper */}
+        {/* STEP 3 — Faucet + deploy pipeline */}
         {step === 3 && (
-          <div>
-            <Eyebrow>Fund your pool</Eyebrow>
-            <h2 style={{ fontFamily: "var(--font-display)", fontSize: 40, fontWeight: 300, letterSpacing: "-0.04em", marginTop: 4 }}>
-              Drip fee-juice <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>per child</em>
-            </h2>
-            <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)", marginTop: 12 }}>
-              Each child needs a small amount of L1 fee-juice (ETH on Sepolia) to publish proofs. Once any one child is funded you can start trading.
-            </p>
-
-            <div className="q-card" style={{ padding: 0, marginTop: 24, overflow: "hidden" }}>
-              {Array.from({ length: n }).map((_, i) => (
-                <div key={i} style={{
-                  display: "grid", gridTemplateColumns: "32px 1fr 1fr 110px", gap: 16,
-                  padding: "14px 20px", alignItems: "center",
-                  borderBottom: i === n - 1 ? "none" : "1px solid var(--hairline)",
-                  opacity: fundedSafe[i] ? 0.6 : 1,
-                }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: 4,
-                    background: fundedSafe[i] ? "var(--aztec-chartreuse)" : "var(--aztec-ink)",
-                    color: fundedSafe[i] ? "var(--aztec-ink)" : "var(--aztec-parchment)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500,
-                  }}>{fundedSafe[i] ? "✓" : i}</div>
-                  <div>
-                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>child-{i}</div>
-                    <AddressMono value={`0x${"7c5fA12e8B3D4f9aC1e29bd071E4a7e123a456b8".slice(0, 38)}${i.toString(16).padStart(2, "0")}`} style={{ fontSize: 11, color: "var(--fg-muted)" }} />
-                  </div>
-                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: fundedSafe[i] ? "var(--fg)" : "var(--fg-muted)" }}>
-                    {fundedSafe[i] ? "0.10 ETH" : "0.00 ETH"} <span style={{ color: "var(--fg-subtle)" }}>fee-juice</span>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    {fundedSafe[i] ? (
-                      <Badge tone="filled">Funded</Badge>
-                    ) : (
-                      <PillButton size="sm" variant="primary" onClick={() => fund(i)} leftIcon="droplet">Faucet</PillButton>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
-              <PillButton size="lg" variant="ghost" onClick={() => setStep(2)} leftIcon="arrow-left" disabled={connecting}>Back</PillButton>
-              <PillButton
-                size="lg"
-                variant="primary"
-                disabled={!fundedSafe.slice(0, 1).some(Boolean) || connecting}
-                onClick={() => void handleConnectPool()}
-                rightIcon={connecting ? undefined : "arrow-right"}
-              >
-                {connecting
-                  ? "Connecting..."
-                  : allFunded
-                  ? "Enter Quetzal"
-                  : `Continue with ${fundedSafe.filter(Boolean).length}/${n} funded`}
-              </PillButton>
-            </div>
-            {displayError && (
-              <div style={{ marginTop: 12, color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "right" }}>
-                {displayError}
-              </div>
-            )}
-          </div>
+          <WizardStep3
+            masterSecret={masterSecret}
+            n={n}
+            faucetUrl={import.meta.env.VITE_FAUCET_URL as string}
+            bypassKey={import.meta.env.VITE_FAUCET_BYPASS_KEY as string}
+            nodeUrl={import.meta.env.VITE_AZTEC_NODE_URL as string}
+            onAllDone={() => void handleConnectPool()}
+            onBack={() => setStep(2)}
+          />
         )}
       </div>
     </div>
