@@ -57,6 +57,31 @@ export interface BridgeTickInput {
   autoClaim?: boolean;
 }
 
+// NOTE: The real on-chain withdraw ABI (verified against
+// contracts-l1/out/TokenBridge.sol/TokenBridge.json) differs from the
+// Sub-7c plan's draft in four ways:
+//   1. There is NO single `withdraw(recipient, amount, withdrawIsPrivate, ...)` —
+//      instead there are TWO separate functions: `withdraw` (public) and
+//      `withdrawPrivate` (private). isPrivate routes to the correct function.
+//   2. Args are reordered: `amount` comes FIRST, then `recipient`.
+//   3. The block-number param is named `l2Epoch` (not `l2BlockNumber`).
+//   4. There is no `withdrawIsPrivate` boolean parameter at all.
+export interface PrepareL1WithdrawInput {
+  token: string;
+  amount: bigint;
+  l1Recipient: `0x${string}`;
+  isPrivate: boolean;
+  siblingPath: `0x${string}`[];
+  /** Aztec L2 epoch (block number) at which the exit was included. */
+  l2Epoch: bigint;
+  leafIndex: bigint;
+}
+
+export interface PrepareL1WithdrawResult {
+  to: `0x${string}`;
+  data: `0x${string}`;
+}
+
 // ─── L1 bridge ABI fragments (TokenBridge.sol, contracts-l1/src/TokenBridge.sol) ──
 
 const ERC20_APPROVE_ABI = [
@@ -137,6 +162,39 @@ const BRIDGE_DEPOSIT_ABI = [
 
 export const DEPOSIT_INITIATED_TOPIC =
   "0x6d427fdb35b9c2ae11c4374e424fdc75bd8ae80001f74d846ea70bf7233af909" as const;
+
+// Verified against contracts-l1/out/TokenBridge.sol/TokenBridge.json.
+// Note: two separate functions (withdraw / withdrawPrivate) rather than one
+// function with an isPrivate bool — and args are (amount, recipient, l2Epoch,
+// leafIndex, siblingPath), NOT (recipient, amount, withdrawIsPrivate, ...).
+const BRIDGE_WITHDRAW_ABI = [
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "recipient", type: "address" },
+      { name: "l2Epoch", type: "uint256" },
+      { name: "leafIndex", type: "uint256" },
+      { name: "siblingPath", type: "bytes32[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "withdrawPrivate",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "recipient", type: "address" },
+      { name: "l2Epoch", type: "uint256" },
+      { name: "leafIndex", type: "uint256" },
+      { name: "siblingPath", type: "bytes32[]" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 // ─── Validators / helpers ────────────────────────────────────────────────────
 
@@ -231,6 +289,7 @@ export const _internals = {
       createPublicClient: viem.createPublicClient,
       http: viem.http,
       decodeEventLog: viem.decodeEventLog,
+      encodeFunctionData: viem.encodeFunctionData,
       sepolia: chains.sepolia,
     };
   },
@@ -612,5 +671,40 @@ export class BridgeApi {
     }
     if (changed) saveBridgeState(state);
     return { processedCount: processed };
+  }
+
+  /**
+   * Composes the L1 bridge `withdraw` / `withdrawPrivate` calldata without
+   * requiring the caller to depend on viem ABI types.
+   *
+   * The wizard passes the returned `{ to, data }` directly to MetaMask's
+   * `eth_sendTransaction`. Inputs (siblingPath, l2Epoch, leafIndex) come from
+   * `buildOutboxProof` (util/outbox-proof.ts, Task 1).
+   *
+   * ABI note: the real TokenBridge.sol has TWO separate functions — `withdraw`
+   * for public exits and `withdrawPrivate` for private exits — with args
+   * `(amount, recipient, l2Epoch, leafIndex, siblingPath)`. There is no
+   * single function taking an isPrivate bool.
+   */
+  async prepareL1Withdraw(input: PrepareL1WithdrawInput): Promise<PrepareL1WithdrawResult> {
+    const l1 = this.client.config.l1;
+    if (!l1) {
+      throw new BridgeError("UNKNOWN", "config.l1 is required for prepareL1Withdraw");
+    }
+    const bridgeAddr = resolveL1Bridge(l1, input.token);
+    const { encodeFunctionData } = await _internals.getViem();
+    const functionName = input.isPrivate ? "withdrawPrivate" : "withdraw";
+    const data = encodeFunctionData({
+      abi: BRIDGE_WITHDRAW_ABI,
+      functionName,
+      args: [
+        input.amount,
+        input.l1Recipient,
+        input.l2Epoch,
+        input.leafIndex,
+        input.siblingPath,
+      ] as const,
+    });
+    return { to: bridgeAddr, data };
   }
 }

@@ -38,6 +38,8 @@ export type {
   BridgeClaimInput,
   BridgeExitInput,
   BridgeTickInput,
+  PrepareL1WithdrawInput,
+  PrepareL1WithdrawResult,
 } from "./bridge.js";
 
 export type { OrderViewModel, PoolViewModel, PositionViewModel } from "./reads.js";

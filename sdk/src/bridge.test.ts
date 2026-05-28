@@ -346,3 +346,63 @@ describe("BridgeApi.deposit", () => {
     );
   });
 });
+
+// ─── BridgeApi.prepareL1Withdraw ─────────────────────────────────────────────
+
+describe("BridgeApi.prepareL1Withdraw", () => {
+  function makeMockClientWithL1(l1: { usdcBridge?: string; wethBridge?: string } | undefined) {
+    return {
+      config: {
+        nodeUrl: "https://node.mock",
+        l1,
+        contracts: {
+          orderbook: "0x" + "dd".repeat(32),
+          tUSDC: "0x" + "ff".repeat(32),
+          tETH: "0x" + "ee".repeat(32),
+          pools: [],
+        },
+      },
+      wallet: {},
+      address: { toString: () => "0x" + "11".repeat(32) },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as unknown as any;
+  }
+
+  test("returns calldata for withdraw call on the right bridge", async () => {
+    const client = makeMockClientWithL1({ usdcBridge: "0x" + "aa".repeat(20) });
+    const bridge = new BridgeApi(client);
+    const result = await bridge.prepareL1Withdraw({
+      token: "aUSDC",
+      amount: 1_000_000n,
+      l1Recipient: "0xcF582A37AaE1E580b63666587FFa42d84169bA62" as `0x${string}`,
+      isPrivate: false,
+      siblingPath: [("0x" + "11".repeat(32)) as `0x${string}`],
+      l2Epoch: 100n,
+      leafIndex: 5n,
+    });
+    assert.strictEqual(result.to, "0x" + "aa".repeat(20));
+    assert.match(result.data, /^0x[0-9a-f]+$/);
+  });
+
+  test("rejects unknown token alias", async () => {
+    const client = makeMockClientWithL1({ usdcBridge: "0x" + "aa".repeat(20) });
+    const bridge = new BridgeApi(client);
+    await assert.rejects(
+      () =>
+        bridge.prepareL1Withdraw({
+          token: "junk",
+          amount: 1n,
+          l1Recipient: ("0x" + "11".repeat(20)) as `0x${string}`,
+          isPrivate: false,
+          siblingPath: [],
+          l2Epoch: 1n,
+          leafIndex: 0n,
+        }),
+      (err: Error) => {
+        assert.ok(err instanceof BridgeError);
+        assert.match(err.message, /unknown token/);
+        return true;
+      },
+    );
+  });
+});
