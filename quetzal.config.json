@@ -1,17 +1,29 @@
 {
   "nodeUrl": "https://rpc.testnet.aztec-labs.com",
   "admin": "0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00",
-  "tUSDC": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
-  "tETH": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
-  "orderbook": "0x2486ac705f0e7b509256dc96c8310a3abdf6465faa4a24e406a10fbcc17e5184",
-  "treasury": "0x1b2c36d0b7f5da9ccb7888eee7785111f4a5c35778097bb79957ac031a6606e6",
-  "aggregatorRegistry": "0x00e43e816cdc85de14b31c02450b06890f0ebca5c19023d2fdb511fd16ece8e0",
+  "tUSDC": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+  "tETH": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
+  "orderbook": "0x218ad28908f52d430a9d18a4f281e41e0cf3df547d7e2c74012e952c9e0d28cc",
+  "treasury": "0x023b6096335ec3bc7671429c35ba01658ec2245896fd25deae8575fb36c5f12f",
+  "aggregatorRegistry": "0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff",
   "pools": [
     {
       "pool_id": 0,
-      "token_a": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
-      "token_b": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
-      "address": "0x1c06506878d782e8060557bc0ac73a4ff38cfda00083035103058b73be2def75"
+      "address": "0x12f3300a5ba91cf46591f19d9ef4a6c05f85a5fb49801087f66c5d776f894795",
+      "token_a": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+      "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+    },
+    {
+      "pool_id": 1,
+      "address": "0x0a474c95cd872fb51cd9123f5e5e46a240a508c1d205b657ba610743650b5521",
+      "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+      "token_b": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c"
+    },
+    {
+      "pool_id": 2,
+      "address": "0x061679154adf5c7f30ceb7a7efe03a1b2450a787868807e43a204443c563ebc8",
+      "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+      "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
     }
   ],
   "bucketPMinSqrt": "100000000000000000",
@@ -40,5 +52,23 @@
     "aWBTC": "0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3",
     "admin": "0x0a6288dc8eea7d22fa49c281efb2750a5d9e45b2bcaccbe3340a718eeb0c3c2f",
     "notes": "Same L2 tokens as Phase 1.2; new L1 bridges (Phase 1.4 redeploy with L2_VERSION=4127419662 fix)."
-  }
+  },
+  "m4_legacy": {
+    "admin": "0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00",
+    "tUSDC": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
+    "tETH": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
+    "orderbook": "0x2486ac705f0e7b509256dc96c8310a3abdf6465faa4a24e406a10fbcc17e5184",
+    "treasury": "0x1b2c36d0b7f5da9ccb7888eee7785111f4a5c35778097bb79957ac031a6606e6",
+    "aggregatorRegistry": "0x00e43e816cdc85de14b31c02450b06890f0ebca5c19023d2fdb511fd16ece8e0",
+    "pools": [
+      {
+        "pool_id": 0,
+        "token_a": "0x09075988b52dec9c83c7da73ca3f746c14431a7974ccd8fb899e6476ef6b6b22",
+        "token_b": "0x1c839479228a2cf9304a61ea4d0b3b2d3c319f3e72c8f4d87c3ade3a5809a198",
+        "address": "0x1c06506878d782e8060557bc0ac73a4ff38cfda00083035103058b73be2def75"
+      }
+    ],
+    "notes": "Pre Sub-9 redeploy snapshot (taken 2026-05-28T20:43:26.756Z; replaced due to aztec.js 4.2.1 transpile incompatibility)."
+  },
+  "tBTC": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc"
 }
