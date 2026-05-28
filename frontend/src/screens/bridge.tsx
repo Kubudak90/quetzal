@@ -5,6 +5,7 @@
 import { useState, useMemo, Fragment } from "react";
 import type { CSSProperties } from "react";
 import { useMutation, useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
+import { sepolia } from "wagmi/chains";
 import { useQuetzalClient, useClientContext } from "../sdk/client-context.js";
 import { useL1WalletClient, useL1Account } from "../l1/hooks.js";
 import {
@@ -17,6 +18,18 @@ import {
   removePendingClaim,
   type PendingClaim,
 } from "./bridge/pending-claims.js";
+import {
+  addPendingWithdraw,
+  loadPendingWithdraws,
+  markWithdrawComplete,
+  type PendingWithdraw,
+} from "./bridge/pending-withdraws.js";
+import {
+  buildOutboxProof,
+  OutboxProofNotReadyError,
+  computeWithdrawContent,
+  type OutboxProof,
+} from "@quetzal/sdk";
 
 // ─── Amount helper ─────────────────────────────────────────────────────────────
 /** Parse a display amount string (e.g. "1,234.56") to bigint with given decimals. */
@@ -552,12 +565,28 @@ function ExitTab({ pushToast }: { pushToast: PushToast }) {
         ackDelay: input.ackDelay,
       });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, vars) => {
       void qc.invalidateQueries({ queryKey: ["scheduledExits", session?.sessionId] });
       if ("scheduledExits" in result) {
         pushToast({ kind: "ok", text: `${(result as { scheduledExits: unknown[] }).scheduledExits.length} exits scheduled.` });
       } else {
-        pushToast({ kind: "ok", text: `Exit submitted: L2 tx ${String((result as { l2TxHash: unknown }).l2TxHash).slice(0, 10)}…` });
+        const exitResult = result as { l2TxHash: string };
+        pushToast({ kind: "ok", text: `Exit submitted: L2 tx ${String(exitResult.l2TxHash).slice(0, 10)}…` });
+        // Sub-7c D2 (Task 13): persist for L1 withdraw polling. The polling
+        // panel watches buildOutboxProof; once the L2 epoch finalises on L1,
+        // the user can click "Withdraw" which calls prepareL1Withdraw +
+        // MetaMask sign+send. Carryforward (Sub-7d): the exit form doesn't
+        // expose an isPrivate toggle yet — defaults to public.
+        addPendingWithdraw({
+          token: vars.token,
+          amount: vars.amount.toString(),
+          l1Recipient: vars.l1Recipient as `0x${string}`,
+          isPrivate: false,
+          l2TxHash: exitResult.l2TxHash as `0x${string}`,
+          status: "pending",
+          createdAt: Date.now(),
+        });
+        void qc.invalidateQueries({ queryKey: ["pendingWithdraws", session?.sessionId] });
       }
       setAmount("");
     },
@@ -570,6 +599,7 @@ function ExitTab({ pushToast }: { pushToast: PushToast }) {
     !exitMut.isPending;
 
   return (
+    <>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
       <div className="q-card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
@@ -695,6 +725,8 @@ function ExitTab({ pushToast }: { pushToast: PushToast }) {
         </div>
       </div>
     </div>
+    <PendingL1WithdrawsPanel pushToast={pushToast} />
+    </>
   );
 }
 
@@ -734,6 +766,172 @@ function ScheduleTimeline({ parts, interval, amount, token }: ScheduleTimelinePr
           </Fragment>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ============ PENDING L1 WITHDRAWS ============ */
+// Sub-7c D2 (Task 13): poll buildOutboxProof for each pending withdraw row;
+// once the proof is ready (i.e. the L2 epoch is finalised on L1), expose a
+// "Withdraw on L1" button. The button calls SDK.prepareL1Withdraw() to compose
+// L1 calldata, then asks MetaMask (viem WalletClient.sendTransaction) to sign
+// + broadcast it. On receipt, markWithdrawComplete persists the L1 tx hash.
+function PendingL1WithdrawsPanel({ pushToast }: { pushToast: PushToast }) {
+  const client = useQuetzalClient();
+  const { session } = useClientContext();
+  const qc = useQueryClient();
+  const l1Wallet = useL1WalletClient();
+  const { address: l1Address } = useL1Account();
+  const nodeUrl = import.meta.env.VITE_AZTEC_NODE_URL as string | undefined;
+
+  // Wrap loadPendingWithdraws in useQuery so addPendingWithdraw → invalidateQueries
+  // re-renders the panel without a manual storage event listener.
+  const withdrawsQ = useQuery({
+    queryKey: ["pendingWithdraws", session?.sessionId],
+    queryFn: () => loadPendingWithdraws(),
+    refetchInterval: false,
+  });
+  const withdraws = withdrawsQ.data ?? [];
+
+  // One proof query per pending row. Polls every 60s; OutboxProofNotReadyError
+  // is treated as "still pending" (returns null) so the row stays in pending state.
+  const proofQueries = useQueries({
+    queries: withdraws.map((w) => ({
+      queryKey: ["bridge", "outbox-proof", w.l2TxHash],
+      queryFn: async (): Promise<OutboxProof | null> => {
+        if (!nodeUrl) return null;
+        if (w.status !== "pending") return null;
+        try {
+          const content = computeWithdrawContent(
+            w.l1Recipient,
+            BigInt(w.amount),
+            w.isPrivate,
+          );
+          return await buildOutboxProof(nodeUrl, w.l2TxHash, content);
+        } catch (err) {
+          if (err instanceof OutboxProofNotReadyError) return null;
+          // Don't propagate shape/network errors as red state — leave the row
+          // pending; the next 60s tick will retry.
+          return null;
+        }
+      },
+      enabled: !!nodeUrl && w.status === "pending",
+      refetchInterval: 60_000,
+      staleTime: 55_000,
+    })),
+  });
+
+  // Per-row withdraw mutation. Keyed by l2TxHash via mutate variables so a
+  // withdraw in flight for row A doesn't disable other ready rows.
+  const withdrawMut = useMutation({
+    mutationFn: async (args: { row: PendingWithdraw; proof: OutboxProof }) => {
+      if (!client) throw new Error("Not connected");
+      if (!l1Wallet) throw new Error("Connect MetaMask first");
+      if (!l1Address) throw new Error("Connect MetaMask first");
+      const result = await client.bridge.prepareL1Withdraw({
+        token: args.row.token,
+        amount: BigInt(args.row.amount),
+        l1Recipient: args.row.l1Recipient,
+        isPrivate: args.row.isPrivate,
+        siblingPath: args.proof.siblingPath,
+        l2Epoch: BigInt(args.proof.l2Epoch),
+        leafIndex: BigInt(args.proof.leafIndex),
+      });
+      const l1WithdrawTxHash = await l1Wallet.sendTransaction({
+        to: result.to,
+        data: result.data,
+        account: l1Address,
+        chain: sepolia,
+        value: 0n,
+      });
+      return { l2TxHash: args.row.l2TxHash, l1WithdrawTxHash };
+    },
+    onSuccess: ({ l2TxHash, l1WithdrawTxHash }) => {
+      markWithdrawComplete(l2TxHash, l1WithdrawTxHash);
+      void qc.invalidateQueries({ queryKey: ["pendingWithdraws", session?.sessionId] });
+      pushToast({ kind: "ok", text: `L1 withdraw sent: ${l1WithdrawTxHash.slice(0, 10)}…` });
+    },
+    onError: (e) => pushToast({ kind: "warn", text: e instanceof Error ? e.message : "L1 withdraw failed" }),
+  });
+
+  return (
+    <div className="q-card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h4 style={{ fontFamily: "var(--font-serif)", fontSize: 18, fontWeight: 400 }}>Pending L1 withdraws</h4>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>{withdraws.length} total</span>
+      </div>
+      <Hairline />
+      {withdraws.length === 0 ? (
+        <div style={{ padding: 60, textAlign: "center" }}>
+          <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--fg-muted)" }}>No pending L1 withdraws.</div>
+        </div>
+      ) : (
+        withdraws.map((w, i) => {
+          const proofQ = proofQueries[i];
+          const proof = proofQ?.data ?? null;
+          const isReady = w.status === "pending" && proof !== null;
+          const isComplete = w.status === "complete";
+          const isThisRowPending =
+            withdrawMut.isPending && withdrawMut.variables?.row.l2TxHash === w.l2TxHash;
+          return (
+            <div key={w.l2TxHash} style={{
+              display: "grid", gridTemplateColumns: "auto 1fr 1fr 120px 140px", gap: 16,
+              alignItems: "center", padding: "16px 20px",
+              borderBottom: "1px solid var(--hairline)",
+            }}>
+              <TokenGlyph token={w.token} size={28} />
+              <div>
+                <div data-mono style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 500 }}>
+                  {w.amount} <span style={{ color: "var(--fg-muted)" }}>{w.token}</span>
+                </div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>
+                  {Math.round((Date.now() - w.createdAt) / 60000)} min ago
+                </div>
+              </div>
+              <div>
+                <Eyebrow style={{ marginBottom: 2 }}>L1 recipient</Eyebrow>
+                <AddressMono value={w.l1Recipient} />
+              </div>
+              <div>
+                {isComplete ? (
+                  <Badge tone="filled">Complete</Badge>
+                ) : isReady ? (
+                  <Badge tone="filled">Ready</Badge>
+                ) : (
+                  <Badge tone="warn">Pending finalisation · ~30-90 min</Badge>
+                )}
+                {isComplete && w.l1WithdrawTxHash && (
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--fg-muted)", marginTop: 4 }}>
+                    L1 tx {w.l1WithdrawTxHash.slice(0, 10)}…
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {isComplete ? (
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>—</span>
+                ) : (
+                  <PillButton
+                    size="sm"
+                    variant="primary"
+                    disabled={isThisRowPending || !isReady}
+                    onClick={() => {
+                      if (!l1Wallet) {
+                        pushToast({ kind: "warn", text: "Connect MetaMask first" });
+                        return;
+                      }
+                      if (!proof) return;
+                      withdrawMut.mutate({ row: w, proof });
+                    }}
+                    rightIcon={isReady ? "check" : "clock"}
+                  >
+                    {isThisRowPending ? "Signing…" : isReady ? "Withdraw" : "Waiting"}
+                  </PillButton>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
