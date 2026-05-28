@@ -6,9 +6,17 @@
 - Container: `quetzal-aggregator` (docker-compose at `/root/quetzal-aggregator/aggregator/docker-compose.yml`)
 - Port: 3001 host → 3000 container (Caddy reverse-proxies HTTPS at
   `https://aggregator.quetzaldex.xyz/` once DNS is wired)
+- Public endpoint (current): `http://194.163.136.1:3001/health` — no TLS
+  yet. DNS A record `aggregator.quetzaldex.xyz → 194.163.136.1` must be
+  added via Vercel domains; Caddyfile is already configured for the
+  vhost (issued on first request once DNS resolves).
 - Logs: `docker logs quetzal-aggregator` (stdout, JSON-line format)
 - Data: `/root/quetzal-aggregator/aggregator/data/` (snapshot JSONLs persist
   across restarts; bind-mount, safe for `tar`-style backups)
+- L2 read-only wallet address (current deploy):
+  `0x2cce3e9c086406a8b974abcd37ee258a6c08d88b260381b299a14ad16e070713`
+  Derived from `AGGREGATOR_L2_SECRET` in `.env.aggregator`; never funded
+  in the MVP (read-only via PXE simulate()).
 
 ## What's wired (MVP scope)
 
@@ -149,8 +157,10 @@ The `./data` bind-mount survives the rebuild; in-flight queue state does NOT
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/health` returns `watcher.status: "disabled"` | env vars missing | Check `.env.aggregator` has `AZTEC_NODE_URL` + `ORDERBOOK_ADDRESS` + `AGGREGATOR_L2_SECRET` |
-| `/health` returns `watcher.status: "error"` with "public bytecode" message | Noir artifact missing or version skew | `pnpm compile` then `docker compose up -d --build` |
+| `/health` returns `watcher.status: "error"` with "public bytecode" message | Noir artifact missing or version skew (CURRENT STATE on 2026-05-28 — testnet rollup version 4127419662 needs a re-compile + transpile of `contracts/orderbook/`) | Run `pnpm compile` on a box with `nargo` installed + transpile against the matching aztec.js version. Then SCP the JSON artifacts to the VPS at `/root/quetzal-aggregator/contracts/*/target/` and `docker compose up -d --build`. Reveal server keeps working regardless. |
+| `/health` returns `watcher.status: "error"` with "greater or equal to field modulus" | `AGGREGATOR_L2_SECRET` is too large for BN254 Fr | Regenerate so the first byte is `< 0x30` (safe upper bound): `openssl rand -hex 31 \| sed 's/^/00/'` |
 | `/health` returns `watcher.lastError: "Failed to fetch"` | L2 RPC unreachable | Check `AZTEC_NODE_URL` resolves + testnet is up |
+| `/health` returns `watcher.lastError: "Cannot find module ... tests/integration/generated/Orderbook.js"` | `QUETZAL_CONTRACTS_DIR` is unset and SDK is using cwd-relative path | Add `QUETZAL_CONTRACTS_DIR=/repo/tests/integration/generated` to `.env.aggregator` then `docker compose down && docker compose up -d` (restart doesn't re-read env-file). |
 | Container restart-loop | Port collision or env-file missing | `docker logs quetzal-aggregator --tail=100` to see the fatal line |
 | `POST /reveal` returns 400 | Payload schema mismatch | See `RevealSchema` in `src/main.ts` — check `order_nonce` is `0x...` hex |
 | Queue size drops to 0 unexpectedly | Container restarted (in-memory only) | Reveals are queue-on-broadcast; makers retry next epoch |
