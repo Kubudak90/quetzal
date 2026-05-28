@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "test": "node --import tsx --test 'test/**/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "start": "node --import tsx src/main.ts"
   },
   "dependencies": {
     "@aztec/foundation": "4.2.1",
     "@aztec/aztec.js": "4.2.1",
+    "@quetzal/sdk": "workspace:*",
     "fastify": "^4.28.0",
     "viem": "^2.21.0",
     "zod": "^3.23.0"
