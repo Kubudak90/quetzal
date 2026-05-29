@@ -8,32 +8,86 @@ import { Callout } from 'nextra/components';
 
 Quetzal is three tiers running across two chains.
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│  Browser (Vercel)                                              │
-│  ├─ Frontend (React + Vite)                                    │
-│  ├─ @quetzal/sdk (Aztec wallet, places orders, claims fills)   │
-│  └─ MetaMask (L1 Sepolia, for bridge only)                     │
-└────────────────────────────────────────────────────────────────┘
-                  │ HTTPS                       │ JSON-RPC
-                  ▼                              ▼
-┌──────────────────────────┐   ┌────────────────────────────────┐
-│  Aggregator (VPS)        │   │  Aztec Network (testnet)        │
-│  ├─ Reveal queue          │   │  ├─ Orderbook (Noir contract)   │
-│  ├─ Clearing daemon       │──▶│  ├─ Pools 0/1/2 (Noir)          │
-│  ├─ Bridge relayer (opt.) │   │  ├─ Treasury                    │
-│  └─ Faucet (Next.js API)  │   │  ├─ AggregatorRegistry          │
-└──────────────────────────┘   │  └─ Token bridge mode (aUSDC…)   │
-                                └────────────────────────────────┘
-                                                  │ L1 outbox / L1 inbox
-                                                  ▼
-                                ┌────────────────────────────────┐
-                                │  Ethereum Sepolia (L1)          │
-                                │  ├─ TokenBridge.sol × 3         │
-                                │  ├─ TimelockController × 2      │
-                                │  └─ 3-of-5 multisig             │
-                                └────────────────────────────────┘
-```
+<svg
+  viewBox="0 0 880 720"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-label="Quetzal system architecture: Browser tier on top, Aggregator VPS and Aztec L2 in the middle, Ethereum Sepolia at the bottom."
+  style={{ width: '100%', height: 'auto', maxWidth: 880, margin: '24px auto', display: 'block', fontFamily: 'var(--nextra-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)' }}
+>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#B5CC18" />
+    </marker>
+    <style>{`
+      .box { fill: rgba(255,255,255,0.02); stroke: currentColor; stroke-opacity: 0.45; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 600; fill: currentColor; }
+      .item { font-size: 11px; fill: currentColor; opacity: 0.75; }
+      .edge { stroke: #B5CC18; stroke-opacity: 0.65; stroke-width: 1.5; fill: none; }
+      .edge-label { font-size: 10px; fill: currentColor; opacity: 0.55; }
+      .chip { fill: rgba(181,204,24,0.10); stroke: #B5CC18; stroke-opacity: 0.45; }
+      .chip-text { font-size: 10px; font-weight: 600; fill: #B5CC18; }
+    `}</style>
+  </defs>
+
+  {/* Browser tier */}
+  <rect className="box" x="40" y="32" width="800" height="120" rx="8" />
+  <rect className="chip" x="56" y="48" width="116" height="22" rx="11" />
+  <text className="chip-text" x="114" y="63" textAnchor="middle">BROWSER · VERCEL</text>
+  <text className="title" x="56" y="92">Frontend (React + Vite) · @quetzal/sdk · MetaMask</text>
+  <text className="item" x="56" y="112">Aztec wallet pool · places sealed orders · claims fills · L1 bridge UI</text>
+  <text className="item" x="56" y="130">quetzaldex.xyz</text>
+
+  {/* Down arrows */}
+  <path className="edge" d="M280 152 L280 220" markerEnd="url(#arr)" />
+  <text className="edge-label" x="290" y="190">HTTPS · reveal + faucet</text>
+  <path className="edge" d="M600 152 L600 220" markerEnd="url(#arr)" />
+  <text className="edge-label" x="610" y="190">JSON-RPC · L2 reads/writes</text>
+
+  {/* Aggregator tier */}
+  <rect className="box" x="40" y="232" width="380" height="180" rx="8" />
+  <rect className="chip" x="56" y="248" width="120" height="22" rx="11" />
+  <text className="chip-text" x="116" y="263" textAnchor="middle">AGGREGATOR · VPS</text>
+  <text className="title" x="56" y="294">aggregator.quetzaldex.xyz</text>
+  <text className="item" x="56" y="316">• Reveal queue (HTTP /reveal ingestion)</text>
+  <text className="item" x="56" y="334">• Clearing daemon (validate → match → bb prove)</text>
+  <text className="item" x="56" y="352">• Bridge relayer (optional, Sub-5c)</text>
+  <text className="item" x="56" y="370">• Faucet (Next.js API · drips fee-juice + tokens)</text>
+  <text className="item" x="56" y="396">faucet.quetzaldex.xyz</text>
+
+  {/* Aztec L2 tier */}
+  <rect className="box" x="460" y="232" width="380" height="180" rx="8" />
+  <rect className="chip" x="476" y="248" width="156" height="22" rx="11" />
+  <text className="chip-text" x="554" y="263" textAnchor="middle">AZTEC NETWORK · TESTNET</text>
+  <text className="title" x="476" y="294">Noir contracts on Aztec L2</text>
+  <text className="item" x="476" y="316">• Orderbook (sealed orders · epoch state)</text>
+  <text className="item" x="476" y="334">• Pools 0/1/2 (V3 concentrated · 16 buckets)</text>
+  <text className="item" x="476" y="352">• Treasury · AggregatorRegistry</text>
+  <text className="item" x="476" y="370">• Token (bridged mode → aUSDC / aWETH / aWBTC)</text>
+  <text className="item" x="476" y="396">rpc.testnet.aztec-labs.com</text>
+
+  {/* Aggregator → Aztec (clearing tx) */}
+  <path className="edge" d="M420 322 L460 322" markerEnd="url(#arr)" />
+  <text className="edge-label" x="424" y="312">close_epoch_and_clear_verified</text>
+
+  {/* Aztec ↔ L1 */}
+  <path className="edge" d="M650 412 L650 472" markerEnd="url(#arr)" />
+  <path className="edge" d="M630 472 L630 412" markerEnd="url(#arr)" />
+  <text className="edge-label" x="660" y="446">L1 inbox / L1 outbox · 4-level Merkle</text>
+
+  {/* Ethereum L1 tier */}
+  <rect className="box" x="460" y="484" width="380" height="180" rx="8" />
+  <rect className="chip" x="476" y="500" width="160" height="22" rx="11" />
+  <text className="chip-text" x="556" y="515" textAnchor="middle">ETHEREUM SEPOLIA · L1</text>
+  <text className="title" x="476" y="546">Solidity contracts (Sub-5b/5c)</text>
+  <text className="item" x="476" y="568">• TokenBridge.sol × 3 (USDC · WETH · wBTC)</text>
+  <text className="item" x="476" y="586">• TimelockController × 2 (governance + emergency)</text>
+  <text className="item" x="476" y="604">• 3-of-5 multisig admin</text>
+  <text className="item" x="476" y="622">• EmergencyPauser · UUPS-upgradeable</text>
+  <text className="item" x="476" y="648">L1 RPC via Infura · audit T-13/T-15 pending</text>
+</svg>
+
+For mobile readers: every box is one tier, arrows show direction-of-call. The split between L2 (sealed orders, clearing) and L1 (canonical token escrow) is the privacy backbone — only the per-epoch result crosses the boundary, not individual order details.
 
 Each tier is described below, then [trust assumptions](#trust-assumptions) at the bottom.
 
