@@ -13,6 +13,7 @@ import { WizardStep3 } from "../onboarding/wizard-step3.js";
 import { loadSession } from "../onboarding/persistence.js";
 
 const GITHUB_URL = "https://github.com/Kubudak90/quetzal";
+const DOCS_URL = (import.meta.env.VITE_DOCS_URL as string | undefined) ?? "https://docs.quetzaldex.xyz";
 const FAUCET_URL = (import.meta.env.VITE_FAUCET_URL as string | undefined) ?? "https://faucet.quetzaldex.xyz";
 const AGGREGATOR_URL = (import.meta.env.VITE_AGGREGATOR_URL as string | undefined) ?? "http://194.163.136.1:3001";
 
@@ -111,6 +112,12 @@ export function LandingScreen({ onStart }: { onStart: () => void }) {
           <div style={{ display: "flex", gap: 12, marginTop: 36, flexWrap: "wrap" }}>
             <PillButton size="lg" variant="primary" onClick={onStart} rightIcon="arrow-right">Set up wallet</PillButton>
             <PillButton
+              size="lg" variant="ghost" leftIcon="book-open"
+              onClick={() => window.open(DOCS_URL, "_blank", "noopener,noreferrer")}
+            >
+              Read the docs
+            </PillButton>
+            <PillButton
               size="lg" variant="ghost" leftIcon="github"
               onClick={() => window.open(GITHUB_URL, "_blank", "noopener,noreferrer")}
             >
@@ -124,6 +131,12 @@ export function LandingScreen({ onStart }: { onStart: () => void }) {
               target="_blank" rel="noopener noreferrer"
               style={{ color: "var(--fg-muted)", textDecoration: "underline" }}
             >Faucet ↗</a>
+            &nbsp;·&nbsp;
+            <a
+              href={DOCS_URL}
+              target="_blank" rel="noopener noreferrer"
+              style={{ color: "var(--fg-muted)", textDecoration: "underline" }}
+            >Docs ↗</a>
             &nbsp;·&nbsp;
             <a
               href={GITHUB_URL}
