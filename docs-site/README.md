@@ -8,7 +8,7 @@ Live at: **[docs.quetzaldex.xyz](https://docs.quetzaldex.xyz)**
 
 - [Next.js 14](https://nextjs.org) + [Nextra 2](https://nextra.site) (docs theme)
 - MDX content under `pages/`
-- Deployed as its own Vercel project — separate from the main app at `aztec-project.vercel.app`
+- Deployed as its own Vercel project — separate from the main app at `quetzaldex.xyz`
 
 ## Local dev
 

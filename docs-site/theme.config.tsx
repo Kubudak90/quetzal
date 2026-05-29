@@ -31,7 +31,7 @@ function FeatherGlyph({ size = 24 }: { size?: number }) {
   );
 }
 
-const APP_URL = 'https://aztec-project.vercel.app';
+const APP_URL = 'https://quetzaldex.xyz';
 const FAUCET_URL = 'https://faucet.quetzaldex.xyz';
 const GITHUB_URL = 'https://github.com/Kubudak90/quetzal';
 const DOCS_URL = 'https://docs.quetzaldex.xyz';
