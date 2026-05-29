@@ -382,12 +382,42 @@ async function main(): Promise<void> {
     }
     saveState(state);
 
-    // Sub-9.2 P2 fix: the faucet now drips tokens via `mint_to_private`, so
-    // the user has private balance immediately after the drip. The step 5a
-    // public→private hop is no longer required. Keeping the call site as a
-    // documented no-op for forensic / rollback clarity:
-    console.log(`[sub9-e2e] step 5a (Sub-9.2): skipped — faucet now mints privately, no public→private hop needed`);
-    noteAdd(state, `step 5a skipped (faucet mints privately post Sub-9.2)`);
+    // Sub-9.1 finding: the faucet drips tUSDC + tETH via mint_to_public, but
+    // orderbook.submit_order calls Token.transfer_private_to_public on the
+    // escrow leg → requires PRIVATE balance.
+    //
+    // Sub-9.2 (Phase C attempt + revert): tried switching faucet to
+    // `mint_to_private` to avoid this hop, but found a fundamental ordering
+    // problem — the mint happens BEFORE the user account is deployed, and
+    // the user's PXE cannot discover tagged private-note emission for an
+    // unregistered address. Reverted; the public→private hop stays in the
+    // wizard for now.
+    //
+    // After canonicalization on Sub-9's testnet addrs, side="buy" tUSDC->tETH
+    // flips to side="sell" tETH->tUSDC → input token (escrow) is tUSDC
+    // (path[path_len-1] when realSide=true). So move some public tUSDC
+    // into private balance before placing the order.
+    try {
+      console.log(`[sub9-e2e] step 5a: transfer_public_to_private(tUSDC, amount=${ORDER_AMOUNT}) ...`);
+      const { loadTokenContract } = await import("../sdk/src/internal/contracts.js");
+      const TokenContract = await loadTokenContract();
+      const tUSDCContract = await TokenContract.at(AztecAddress.fromString(config.tUSDC), wallet);
+      // Token's transfer_public_to_private asserts _nonce == 0 when from == msg_sender.
+      const nonce = Fr.ZERO;
+      const tx = await (tUSDCContract.methods as unknown as {
+        transfer_public_to_private: (from: AztecAddress, to: AztecAddress, amount: bigint, nonce: Fr) => {
+          send: (opts: { from: AztecAddress }) => unknown;
+        };
+      }).transfer_public_to_private(client.address, client.address, ORDER_AMOUNT, nonce).send({ from: client.address });
+      void tx;
+      console.log(`[sub9-e2e]   tUSDC public->private moved ${ORDER_AMOUNT} atomic`);
+      noteAdd(state, `transfer_public_to_private(tUSDC, ${ORDER_AMOUNT}) submitted`);
+      saveState(state);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      blocker(state, `transfer_public_to_private failed: ${msg.slice(0, 400)}`);
+      throw e;
+    }
 
     console.log(`[sub9-e2e] step 5: placeOrder side=${ORDER_SIDE} path=${ORDER_PATH.join("->")} amount=${ORDER_AMOUNT} limit=${ORDER_LIMIT_PRICE} ...`);
     try {

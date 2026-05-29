@@ -476,26 +476,43 @@ Pool reseed is OUT OF SCOPE for the redeploy script (handled by
    - lastEpochSeen: 0 (fresh orderbook starts at epoch 0)
    - lastError: null
 
-## Phase C. P2 fix — faucet mints PRIVATELY (`mint_to_private`)
+## Phase C. P2 fix attempt + revert — `mint_to_private` has an ordering trap
 
 `faucet/src/lib/l2-mint.ts`: added `mintToPrivate(opts, to, amount)` —
-same signature as `mintToPublic`, but calls Token's `#[external("private")]`
-`mint_to_private(to, amount)`. Operator is the minter (no auth-witness
-needed since msg_sender IS the minter — the `_validate_minter` check
-passes), and the recipient gets a fresh `UintNote` directly without
-needing a follow-on public→private hop.
+same signature as `mintToPublic` but calls Token's `#[external("private")]`
+`mint_to_private(to, amount)`. (Kept the helper as a reusable export
+because Sub-9.3 may revisit.)
 
-`faucet/src/lib/runtime.ts`: switched `mintTUSDC` + `mintTETH` to
-`mintToPrivate`. The `getOperatorL2Balance` drain check (still reads
-public balance) is left alone — operator doesn't spend tokens any more,
-so its public balance only goes UP if topped up, and the drain check
-becomes a conservative early-warning rather than a true gating signal.
-Acceptable for testnet.
+**Initial wire**: `faucet/src/lib/runtime.ts` switched `mintTUSDC` +
+`mintTETH` to `mintToPrivate`. Faucet rebuilt + deployed to VPS.
+
+**Smoke discovery**: the smoke test got past the drip step (faucet's
+`mint_to_private` succeeds + returns), past claim+deploy + verification,
+then **placeOrder failed at step 5 with "Balance too low"** — even though
+the on-chain mint had landed and the user has 1000 tUSDC private. Root
+cause: the maker's PXE was created AFTER the mint landed, and the mint
+emits the note via tagged-log delivery, which the not-yet-deployed user
+account couldn't deliver. (Sub-9.0's seeded LP positions face the same
+issue — they work only because admin's PXE was active during the mint.)
+
+We also tried calling Token's `sync_state(scope)` from the user side to
+force the PXE to discover the note. That fails with
+`'Forbidden sync_state invocation. sync_state can only be invoked by PXE'`
+— the runtime gates this entry point to internal PXE callers.
+
+**Resolution**: REVERTED to `mint_to_public`. The wizard's existing
+public→private hop pattern (Sub-9.1's smoke had this as step 5a)
+continues to work. The faucet rebuild on VPS uses the reverted code.
+
+**Carry-forward for Sub-9.3**: keep the `mintToPrivate` helper in
+`faucet/src/lib/l2-mint.ts` (zero runtime cost — unused). When Aztec
+ships a way for fresh-PXE users to discover their pre-deploy private
+notes (or when the faucet's flow inverts: deploy account FIRST, then
+mint), we can re-wire `runtime.ts` without re-implementing.
 
 Faucet tests: 56 pass + 1 integration-skipped, typecheck clean.
-
 Deployed to VPS: `git pull` + `docker compose up -d --build`. Verified
-`/api/health` returns 200 status:ok after ~3 min rebuild.
+`/api/health` returns 200 status:ok.
 
 ## Phase D. E2E smoke re-run
 
@@ -517,9 +534,10 @@ Smoke results (against the new addresses + new faucet):
 | 8. Poll order fill                      | {SMOKE_STEP8_OUTCOME} |
 | 9. Pool 0 post-snapshot                 | {SMOKE_STEP9_OUTCOME} |
 
-Notable: step 5a (the public→private hop the smoke had to do manually
-in Sub-9.1) is NO LONGER NEEDED — the new faucet drips privately, so
-the freshly-claimed wallet has private balance immediately.
+Notable: step 5a (the public→private hop) is STILL NEEDED. The Sub-9.2
+Phase C attempt to drop it via `mint_to_private` introduced a pre-deploy
+note-discovery problem; reverted. The hop adds ~30s user-side proof gen
+but is reliable.
 
 ## Phase E. Files modified + commit
 
@@ -548,7 +566,7 @@ Live infra (NOT in repo):
 | Pools (3) reseeded with LP liquidity                            | {RESEED_STATUS} |
 | Aggregator polling against new orderbook                        | ✓ |
 | Frontend deployed against new addresses                         | ✓ |
-| Faucet drips PRIVATELY (no user-side public→private hop needed) | ✓ |
+| Faucet drips publicly + wizard does public→private hop          | ✓ (Sub-9.2 P2 revert; covered by Sub-9.1's step 5a + wizard equivalent) |
 | Faucet operator funded for drain check (token public balance)   | ✓ (carried over from Sub-9.1) |
 | Programmatic E2E smoke: place order → reveal → ingest           | {E2E_STATUS} |
 | Public wizard at aztec-project.vercel.app live                  | ✓ |

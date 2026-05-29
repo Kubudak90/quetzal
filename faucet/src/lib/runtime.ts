@@ -20,7 +20,7 @@
 import { loadConfig, type FaucetConfig } from "./config.js";
 import { RateLimiter } from "./rate-limit.js";
 import { L1Bridge } from "./l1-bridge.js";
-import { mintToPublic, mintToPrivate, getOperatorL2Balance, type MintResult } from "./l2-mint.js";
+import { mintToPublic, getOperatorL2Balance, type MintResult } from "./l2-mint.js";
 import { AuditLog } from "./audit-log.js";
 
 export interface Runtime {
@@ -57,12 +57,21 @@ export function getRuntime(): Runtime {
 
   const auditLog = new AuditLog(config.auditLogPath);
 
-  // Sub-9.2 P2 fix: mint PRIVATELY so users can place orders without an
-  // extra public→private hop. The orderbook's submit_order reads the maker's
-  // private balance for escrow; minting public left a footgun ("Balance too
-  // low" reverts) for any fresh wizard user.
+  // Sub-9.2 P2 fix attempt: switching to `mint_to_private` had a fundamental
+  // ordering problem — the faucet mints BEFORE the user account is deployed,
+  // and the user's PXE cannot discover the tagged private-note emission for
+  // an address that isn't on-chain yet. So placeOrder fails with
+  // "Balance too low" because the user's local note set is empty. (The
+  // SDK-side conversion `mintToPrivate` helper itself is fine; the issue is
+  // the temporal ordering in the wizard flow.) Reverted to `mintToPublic`.
+  //
+  // Carry-forward: the SDK already has `client.tokens.publicToPrivate(token, amount)`
+  // via `transfer_public_to_private` (see scripts/sub9-e2e-smoke.ts step 5a's
+  // call site). The wizard frontend should invoke it after the drip's claim
+  // step completes. ~30s extra of user-side proof generation. Less surprising
+  // than the mint_to_private timing trap.
   const mintTUSDC = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
-    mintToPrivate(
+    mintToPublic(
       {
         nodeUrl: config.l2NodeUrl,
         operatorSecret: config.l2Secret,
@@ -74,7 +83,7 @@ export function getRuntime(): Runtime {
       amount,
     );
   const mintTETH = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
-    mintToPrivate(
+    mintToPublic(
       {
         nodeUrl: config.l2NodeUrl,
         operatorSecret: config.l2Secret,
