@@ -34,7 +34,15 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import Fastify from "fastify";
 import { z } from "zod";
+import { Fr } from "@aztec/aztec.js/fields";
 import { RevealQueue, type RevealPayload } from "./queue.js";
+import {
+  runOneClearingCycleMP,
+  buildU128PoolRegistry,
+  type DaemonContextMP,
+  type ClearingPublicStruct,
+} from "./clearing-cycle.js";
+import type { PoolStateForRouting } from "./clearing.js";
 
 // ── Logging ────────────────────────────────────────────────────────────────
 const LOG_LEVEL = (process.env.LOG_LEVEL ?? "info").toLowerCase();
@@ -130,6 +138,18 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
   const nodeUrl = process.env.AZTEC_NODE_URL;
   const orderbookAddr = process.env.ORDERBOOK_ADDRESS;
   const secret = process.env.AGGREGATOR_L2_SECRET;
+  // Sub-9.3: optional pool address triplet (USDC/ETH, USDC/BTC, ETH/BTC).
+  // If present, the watcher wires the FULL multi-pair clearing loop.
+  const poolUsdcEth = process.env.POOL_USDC_ETH_ADDRESS ?? process.env.POOL_ADDRESS;
+  const poolUsdcBtc = process.env.POOL_USDC_BTC_ADDRESS;
+  const poolEthBtc = process.env.POOL_ETH_BTC_ADDRESS;
+  const tUSDC = process.env.TUSDC_ADDRESS;
+  const tETH = process.env.TETH_ADDRESS;
+  const tBTC = process.env.TBTC_ADDRESS;
+  const snapshotsDir = process.env.SNAPSHOTS_DIR ?? "/repo/aggregator/data/snapshots";
+  // Sub-9.3: clearing-cycle gate. Set CLEARING_ENABLED=1 to enable the
+  // multi-pair clearing submit path. Default is "log-only" (Sub-8.1 MVP).
+  const clearingEnabled = process.env.CLEARING_ENABLED === "1";
 
   if (!nodeUrl || !orderbookAddr || !secret) {
     log("warn", "epoch watcher disabled — missing env", {
@@ -141,43 +161,42 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
     return;
   }
 
-  // Lazy-import SDK so a misconfigured-but-running container still serves
-  // /reveal + /health while we fix the L2 wiring.
+  // Lazy-import SDK + aztec-node so a misconfigured-but-running container still
+  // serves /reveal + /health while we fix the L2 wiring.
   let client: unknown;
+  let node: { getBlockNumber: () => Promise<number> } | null = null;
   try {
     const sdkMod = await import("@quetzal/sdk");
     const QuetzalClient = (sdkMod as { QuetzalClient: { connect: (opts: unknown) => Promise<unknown> } })
       .QuetzalClient;
-    // Use "schnorr" account spec — ephemeral embedded PXE, no funding needed
-    // for read-only simulate() calls. The DaemonContext.submitClearing path
-    // (which DOES need a funded wallet) is not wired in the MVP.
-    log("info", "epoch watcher: connecting to Aztec node", { nodeUrl });
+    // Aztec node client for block-number reads (cheaper than SDK roundtrips).
+    const nodeMod = await import("@aztec/aztec.js/node");
+    const createAztecNodeClient = (nodeMod as { createAztecNodeClient: (url: string) => unknown }).createAztecNodeClient;
+    node = createAztecNodeClient(nodeUrl) as { getBlockNumber: () => Promise<number> };
+    log("info", "epoch watcher: connecting to Aztec node", { nodeUrl, clearingEnabled });
+
+    // Construct pool list (Sub-9.3): all 3 pools if envs are present.
+    const pools = [];
+    if (poolUsdcEth && tUSDC && tETH) pools.push({ pool_id: 0, token_a: tETH, token_b: tUSDC, address: poolUsdcEth });
+    if (poolUsdcBtc && tUSDC && tBTC) pools.push({ pool_id: 1, token_a: tBTC, token_b: tUSDC, address: poolUsdcBtc });
+    if (poolEthBtc && tETH && tBTC) pools.push({ pool_id: 2, token_a: tETH, token_b: tBTC, address: poolEthBtc });
+
     client = await QuetzalClient.connect({
       network: nodeUrl.includes("testnet") ? "alpha-testnet" : "sandbox",
       nodeUrl,
       account: { type: "schnorr", secret },
       contracts: {
         orderbook: orderbookAddr,
-        // Token + pool addrs aren't strictly required for get_epoch() but the
-        // SDK's contract-registration pass will skip undefined entries.
-        tUSDC: process.env.TUSDC_ADDRESS ?? "0x" + "0".repeat(64),
-        tETH: process.env.TETH_ADDRESS ?? "0x" + "0".repeat(64),
+        tUSDC: tUSDC ?? "0x" + "0".repeat(64),
+        tETH: tETH ?? "0x" + "0".repeat(64),
+        tBTC,
         admin: process.env.ADMIN_ADDRESS ?? "0x" + "0".repeat(64),
-        pools: process.env.POOL_ADDRESS
-          ? [
-              {
-                pool_id: 0,
-                token_a: process.env.TUSDC_ADDRESS ?? "0x" + "0".repeat(64),
-                token_b: process.env.TETH_ADDRESS ?? "0x" + "0".repeat(64),
-                address: process.env.POOL_ADDRESS,
-              },
-            ]
-          : [],
+        pools,
         aggregatorRegistry: process.env.AGGREGATOR_REGISTRY_ADDRESS,
         treasury: process.env.TREASURY_ADDRESS,
       },
     });
-    log("info", "epoch watcher: PXE bootstrap complete");
+    log("info", "epoch watcher: PXE bootstrap complete", { pools: pools.length });
   } catch (e) {
     watcher.status = "error";
     watcher.lastError = `bootstrap: ${e instanceof Error ? e.message : String(e)}`;
@@ -185,26 +204,71 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
     return;
   }
 
+  // Sub-9.3: build the DaemonContextMP if clearing is enabled.
+  let daemonCtx: DaemonContextMP | null = null;
+  if (clearingEnabled) {
+    try {
+      daemonCtx = await buildDaemonContextMP({
+        queue,
+        snapshotsDir,
+        client,
+        node: node!,
+        poolUsdcEth,
+        poolUsdcBtc,
+        poolEthBtc,
+        tUSDC,
+        tETH,
+        tBTC,
+      });
+      log("info", "DaemonContextMP built — clearing loop wired", {
+        registry_size: daemonCtx.registry.length,
+        snapshots_dir: snapshotsDir,
+      });
+    } catch (e) {
+      // Don't kill the watcher — fallback to log-only mode if context build fails.
+      log("error", "DaemonContextMP build failed; falling back to log-only", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      daemonCtx = null;
+    }
+  }
+
   // Polling loop. Runs forever; per-iteration errors are logged + swallowed.
-  log("info", "epoch watcher: started", { intervalMs });
+  log("info", "epoch watcher: started", { intervalMs, clearingEnabled: Boolean(daemonCtx) });
   while (true) {
     try {
       watcher.status = "polling";
       const c = client as { reads: { getCurrentEpoch: () => Promise<{ epoch_id: number; closes_at_block: number }> } };
       const epoch = await c.reads.getCurrentEpoch();
+      const blockNow = node ? await node.getBlockNumber() : null;
       watcher.lastEpochSeen = epoch.epoch_id;
-      watcher.lastBlockSeen = epoch.closes_at_block;
+      watcher.lastBlockSeen = blockNow ?? epoch.closes_at_block;
       watcher.lastPollAt = new Date().toISOString();
       watcher.lastError = null;
+      const wouldClear =
+        queue.size() > 0 &&
+        blockNow !== null &&
+        blockNow >= epoch.closes_at_block;
       log("info", "epoch poll", {
         epoch_id: epoch.epoch_id,
         closes_at_block: epoch.closes_at_block,
+        block_now: blockNow,
         queueSize: queue.size(),
-        // TODO (Sub-8.1.next): when block >= closes_at_block AND queue has
-        // matching reveals, call runOneClearingCycle(daemonCtx). For now,
-        // we only log so operators see the loop is alive.
-        wouldClear: queue.size() > 0,
+        wouldClear,
       });
+
+      // Sub-9.3: fire clearing cycle when gate is hit.
+      if (wouldClear && daemonCtx) {
+        log("info", "epoch close window hit — running clearing cycle");
+        // Run in background (don't block the next poll). Mutex inside
+        // runOneClearingCycleMP prevents concurrent cycles.
+        runOneClearingCycleMP(daemonCtx, log).then(
+          (status) => log("info", "clearing cycle complete", { status }),
+          (err) => log("error", "clearing cycle failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
     } catch (e) {
       watcher.status = "error";
       watcher.lastError = e instanceof Error ? e.message : String(e);
@@ -212,6 +276,112 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
     }
     await sleep(intervalMs);
   }
+}
+
+/**
+ * Sub-9.3: build the DaemonContextMP that bridges from SDK → daemon orchestrator.
+ * Heavy: opens a long-lived QuetzalClient + aztec node client.
+ */
+async function buildDaemonContextMP(args: {
+  queue: RevealQueue;
+  snapshotsDir: string;
+  client: unknown;
+  node: { getBlockNumber: () => Promise<number> };
+  poolUsdcEth?: string;
+  poolUsdcBtc?: string;
+  poolEthBtc?: string;
+  tUSDC?: string;
+  tETH?: string;
+  tBTC?: string;
+}): Promise<DaemonContextMP> {
+  // Build u128-canonical registry from env pools.
+  const configPools = [];
+  if (args.poolUsdcEth && args.tUSDC && args.tETH)
+    configPools.push({ pool_id: 0, address: args.poolUsdcEth, token_a: args.tETH, token_b: args.tUSDC });
+  if (args.poolUsdcBtc && args.tUSDC && args.tBTC)
+    configPools.push({ pool_id: 1, address: args.poolUsdcBtc, token_a: args.tBTC, token_b: args.tUSDC });
+  if (args.poolEthBtc && args.tETH && args.tBTC)
+    configPools.push({ pool_id: 2, address: args.poolEthBtc, token_a: args.tETH, token_b: args.tBTC });
+  if (configPools.length === 0) throw new Error("no pools configured for clearing loop");
+  const registry = buildU128PoolRegistry(configPools);
+
+  // SDK types
+  type SdkClient = {
+    reads: { getCurrentEpochFull: () => Promise<{
+      epoch_id: number; closes_at_block: number;
+      order_acc: string; order_count: number;
+      cancel_acc: string; cancel_count: number;
+    }> };
+    pools: {
+      getPoolState: (poolId: number) => Promise<{ reserveA: bigint; reserveB: bigint; currentSqrtPrice: bigint }>;
+      getBucket: (bucketId: number, poolId: number) => Promise<{
+        reserveA: bigint; reserveB: bigint; liquidity: bigint;
+        cumFeeAPerShare: bigint; cumFeeBPerShare: bigint;
+      }>;
+    };
+    orders: {
+      closeEpochVerified: (opts: { proofFields: Fr[]; vkFields: Fr[]; publicInputs: unknown }) =>
+        Promise<{ epoch_id: number; closes_at_block: number }>;
+    };
+  };
+  const c = args.client as SdkClient;
+
+  return {
+    queue: args.queue,
+    snapshotsDir: args.snapshotsDir,
+    registry,
+    getEpoch: async () => {
+      const e = await c.reads.getCurrentEpochFull();
+      return {
+        epoch_id: e.epoch_id,
+        closes_at_block: e.closes_at_block,
+        order_acc: Fr.fromString(e.order_acc),
+        order_count: e.order_count,
+        cancel_acc: Fr.fromString(e.cancel_acc),
+        cancel_count: e.cancel_count,
+      };
+    },
+    getBlockNumber: () => args.node.getBlockNumber(),
+    getPoolState: async (poolId: number) => {
+      // Sub-9.3: read pool aggregate + 16 buckets. We read ALL buckets since
+      // clearing needs the full state for proper sqrt-price tracing. Slow on
+      // testnet (~30s for 16 reads) but correct. Optimisation deferred.
+      const aggregate = await c.pools.getPoolState(poolId);
+      const buckets = [];
+      for (let i = 0; i < 16; i++) {
+        const b = await c.pools.getBucket(i, poolId);
+        buckets.push({
+          reserve_a: b.reserveA,
+          reserve_b: b.reserveB,
+          liquidity: b.liquidity,
+          cum_fee_a_per_share: b.cumFeeAPerShare,
+          cum_fee_b_per_share: b.cumFeeBPerShare,
+        });
+      }
+      const result: PoolStateForRouting = {
+        reserveA: aggregate.reserveA,
+        reserveB: aggregate.reserveB,
+        lpSupply: 0n,  // unused by computeClearingV2 in the Sub-2.5+ V3 path
+        currentSqrtPrice: aggregate.currentSqrtPrice,
+        bucketBounds: [],   // computeClearingV2 falls back to per-bucket math via bucketStates
+        bucketStates: buckets,
+      };
+      return result;
+    },
+    submitClearing: async ({ publicInputs, proof, vk }: {
+      publicInputs: ClearingPublicStruct;
+      proof: Fr[];
+      vk: Fr[];
+    }) => {
+      const res = await c.orders.closeEpochVerified({
+        proofFields: proof,
+        vkFields: vk,
+        publicInputs,
+      });
+      void res;
+      return { txHash: "submitted" };
+    },
+  };
 }
 
 // ── Optional relayer side-loop (Sub-5c) ────────────────────────────────────
