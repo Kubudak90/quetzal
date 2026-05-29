@@ -121,6 +121,9 @@ export interface DaemonContextMP {
     proof: Fr[];
     vk: Fr[];
   }): Promise<{ txHash?: string }>;
+  /** Sub-9.3: plain close_epoch() fallback for empty/no-cross epochs.
+   * Advances the epoch without applying clearing; orders carry forward. */
+  submitCloseEpochOnly?: () => Promise<{ txHash?: string }>;
 
   /** Circuit project dir (default: circuits/clearing). */
   circuitDir?: string;
@@ -368,7 +371,23 @@ export async function runOneClearingCycleMP(
     });
 
     if (!clearing.cleared) {
-      log("info", "clearing did not cross (no eligible orders) — skipping submit");
+      log("info", "clearing did not cross (no eligible orders / no liquidity)");
+      // Sub-9.3: fallback — call plain close_epoch() if available to advance the
+      // epoch without applying clearing. Orders carry forward to the next epoch.
+      // Skip if no fallback wired OR queue was empty (epoch already empty).
+      if (ctx.submitCloseEpochOnly && reveals.length > 0) {
+        try {
+          log("info", "calling plain close_epoch() to advance");
+          const r = await ctx.submitCloseEpochOnly();
+          log("info", "close_epoch() submitted", { txHash: r.txHash });
+          return "no-cross:advanced";
+        } catch (e) {
+          log("error", "close_epoch() submit failed", {
+            error: e instanceof Error ? e.message : String(e),
+          });
+          return "no-cross:advance-failed";
+        }
+      }
       return "skipped:no-cross";
     }
     log("info", "clearing computed", {

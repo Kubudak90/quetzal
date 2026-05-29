@@ -330,6 +330,7 @@ async function buildDaemonContextMP(args: {
     orders: {
       closeEpochVerified: (opts: { proofFields: Fr[]; vkFields: Fr[]; publicInputs: unknown }) =>
         Promise<{ epoch_id: number; closes_at_block: number }>;
+      closeEpoch: (opts?: { epoch?: number }) => Promise<{ epoch_id: number; closes_at_block: number }>;
     };
   };
   const c = args.client as SdkClient;
@@ -391,6 +392,11 @@ async function buildDaemonContextMP(args: {
         vkFields: vk,
         publicInputs,
       });
+      void res;
+      return { txHash: "submitted" };
+    },
+    submitCloseEpochOnly: async () => {
+      const res = await c.orders.closeEpoch();
       void res;
       return { txHash: "submitted" };
     },
