@@ -1,7 +1,7 @@
 // sdk/src/reads.ts
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { QuetzalClient } from "./client.js";
-import type { CurrentEpoch, QuetzalContracts } from "./types.js";
+import type { CurrentEpoch, CurrentEpochFull, QuetzalContracts } from "./types.js";
 import { ConfigError } from "./errors.js";
 
 export interface OrderViewModel {
@@ -102,6 +102,52 @@ export class ReadsApi {
     return {
       epoch_id: Number(epoch.epoch_id),
       closes_at_block: Number(epoch.closes_at_block),
+    };
+  }
+
+  /**
+   * Sub-9.3: read the orderbook's full epoch state — id, close-at-block, and the
+   * `(order_acc, order_count, cancel_acc, cancel_count)` binding accumulators
+   * the clearing circuit's public inputs are bound against.
+   *
+   * Returns `order_acc` / `cancel_acc` as 0x-prefixed Field hex strings so the
+   * shape stays JSON-friendly across the aggregator boundary. Callers parse
+   * back via `Fr.fromString`.
+   */
+  async getCurrentEpochFull(): Promise<CurrentEpochFull> {
+    const contracts = requireContracts(this.client);
+    const { loadOrderbookContract } = await import("./internal/contracts.js");
+    const OrderbookContract = await loadOrderbookContract();
+    const orderbook = await OrderbookContract.at(
+      AztecAddress.fromString(contracts.orderbook),
+      this.client.wallet,
+    );
+    const sim = await orderbook.methods.get_epoch().simulate({ from: this.client.address });
+    const epoch = (sim as {
+      result: {
+        epoch_id: bigint;
+        closes_at_block: bigint;
+        order_acc: { toString: () => string } | bigint;
+        cancel_acc: { toString: () => string } | bigint;
+        order_count: bigint | number;
+        cancel_count: bigint | number;
+      };
+    }).result;
+    // order_acc / cancel_acc come back as Fr-like or bigint depending on
+    // simulator decoder; normalise to "0x…" hex.
+    const toHex = (v: { toString: () => string } | bigint | number): string => {
+      if (typeof v === "bigint") return "0x" + v.toString(16);
+      if (typeof v === "number") return "0x" + BigInt(v).toString(16);
+      const s = v.toString();
+      return s.startsWith("0x") ? s : "0x" + BigInt(s).toString(16);
+    };
+    return {
+      epoch_id: Number(epoch.epoch_id),
+      closes_at_block: Number(epoch.closes_at_block),
+      order_acc: toHex(epoch.order_acc),
+      order_count: Number(epoch.order_count),
+      cancel_acc: toHex(epoch.cancel_acc),
+      cancel_count: Number(epoch.cancel_count),
     };
   }
 

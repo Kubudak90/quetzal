@@ -76,6 +76,26 @@ export interface CurrentEpoch {
   closes_at_block: number;
 }
 
+/**
+ * Sub-9.3: full epoch state read for the aggregator clearing loop.
+ *
+ * Mirror of `contracts/orderbook/src/main.nr::EpochState` (subset relevant to
+ * off-chain consumers; we drop `state` and `opened_at_block` since they're
+ * implied by the open/closing/settled state machine).
+ *
+ * `order_acc` and `cancel_acc` are returned as 0x-prefixed hex strings so the
+ * SDK keeps a single JSON-safe wire shape across boundaries (the aggregator
+ * parses them back to `Fr` via `Fr.fromString`).
+ */
+export interface CurrentEpochFull {
+  epoch_id: number;
+  closes_at_block: number;
+  order_acc: string;       // 0x-prefixed Field hex
+  order_count: number;
+  cancel_acc: string;      // 0x-prefixed Field hex
+  cancel_count: number;
+}
+
 export interface BulkPlaceOrderInput extends PlaceOrderInput {
   decoyCount: number;
 }

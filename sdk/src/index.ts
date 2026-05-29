@@ -37,6 +37,7 @@ export type {
   BulkPlaceOrderResult,
   ScheduledExit,
   CurrentEpoch,
+  CurrentEpochFull,
 } from "./types.js";
 
 export type {
