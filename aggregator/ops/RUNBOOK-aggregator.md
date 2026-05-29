@@ -237,3 +237,145 @@ If reveals are accumulating but never clearing (expected in MVP):
 That's the MVP state. Sub-8.1.next wires the clearing loop. In the meantime
 the orderbook's on-chain `force_close_epoch` (if exposed by the contract)
 lets the admin manually advance epochs without aggregator help.
+
+---
+
+## Sub-9.3 — Multi-pair clearing loop wired (2026-05-29)
+
+**Status:** OPERATIONAL on Aztec testnet. First successful aggregator-driven
+`close_epoch()` tx on testnet:
+`0x1a45a5ab718347c9f272c2af3a836c4d036251b62920dff6ad718d233432eaec`
+(epoch 0 → 1 advance, 2026-05-29 06:37 UTC).
+
+### What's new vs Sub-8.1 MVP
+
+1. `aggregator/src/clearing-cycle.ts` — full multi-pair (Sub-4 shape)
+   orchestrator: drain queue → validate against on-chain order_acc → read
+   per-pool state (16 buckets) → computeClearingMultiPair → witness builder →
+   shell out to `nargo execute` + `bb prove` → close_epoch_and_clear_verified.
+2. Watcher reads L2 block-now (via `aztecNode.getBlockNumber`) instead of
+   relying on the orderbook's `closes_at_block`. `wouldClear: true` now
+   actually fires after the epoch window expires.
+3. Background cycle runs in setImmediate so it doesn't block the next poll;
+   module-level mutex prevents concurrent cycles.
+4. No-cross fallback: when validated reveals exist but the clearing doesn't
+   cross (e.g. pool has no liquidity), the cycle falls back to plain
+   `close_epoch()` to advance the epoch rather than leave orders stuck.
+
+### Dockerfile change
+
+Runtime base switched from `node:22-trixie-slim` to `aztecprotocol/aztec:4.2.1`
+which bakes in `nargo` + `bb` (the alternative — bespoke toolchain install —
+breaks on every Aztec release). Image size: ~600MB → ~2.4GB. First VPS
+rebuild took ~25 minutes (mostly the node_modules copy + image export).
+Subsequent rebuilds with cached deps are ~3-5 min.
+
+### New env vars (see .env.aggregator.example)
+
+| var | purpose | default |
+|---|---|---|
+| `CLEARING_ENABLED` | gate the full close_epoch path | (off) |
+| `POOL_USDC_ETH_ADDRESS` | pool 0 contract addr | none |
+| `POOL_USDC_BTC_ADDRESS` | pool 1 contract addr | none |
+| `POOL_ETH_BTC_ADDRESS` | pool 2 contract addr | none |
+| `TBTC_ADDRESS` | tBTC L2 token addr | none |
+| `AGGREGATOR_L2_SALT` | reach pre-deployed wallet (admin reuse) | `Fr.ZERO` |
+| `AGGREGATOR_L2_SIGNING_KEY` | reach pre-deployed wallet | derived |
+| `SNAPSHOTS_DIR` | fills snapshot output | `/repo/aggregator/data/snapshots` |
+| `CIRCUIT_DIR` | nargo project dir | `/repo/circuits/clearing` |
+| `NARGO_BIN` | nargo binary | `/usr/src/noir/noir-repo/target/release/nargo` |
+| `BB_BIN` | bb binary | `/usr/src/barretenberg/ts/build/amd64-linux/bb` |
+| `PROVE_DEADLINE_MS` | per-prove deadline | 300000 |
+| `PXE_DATA_DIRECTORY` | persistent PXE store | (ephemeral) |
+
+### Operator concern: aggregator wallet reuses admin's L2 secret
+
+MVP shortcut. The aggregator's `AGGREGATOR_L2_SECRET` + `AGGREGATOR_L2_SALT` +
+`AGGREGATOR_L2_SIGNING_KEY` is set to **admin's M1 wallet**
+(`0x0524b493…92a00`). Admin pays ~10-30 FJ per clearing/close_epoch tx out
+of its already-funded balance.
+
+**Why this is OK for MVP:**
+- Single-operator testnet; no separation-of-concerns risk.
+- Avoids burning a faucet drip on a fresh wallet bootstrap (rate-limited).
+- ~80 FJ headroom = 4-8 clearings before refuel.
+
+**Why this is NOT OK for mainnet:**
+- Operator key conflation (admin can mutate pool registry, etc.).
+- Single point of failure if admin's wallet is compromised.
+- Sub-9.4 (or mainnet ramp): bootstrap a dedicated aggregator wallet via
+  `aggregator/ops/bootstrap-wallet.ts` + the wallet-pool faucet drip flow.
+
+### Operator concern: pool 0 has zero liquidity after Sub-9.2 redeploy
+
+Sub-9.2 redeployed pools but did not re-run `seed-lp.ts`. As a result, pool 0
+(tUSDC/tETH) reports `reserve_a = 0, reserve_b = 0` for both u128-canonical
+sides. The Sub-9.3 cycle handles this gracefully via the no-cross fallback
+(calls `close_epoch()` to advance), but **no user order can actually FILL
+against pool 0 until reseed**. Operator todo:
+
+```bash
+rm -f seed-lp-state-{0,1,2}.json
+AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com SEED_LP_POOL=0 pnpm tsx scripts/seed-lp.ts
+# Repeat for pools 1, 2 if those user orders are expected.
+```
+
+After reseed, the cycle's `computeClearingMultiPair` will cross orders and
+`close_epoch_and_clear_verified` will fire (instead of plain `close_epoch()`).
+
+### Sub-9.3 carry-forwards
+
+1. **Reveal payload `submitted_at_block` discrepancy**: the SDK reports the
+   L2 head when an order is placed, but the contract stores the *anchor block*
+   (typically `head - 1` or `head - small_delta`). The reveal validation
+   replays c_i against the reported block, which mismatches the contract's
+   stored value. Workaround (this session): fuzz-scan a small window around
+   the reported value to find the right block. **Sub-9.4 proper fix:** have
+   the SDK's `placeOrder` return `result.anchorBlock` from the tx receipt
+   (the same value the contract sees), so the reveal payload carries the
+   correct value first time. Alternative: the aggregator reads the maker's
+   OrderNote via `get_orders(owner)` and uses the on-chain stored value.
+2. **`getOrders` arithmetic overflow** (carryover from Sub-9.2): the
+   orderbook's `get_orders(owner)` view fn throws
+   `Assertion failed: attempt to multiply with overflow 'pow * 2'` for the
+   smoke user. Looks like a u32→Field overflow in the path serializer.
+3. **`resolvePoolId` in `aggregator/src/path.ts` uses full bigint**: Sub-9.3
+   added `buildU128PoolRegistry` + `resolvePoolIdU128` in clearing-cycle.ts
+   to work around. The legacy path.ts helpers should be aligned next.
+4. **bb prove path not yet exercised in production**: the cycle wires it,
+   but it has not yet been triggered with a non-trivial clearing because
+   pool liquidity is zero. Once pools are reseeded + a smoke user submits
+   an in-the-money order, bb prove fires for real. First-prove will be
+   slow (~30-120s on the VPS).
+5. **Snapshot hop-fill paths not yet persisted**: `clearing-cycle.ts` writes
+   the 2-field tree snapshot (compatible with `cli/src/commands/claim`)
+   but does not yet emit the 4-field hop-fill tree paths needed for
+   the multi-pair `claim_fill` flow. Carryforward.
+6. **No Sub-3 bonded race**: the cycle does not register with
+   `AggregatorRegistry`. Single-operator MVP; multi-operator races shipped
+   in Sub-3 but not wired here yet.
+
+### Verifying the close_epoch path
+
+```bash
+# 1. Confirm cycle wired
+curl -s http://194.163.136.1:3001/health | jq .
+# Expect: watcher.status=polling, watcher.lastEpochSeen >= 1 after first close
+
+# 2. Tail the structured logs
+sshpass -p '<vps-pw>' ssh root@194.163.136.1 'docker logs -f quetzal-aggregator --tail=20'
+
+# 3. Re-broadcast a reveal (after the smoke); verify the cycle fires
+curl -X POST -H "Content-Type: application/json" \
+  -d '{ "epoch_id":<...>, "order_nonce":"<...>", "side":<...>, ... }' \
+  http://194.163.136.1:3001/reveal
+
+# Expect log progression:
+#   epoch poll (wouldClear:true)
+#   draining reveals
+#   reveals validated
+#   pool states read
+#   {clearing did not cross OR clearing computed}
+#   {close_epoch() OR close_epoch_and_clear_verified} submitted
+```
+
