@@ -172,7 +172,12 @@ export class OrdersApi {
     );
     // Cast: codegen bindings may lag the Sub-4 7-arg signature
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tx = await (orderbook.methods.submit_order as any)(
+    // Sub-9.6: aztec.js 4.2.1 .send({from}) returns { receipt: TxReceipt, ...offchainOutput }
+    // — already waits for mining by default. The OLD code did `.wait?.()` on this
+    // result which silently returned undefined (no wait method present), so
+    // both txHash and blockNumber were lost. Aggregator's clearing cycle THEN
+    // rejected the reveal as a replay mismatch because submitted_at_block was 0.
+    const sendResult = await (orderbook.methods.submit_order as any)(
       realSide,
       input.amount,
       input.limitPrice,
@@ -181,9 +186,7 @@ export class OrdersApi {
       BigInt(path_len),
       pathFields,
     ).send({ from: this.client.address });
-    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
-      | { txHash?: { toString: () => string }; blockNumber?: number }
-      | undefined;
+    const receipt = (sendResult as { receipt?: { txHash?: { toString: () => string }; blockNumber?: number } }).receipt;
 
     let epoch = 0;
     try {
@@ -267,12 +270,11 @@ export class OrdersApi {
         ) => { send: (args: { from: AztecAddress }) => { wait?: () => Promise<unknown> } };
       };
     };
-    const tx = bulkOrderbook.methods
+    // Sub-9.6: see placeOrder for the .send() result shape rationale.
+    const sendResult = await bulkOrderbook.methods
       .submit_order_bulk(sides, amounts, limits, nonces, orderNonces, pathLens, pathArrays)
       .send({ from: this.client.address });
-    const receipt = (await (tx as { wait?: () => Promise<unknown> }).wait?.()) as
-      | { txHash?: { toString: () => string }; blockNumber?: number }
-      | undefined;
+    const receipt = (sendResult as { receipt?: { txHash?: { toString: () => string }; blockNumber?: number } }).receipt;
 
     // Record nonces in maker-local decoy registry
     const entries: Array<{ nonce: string; isDecoy: boolean }> = [
