@@ -192,6 +192,11 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
         // + Fr.ZERO salt + derived signingKey -> a NEW unfunded account.
         salt: process.env.AGGREGATOR_L2_SALT,
         signingKey: process.env.AGGREGATOR_L2_SIGNING_KEY,
+        // Sub-9.3: enable client IVC prover when clearing path is enabled —
+        // tx submission requires real proofs (close_epoch / close_epoch_and_clear_verified).
+        proverEnabled: clearingEnabled,
+        // Optional persistent PXE for warm-restart speed.
+        dataDirectory: process.env.PXE_DATA_DIRECTORY,
       },
       contracts: {
         orderbook: orderbookAddr,

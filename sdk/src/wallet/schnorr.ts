@@ -24,6 +24,18 @@ export interface SchnorrSecretAdapterOptions {
    * whose signingKey was sampled independently.
    */
   signingKey?: string;
+  /**
+   * Sub-9.3: enable the client IVC prover for tx submission. Default false
+   * (read-only simulate() doesn't need it). Set true when this adapter is
+   * used to SUBMIT txs (e.g. the aggregator's close_epoch path).
+   */
+  proverEnabled?: boolean;
+  /**
+   * Sub-9.3: persistent PXE data directory. Default ephemeral. When set,
+   * the PXE retains notes / synced state across restarts — useful for the
+   * aggregator's daemon mode (read-only doesn't need it).
+   */
+  dataDirectory?: string;
 }
 
 /**
@@ -47,8 +59,8 @@ export class SchnorrSecretAdapter implements WalletAdapter {
 
   async connect() {
     const wallet = await EmbeddedWallet.create(this.opts.nodeUrl, {
-      ephemeral: true,
-      pxe: { proverEnabled: false },
+      ephemeral: !this.opts.dataDirectory,
+      ...(this.opts.dataDirectory ? { pxe: { proverEnabled: this.opts.proverEnabled ?? false, dataDirectory: this.opts.dataDirectory } } : { pxe: { proverEnabled: this.opts.proverEnabled ?? false } }),
     });
     const salt = this.opts.salt ? Fr.fromString(this.opts.salt) : Fr.ZERO;
     const signingKey = this.opts.signingKey ? Fq.fromString(this.opts.signingKey) : undefined;
