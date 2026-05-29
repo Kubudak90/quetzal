@@ -12,8 +12,44 @@ import type { NetworkName } from "@quetzal/sdk";
 import { WizardStep3 } from "../onboarding/wizard-step3.js";
 import { loadSession } from "../onboarding/persistence.js";
 
+const GITHUB_URL = "https://github.com/Kubudak90/quetzal";
+const FAUCET_URL = (import.meta.env.VITE_FAUCET_URL as string | undefined) ?? "https://faucet.quetzaldex.xyz";
+const AGGREGATOR_URL = (import.meta.env.VITE_AGGREGATOR_URL as string | undefined) ?? "http://194.163.136.1:3001";
+
+/** Probes faucet + aggregator /health concurrently; returns 'live' | 'degraded' | 'down' | 'checking' */
+function useLiveStatus(): "live" | "degraded" | "down" | "checking" {
+  const [status, setStatus] = useState<"live" | "degraded" | "down" | "checking">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    async function probe() {
+      const probes = await Promise.allSettled([
+        fetch(`${FAUCET_URL}/api/health`, { method: "GET" }).then((r) => r.ok),
+        fetch(`${AGGREGATOR_URL}/health`, { method: "GET" }).then((r) => r.ok),
+      ]);
+      if (cancelled) return;
+      const ok = probes.filter((p) => p.status === "fulfilled" && p.value === true).length;
+      setStatus(ok === 2 ? "live" : ok === 1 ? "degraded" : "down");
+    }
+    void probe();
+    const t = setInterval(probe, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  return status;
+}
+
 /* ============ LANDING ============ */
 export function LandingScreen({ onStart }: { onStart: () => void }) {
+  const status = useLiveStatus();
+  const statusColor =
+    status === "live" ? "var(--aztec-chartreuse)" :
+    status === "degraded" ? "var(--q-warn-soft, #d4a24a)" :
+    status === "down" ? "var(--aztec-vermillion)" :
+    "var(--fg-muted)";
+  const statusLabel =
+    status === "live" ? "All systems live" :
+    status === "degraded" ? "Degraded (some services down)" :
+    status === "down" ? "Offline" :
+    "Checking…";
   return (
     <div style={{
       height: "100%", overflow: "auto",
@@ -31,12 +67,28 @@ export function LandingScreen({ onStart }: { onStart: () => void }) {
       <div style={{ maxWidth: 1080, padding: "0 48px", position: "relative", zIndex: 1, display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 64, alignItems: "center" }}>
 
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
             <FeatherGlyph size={28} />
             <div style={{
               fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em",
               textTransform: "uppercase", color: "var(--fg-muted)",
             }}>Quetzal · v0.4 · alpha-testnet</div>
+            <div
+              title={statusLabel}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "3px 8px", borderRadius: 999,
+                border: "1px solid var(--hairline-strong)",
+                fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--fg-muted)",
+                letterSpacing: "0.06em",
+              }}
+            >
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%", background: statusColor,
+                boxShadow: status === "live" ? `0 0 6px ${statusColor}` : "none",
+              }} className={status === "live" ? "pulse-dot" : undefined} />
+              {statusLabel}
+            </div>
           </div>
 
           <h1 style={{
@@ -56,9 +108,28 @@ export function LandingScreen({ onStart }: { onStart: () => void }) {
             only the per-epoch clearing result is public. No MEV, no order book to front-run.
           </p>
 
-          <div style={{ display: "flex", gap: 12, marginTop: 36 }}>
+          <div style={{ display: "flex", gap: 12, marginTop: 36, flexWrap: "wrap" }}>
             <PillButton size="lg" variant="primary" onClick={onStart} rightIcon="arrow-right">Set up wallet</PillButton>
-            <PillButton size="lg" variant="ghost" leftIcon="book-open">Read the docs</PillButton>
+            <PillButton
+              size="lg" variant="ghost" leftIcon="github"
+              onClick={() => window.open(GITHUB_URL, "_blank", "noopener,noreferrer")}
+            >
+              Read the code
+            </PillButton>
+          </div>
+          <div style={{ marginTop: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--fg-muted)" }}>
+            Need fee-juice + test tokens?{" "}
+            <a
+              href={FAUCET_URL}
+              target="_blank" rel="noopener noreferrer"
+              style={{ color: "var(--fg-muted)", textDecoration: "underline" }}
+            >Faucet ↗</a>
+            &nbsp;·&nbsp;
+            <a
+              href={GITHUB_URL}
+              target="_blank" rel="noopener noreferrer"
+              style={{ color: "var(--fg-muted)", textDecoration: "underline" }}
+            >GitHub ↗</a>
           </div>
 
           <div style={{ marginTop: 48, display: "flex", gap: 32 }}>
@@ -88,13 +159,15 @@ export function LandingScreen({ onStart }: { onStart: () => void }) {
             </ol>
           </div>
 
-          <div className="q-card" style={{ padding: 20 }}>
+          <div className="q-card" style={{ padding: 20, borderLeft: "3px solid var(--q-warn-soft, #d4a24a)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <i data-lucide="alert-triangle" style={{ width: 14, height: 14, color: "var(--q-warn-soft)", strokeWidth: 1.5 } as CSSProperties}></i>
-              <Eyebrow>Alpha software</Eyebrow>
+              <Eyebrow>Aztec testnet · not real funds</Eyebrow>
             </div>
             <div style={{ marginTop: 8, fontFamily: "var(--font-body)", fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.5 }}>
-              Don't deposit more than you can lose. Audit is in progress; AUDIT items T-13/T-15 are surfaced inline throughout the UI.
+              Quetzal is in <strong style={{ color: "var(--fg)" }}>alpha</strong> on Aztec testnet (Sepolia L1).
+              Tokens are testnet-only and have no value. Audit is in progress;
+              AUDIT items T-13/T-15 are surfaced inline throughout the UI.
             </div>
           </div>
         </div>
