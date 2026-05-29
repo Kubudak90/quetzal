@@ -43,4 +43,26 @@ describe("canonicalizePath", () => {
     const twice = canonicalizePath(once.side, once.path);
     assert.deepEqual(twice, once);
   });
+
+  // Sub-9.1 regression: the on-chain canonical check truncates the Field
+  // address to u128 (lower 128 bits) before comparing. For addresses whose
+  // top-half ordering disagrees with their bottom-half ordering, a naive
+  // full-bigint comparison disagrees with the contract.
+  //
+  // Real-world example from Sub-9 testnet:
+  //   tUSDC = 0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c
+  //   tETH  = 0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5
+  //   Full:  tUSDC < tETH  (top byte 0x05 < 0x2e)
+  //   u128:  tUSDC > tETH  (lower 128 bits: 0xf478…349c > 0xa664…1ab5)
+  // The canonical path per contract is [tETH, tUSDC] (sorted by u128 ASC),
+  // not the natural [tUSDC, tETH] a full-bigint compare would yield.
+  test("u128 truncation disagrees with full-bigint compare", () => {
+    const tUSDC = "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c";
+    const tETH  = "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5";
+    // Caller asks for a "buy" tUSDC->tETH. Contract considers [tETH, tUSDC]
+    // canonical → SDK must reverse path + flip side.
+    const r = canonicalizePath("buy", [tUSDC, tETH]);
+    assert.equal(r.side, "sell");
+    assert.deepEqual(r.path, [tETH, tUSDC]);
+  });
 });

@@ -129,9 +129,30 @@ function readVkHash(): Fr {
   return Fr.fromBuffer(buf as Buffer);
 }
 
-/** Canonical pair ordering — returns [lo, hi] s.t. lo.toBigInt() < hi.toBigInt(). */
+/**
+ * Canonical pair ordering — returns [lo, hi] sorted by the **u128 truncation**
+ * of the AztecAddress Field. This matches the orderbook's on-chain ordering
+ * (see contracts/orderbook/src/main.nr `add_pool` / `resolve_pool_id_by_pair`
+ * / `_assert_path_pools_registered`, which cast the address Field to `u128`
+ * before comparing).
+ *
+ * Sub-9.1 discovery: an earlier version of this function used full-bigint
+ * comparison (`a.toBigInt() < b.toBigInt()`), which disagrees with the on-chain
+ * u128 ordering whenever the upper 128 bits of one address sort opposite to
+ * its lower 128 bits. On Sub-9's freshly-deployed tokens that mismatch
+ * silently caused the orderbook constructor to register pool_token_a/b in the
+ * wrong slots — every later `submit_order` failed with "pool not found for
+ * path[0..2]" because the path's canonical ordering (correct u128) didn't
+ * match the registry's stored ordering (wrong full-bigint).
+ *
+ * Fix forward (already applied here): use the u128 truncation. Any redeploy
+ * after 2026-05-29 produces a correctly-registered orderbook on first try.
+ */
+const U128_MASK = (1n << 128n) - 1n;
 function canon(a: AztecAddress, b: AztecAddress): [AztecAddress, AztecAddress] {
-  return a.toBigInt() < b.toBigInt() ? [a, b] : [b, a];
+  const aU = a.toBigInt() & U128_MASK;
+  const bU = b.toBigInt() & U128_MASK;
+  return aU < bU ? [a, b] : [b, a];
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────

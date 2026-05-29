@@ -1,37 +1,44 @@
 #!/usr/bin/env node
 //
-// Sub-8.2a: LP seed script — bootstrap initial liquidity into Quetzal's
-// testnet pool 0 (tUSDC/tETH) so user orders have something to match against.
+// Sub-8.2a / Sub-9.1: LP seed script — bootstrap initial liquidity into a
+// Quetzal testnet pool so user orders have something to match against.
 //
-// State-persisted (idempotent): re-runs see "already seeded; skipping".
+// Pool selection via --pool=<id> flag (or env SEED_LP_POOL). Defaults to 0.
+//   --pool=0  USDC/ETH (token_a=tUSDC, token_b=tETH)  -> seed 5K tUSDC
+//   --pool=1  USDC/BTC (token_a=tBTC,  token_b=tUSDC) -> seed 0.1 tBTC
+//   --pool=2  ETH/BTC  (token_a=tBTC,  token_b=tETH)  -> seed 0.1 tBTC
+// In all cases the fresh pool (sqrt_p == p_min_sqrt) lives in the BelowRange
+// regime for any bucket >= 0 → only token A is actually deposited; token B
+// is refunded entirely. We pre-set amount_b = 0 to skip the futile round-trip.
+//
+// State-persisted (idempotent): per-pool state files (seed-lp-state-<id>.json)
+// so re-runs see "already seeded; skipping". The legacy file
+// "seed-lp-state.json" maps to pool 0 for backwards compatibility.
 //
 // Steps:
 //   1. Load admin wallet from testnet-m1-state.json
 //   2. Re-create admin Schnorr account; verify it matches quetzal.config.json
-//      → admin (and that admin IS the minter for tUSDC + tETH).
-//   3. Sanity-check admin's tUSDC private balance vs SEED_USDC; if short, mint
-//      shortfall via mint_to_private (admin is minter, no authwit needed).
-//      Same for tETH if we decide to escrow non-zero amount_b.
+//      → admin (and that admin IS the minter for tUSDC + tETH + tBTC).
+//   3. Sanity-check admin's PRIVATE balance of token A vs SEED_AMOUNT_A; if
+//      short, mint the shortfall via mint_to_private (admin is minter, no
+//      authwit needed).
 //   4. Read pool's get_pool_state() + get_bucket(TARGET_BUCKET) for hints.
 //   5. Pre-compute the V3 deposit math via aggregator/src/buckets.ts so the
 //      operator can see what'll happen BEFORE the on-chain submit. For a
-//      fresh pool (current_sqrt_price = p_min_sqrt = bucket 0's sqrt_lower),
-//      `sqrt_p <= sqrt_lower` holds for ANY bucket id ≥ 0 → math falls into
-//      `computeDepositBelowRange` → used_a = amount_a, used_b = 0.
-//      That is: only token A counts at fresh-pool state. We DEPOSIT ONLY
-//      token A (amount_b = 0) to avoid a futile escrow + refund round-trip.
+//      fresh pool, `sqrt_p <= sqrt_lower` holds for ANY bucket id ≥ 0 → math
+//      falls into `computeDepositBelowRange` → used_a = amount_a, used_b = 0.
 //   6. Call pool.deposit(...) with the prepared args.
-//   7. Verify: re-read pool/bucket state + admin's PositionNote count. Confirm
-//      bucket[TARGET_BUCKET].liquidity > 0 and admin has a fresh position.
-//   8. Persist state.txHash + amounts + position_nonce + l_used to
-//      seed-lp-state.json.
+//   7. Verify: re-read pool/bucket state + admin's PositionNote count.
+//   8. Persist state.txHash + amounts + position_nonce + l_used.
 //
 // SAFETY: refuses to run unless AZTEC_NODE_URL contains 'testnet'.
 //
 // Usage:
-//   AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com pnpm tsx scripts/seed-lp.ts
+//   AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com pnpm tsx scripts/seed-lp.ts --pool=1
+//   SEED_LP_POOL=2 pnpm tsx scripts/seed-lp.ts
 //
-// State file: seed-lp-state.json (gitignored)
+// State files: seed-lp-state-<id>.json (gitignored); pool 0 also writes
+// the legacy seed-lp-state.json for backwards compatibility.
 //
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -54,18 +61,72 @@ if (!NODE_URL.includes("testnet")) {
 
 const M1_STATE  = "testnet-m1-state.json";
 const CONFIG    = "quetzal.config.json";
-const STATE     = "seed-lp-state.json";
 // PXE dir. Defaults to Sub-9 testnet-m4-pxe (post-clean-slate redeploy).
 // Override via SEED_LP_PXE_DIR to re-use a different PXE (e.g. testnet-m3-pxe).
 const PXE_DIR   = process.env.SEED_LP_PXE_DIR ?? "./testnet-m4-pxe";
 
-// Seed amounts. tUSDC has 6 decimals, tETH 18 decimals.
+// ─── Pool selection (--pool=<id> or SEED_LP_POOL=<id>; default 0) ─────────
+function parsePoolId(): number {
+  const flagArg = process.argv.find((a) => a.startsWith("--pool="));
+  if (flagArg) {
+    const raw = flagArg.slice("--pool=".length);
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error(`invalid --pool=${raw}; must be a non-negative integer`);
+    }
+    return n;
+  }
+  if (process.env.SEED_LP_POOL) {
+    const n = Number(process.env.SEED_LP_POOL);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error(`invalid SEED_LP_POOL=${process.env.SEED_LP_POOL}`);
+    }
+    return n;
+  }
+  return 0;
+}
+const POOL_ID = parsePoolId();
+// Pool 0 also writes seed-lp-state.json (legacy), pool>0 writes only -<id>.json.
+const STATE   = `seed-lp-state-${POOL_ID}.json`;
+const LEGACY_STATE_POOL_0 = "seed-lp-state.json";
+
+// Atomic units.
 const ONE_TUSDC = 10n ** 6n;
 const ONE_TETH  = 10n ** 18n;
-const SEED_USDC = 5_000n * ONE_TUSDC;  // 5K tUSDC
-const SEED_ETH  = 2n     * ONE_TETH;   // 2 tETH  (passed for spec completeness;
-                                       //          math will refund all of it
-                                       //          on a fresh pool — see step 5.)
+const ONE_TBTC  = 10n ** 8n;
+
+// Token decimals lookup (used for logging only).
+const DECIMALS_BY_TOKEN_KEY: Record<string, number> = {
+  tUSDC: 6, tETH: 18, tBTC: 8,
+};
+
+// Per-pool seed plan. We MUST honour the on-chain canonical (token_a, token_b)
+// ordering — read from quetzal.config.json. For BelowRange (every bucket ≥ 0
+// at fresh pool), only token A is deposited; token B is refunded.
+// Strategy: provide a healthy chunk of token A.
+//   pool 0 (tUSDC/tETH): 5K tUSDC as token A
+//   pool 1 (tBTC/tUSDC): 0.1 tBTC as token A
+//   pool 2 (tBTC/tETH ): 0.1 tBTC as token A
+// (We pass a non-zero amount_b for spec completeness, but step 5 zeros it
+// after the regime check so we don't burn an escrow round-trip.)
+interface PoolSeedPlan {
+  amountA: bigint;
+  amountB: bigint;
+}
+function buildSeedPlan(tokenAKey: string, tokenBKey: string): PoolSeedPlan {
+  function amountFor(key: string, kind: "primary" | "companion"): bigint {
+    // Primary = token A (BelowRange — actually deposited).
+    // Companion = token B (refunded; sized only so the math input matches spec).
+    if (key === "tUSDC") return kind === "primary" ? 5_000n * ONE_TUSDC : 5_000n * ONE_TUSDC;
+    if (key === "tETH")  return kind === "primary" ?     2n * ONE_TETH  :     2n * ONE_TETH;
+    if (key === "tBTC")  return kind === "primary" ?     1n * (ONE_TBTC / 10n) /* 0.1 */ : ONE_TBTC / 10n;
+    throw new Error(`unknown token key: ${key}`);
+  }
+  return {
+    amountA: amountFor(tokenAKey, "primary"),
+    amountB: amountFor(tokenBKey, "companion"),
+  };
+}
 
 // V3 bucket target. For a fresh pool (sqrt_p == p_min_sqrt), every bucket ≥ 0
 // has sqrt_lower ≥ sqrt_p → math falls into BelowRange → token A only. Bucket
@@ -114,6 +175,7 @@ interface QuetzalConfig {
   admin: string;
   tUSDC: string;
   tETH: string;
+  tBTC?: string;
   pools: Array<{ pool_id: number; token_a: string; token_b: string; address: string }>;
   bucketPMinSqrt: string;
   bucketGrowthNum: string;
@@ -123,10 +185,18 @@ interface QuetzalConfig {
 
 function loadState(): SeedState {
   if (existsSync(STATE)) return JSON.parse(readFileSync(STATE, "utf8")) as SeedState;
+  // Backwards-compat: if the per-pool file doesn't exist but the legacy one
+  // does, and we're seeding pool 0, migrate it.
+  if (POOL_ID === 0 && existsSync(LEGACY_STATE_POOL_0)) {
+    const legacy = JSON.parse(readFileSync(LEGACY_STATE_POOL_0, "utf8")) as SeedState;
+    writeFileSync(STATE, JSON.stringify(legacy, null, 2));
+    return legacy;
+  }
   return { step: 0, notes: [] };
 }
 function saveState(s: SeedState): void {
   writeFileSync(STATE, JSON.stringify(s, null, 2));
+  if (POOL_ID === 0) writeFileSync(LEGACY_STATE_POOL_0, JSON.stringify(s, null, 2));
 }
 function noteAdd(s: SeedState, msg: string): void {
   s.notes = s.notes ?? [];
@@ -209,19 +279,43 @@ async function main(): Promise<void> {
     throw new Error(`M1 not complete (step=${m1.step}); admin wallet not deployed`);
   }
   const config = JSON.parse(readFileSync(CONFIG, "utf8")) as QuetzalConfig;
-  const poolEntry = config.pools[0];
-  if (!poolEntry) throw new Error("config.pools[0] missing");
+  const poolEntry = config.pools.find((p) => p.pool_id === POOL_ID);
+  if (!poolEntry) {
+    throw new Error(
+      `config.pools[].pool_id == ${POOL_ID} missing (available: ${config.pools.map((p) => p.pool_id).join(", ")})`,
+    );
+  }
+
+  // Resolve token address → key (tUSDC / tETH / tBTC) for the pool.
+  const tokenAddrToKey: Record<string, string> = {
+    [config.tUSDC.toLowerCase()]: "tUSDC",
+    [config.tETH.toLowerCase()]: "tETH",
+  };
+  if (config.tBTC) tokenAddrToKey[config.tBTC.toLowerCase()] = "tBTC";
+  const tokenAKey = tokenAddrToKey[poolEntry.token_a.toLowerCase()];
+  const tokenBKey = tokenAddrToKey[poolEntry.token_b.toLowerCase()];
+  if (!tokenAKey || !tokenBKey) {
+    throw new Error(
+      `pool ${POOL_ID} references unknown token (a=${poolEntry.token_a} b=${poolEntry.token_b}); ` +
+      `config.tUSDC/tETH/tBTC must enumerate all pool tokens.`,
+    );
+  }
+  const plan = buildSeedPlan(tokenAKey, tokenBKey);
+  const decA = DECIMALS_BY_TOKEN_KEY[tokenAKey]!;
+  const decB = DECIMALS_BY_TOKEN_KEY[tokenBKey]!;
 
   const state = loadState();
-  console.log(`[seed-lp] starting; resuming from step ${state.step}`);
+  console.log(`[seed-lp] starting; pool_id=${POOL_ID}; resuming from step ${state.step}`);
   console.log(`[seed-lp] node=${NODE_URL}`);
-  console.log(`[seed-lp] pool=${poolEntry.address} (id=${poolEntry.pool_id})`);
-  console.log(`[seed-lp] tokens: tUSDC=${config.tUSDC} tETH=${config.tETH}`);
-  console.log(`[seed-lp] seed: ${SEED_USDC} tUSDC atomic + ${SEED_ETH} tETH atomic → bucket ${TARGET_BUCKET}`);
+  console.log(`[seed-lp] pool=${poolEntry.address}`);
+  console.log(`[seed-lp] token_a=${tokenAKey} (${poolEntry.token_a}, dec ${decA})`);
+  console.log(`[seed-lp] token_b=${tokenBKey} (${poolEntry.token_b}, dec ${decB})`);
+  console.log(`[seed-lp] seed plan: amount_a=${plan.amountA} ${tokenAKey} atomic + amount_b=${plan.amountB} ${tokenBKey} atomic → bucket ${TARGET_BUCKET}`);
+  console.log(`[seed-lp] state file: ${STATE}`);
 
   if (state.step >= 7 && state.txHash) {
     console.log(`[seed-lp] ALREADY SEEDED at txHash=${state.txHash}; bucket=${state.bucketId} amountA=${state.amountADeposited} amountB=${state.amountBDeposited}`);
-    console.log("[seed-lp] delete seed-lp-state.json to re-seed.");
+    console.log(`[seed-lp] delete ${STATE} to re-seed.`);
     return;
   }
 
@@ -262,26 +356,26 @@ async function main(): Promise<void> {
 
   // Construct contract handles. Use AztecAddress (strict type) for the
   // ContractClass.at() bindings.
-  const tUSDCAddr = AztecAddress.fromString(config.tUSDC);
-  const tETHAddr  = AztecAddress.fromString(config.tETH);
-  const poolAddr  = AztecAddress.fromString(poolEntry.address);
+  const tokenAAddr = AztecAddress.fromString(poolEntry.token_a);
+  const tokenBAddr = AztecAddress.fromString(poolEntry.token_b);
+  const poolAddr   = AztecAddress.fromString(poolEntry.address);
 
-  const tUSDC = await TokenContract.at(tUSDCAddr, wallet);
-  const tETH  = await TokenContract.at(tETHAddr, wallet);
-  const pool  = await LiquidityPoolContract.at(poolAddr, wallet);
+  const tokenA = await TokenContract.at(tokenAAddr, wallet);
+  const tokenB = await TokenContract.at(tokenBAddr, wallet);
+  const pool   = await LiquidityPoolContract.at(poolAddr, wallet);
 
-  // ── Step 2: check + top up admin's tUSDC PRIVATE balance ───────────────
+  // ── Step 2: check + top up admin's token-A PRIVATE balance ─────────────
   if (state.step < 2) {
-    console.log(`[seed-lp] step 2: checking admin's tUSDC PRIVATE balance ...`);
-    const usdcBal = await readPrivateBalance(tUSDC, admin);
-    console.log(`[seed-lp]   admin tUSDC private balance: ${usdcBal}`);
-    if (usdcBal < SEED_USDC) {
-      const shortfall = SEED_USDC - usdcBal;
-      console.log(`[seed-lp]   shortfall ${shortfall} tUSDC atomic → mint_to_private(admin, shortfall) ...`);
+    console.log(`[seed-lp] step 2: checking admin's ${tokenAKey} (token A) PRIVATE balance ...`);
+    const balA = await readPrivateBalance(tokenA, admin);
+    console.log(`[seed-lp]   admin ${tokenAKey} private balance: ${balA}`);
+    if (balA < plan.amountA) {
+      const shortfall = plan.amountA - balA;
+      console.log(`[seed-lp]   shortfall ${shortfall} ${tokenAKey} atomic → mint_to_private(admin, shortfall) ...`);
       const t0 = Date.now();
-      await tUSDC.methods.mint_to_private(admin, shortfall).send({ from: admin });
+      await tokenA.methods.mint_to_private(admin, shortfall).send({ from: admin });
       console.log(`[seed-lp]   mint OK (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-      noteAdd(state, `minted ${shortfall} tUSDC to admin private (had ${usdcBal})`);
+      noteAdd(state, `minted ${shortfall} ${tokenAKey} to admin private (had ${balA})`);
     } else {
       console.log(`[seed-lp]   sufficient balance; no mint needed`);
     }
@@ -291,26 +385,26 @@ async function main(): Promise<void> {
     console.log(`[seed-lp] step 2 cached`);
   }
 
-  // ── Step 3: same for tETH (only if we elect to send amount_b > 0) ─────
+  // ── Step 3: same for token B (only if we elect to send amount_b > 0) ──
   // For a fresh pool the math discards amount_b. We still expose this step
-  // because a re-seed at a non-fresh pool (sqrt_p moved) may need tETH.
+  // because a re-seed at a non-fresh pool (sqrt_p moved) may need token B.
   if (state.step < 3) {
-    if (SEED_ETH > 0n) {
-      console.log(`[seed-lp] step 3: checking admin's tETH PRIVATE balance ...`);
-      const ethBal = await readPrivateBalance(tETH, admin);
-      console.log(`[seed-lp]   admin tETH private balance: ${ethBal}`);
-      if (ethBal < SEED_ETH) {
-        const shortfall = SEED_ETH - ethBal;
-        console.log(`[seed-lp]   shortfall ${shortfall} tETH atomic → mint_to_private(admin, shortfall) ...`);
+    if (plan.amountB > 0n) {
+      console.log(`[seed-lp] step 3: checking admin's ${tokenBKey} (token B) PRIVATE balance ...`);
+      const balB = await readPrivateBalance(tokenB, admin);
+      console.log(`[seed-lp]   admin ${tokenBKey} private balance: ${balB}`);
+      if (balB < plan.amountB) {
+        const shortfall = plan.amountB - balB;
+        console.log(`[seed-lp]   shortfall ${shortfall} ${tokenBKey} atomic → mint_to_private(admin, shortfall) ...`);
         const t0 = Date.now();
-        await tETH.methods.mint_to_private(admin, shortfall).send({ from: admin });
+        await tokenB.methods.mint_to_private(admin, shortfall).send({ from: admin });
         console.log(`[seed-lp]   mint OK (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-        noteAdd(state, `minted ${shortfall} tETH to admin private (had ${ethBal})`);
+        noteAdd(state, `minted ${shortfall} ${tokenBKey} to admin private (had ${balB})`);
       } else {
         console.log(`[seed-lp]   sufficient balance; no mint needed`);
       }
     } else {
-      console.log(`[seed-lp] step 3 skipped (SEED_ETH=0)`);
+      console.log(`[seed-lp] step 3 skipped (amountB=0)`);
     }
     state.step = 3;
     saveState(state);
@@ -349,16 +443,16 @@ async function main(): Promise<void> {
   console.log(`[seed-lp]   bucket[${TARGET_BUCKET}].sqrt_upper: ${bounds.sqrt_upper}`);
   console.log(`[seed-lp]   pool.current_sqrt_price        : ${poolHint.current_sqrt_price}`);
 
-  let depositAmountB = SEED_ETH;
+  let depositAmountB = plan.amountB;
   let regime: "below" | "in-range" | "above";
   if (poolHint.current_sqrt_price <= bounds.sqrt_lower) {
     regime = "below";
-    console.log(`[seed-lp]   regime: BelowRange — only token A counts; tETH would be fully refunded`);
+    console.log(`[seed-lp]   regime: BelowRange — only token A counts; ${tokenBKey} would be fully refunded`);
     console.log(`[seed-lp]   ⇒ setting amount_b=0 to skip a futile escrow + refund round-trip`);
     depositAmountB = 0n;
   } else if (poolHint.current_sqrt_price >= bounds.sqrt_upper) {
     regime = "above";
-    console.log(`[seed-lp]   regime: AboveRange — only token B counts; tUSDC would be fully refunded`);
+    console.log(`[seed-lp]   regime: AboveRange — only token B counts; ${tokenAKey} would be fully refunded`);
     // Not the seed-script's expected path, but handle for correctness:
     // we don't override amounts here because operator was explicit about both.
   } else {
@@ -366,14 +460,14 @@ async function main(): Promise<void> {
     console.log(`[seed-lp]   regime: InRange — both tokens deposited proportionally`);
   }
 
-  const math = computeDeposit(SEED_USDC, depositAmountB, poolHint.current_sqrt_price, bounds);
+  const math = computeDeposit(plan.amountA, depositAmountB, poolHint.current_sqrt_price, bounds);
   console.log(`[seed-lp]   math.l_used: ${math.l_used}`);
   console.log(`[seed-lp]   math.used_a: ${math.used_a}`);
   console.log(`[seed-lp]   math.used_b: ${math.used_b}`);
   if (math.l_used === 0n) {
     throw new Error(
       `dry-run computed l_used == 0; the deposit would revert. ` +
-      `regime=${regime} amount_a=${SEED_USDC} amount_b=${depositAmountB}. ` +
+      `regime=${regime} amount_a=${plan.amountA} amount_b=${depositAmountB}. ` +
       `Pick a different bucket or amount.`,
     );
   }
@@ -382,7 +476,7 @@ async function main(): Promise<void> {
 
   // ── Step 6: submit pool.deposit ───────────────────────────────────────
   if (state.step < 6) {
-    console.log(`[seed-lp] step 6: pool.deposit(${TARGET_BUCKET}, ${SEED_USDC}, ${depositAmountB}, ...) ...`);
+    console.log(`[seed-lp] step 6: pool.deposit(${TARGET_BUCKET}, ${plan.amountA}, ${depositAmountB}, ...) ...`);
     const nonceA = Fr.random();
     // Use Fr.ZERO for the unused nonce — the contract's
     // `if amount_b > 0` guard skips the transfer when amount_b == 0.
@@ -390,7 +484,7 @@ async function main(): Promise<void> {
     const positionNonce = Fr.random();
     state.positionNonce = positionNonce.toString();
     state.bucketId = TARGET_BUCKET;
-    state.amountADeposited = SEED_USDC.toString();
+    state.amountADeposited = plan.amountA.toString();
     state.amountBDeposited = depositAmountB.toString();
     saveState(state);
 
@@ -407,7 +501,7 @@ async function main(): Promise<void> {
 
         const tx = pool.methods.deposit(
           TARGET_BUCKET,
-          SEED_USDC,
+          plan.amountA,
           depositAmountB,
           {
             reserve_a: ph.reserve_a,
@@ -517,10 +611,11 @@ async function main(): Promise<void> {
   // ── Summary ───────────────────────────────────────────────────────────
   console.log("");
   console.log(`[seed-lp] ALL STEPS PASSED.`);
+  console.log(`[seed-lp]   pool_id:     ${POOL_ID}`);
   console.log(`[seed-lp]   pool:        ${poolEntry.address}`);
   console.log(`[seed-lp]   bucket:      ${state.bucketId}`);
-  console.log(`[seed-lp]   amount_a:    ${state.amountADeposited} tUSDC atomic`);
-  console.log(`[seed-lp]   amount_b:    ${state.amountBDeposited} tETH atomic`);
+  console.log(`[seed-lp]   amount_a:    ${state.amountADeposited} ${tokenAKey} atomic`);
+  console.log(`[seed-lp]   amount_b:    ${state.amountBDeposited} ${tokenBKey} atomic`);
   console.log(`[seed-lp]   l_used:      ${state.lUsedExpected} (expected, math)`);
   console.log(`[seed-lp]   position:    ${state.positionNonce}`);
   console.log(`[seed-lp]   txHash:      ${state.txHash}`);

@@ -54,6 +54,13 @@ export function validateBulkInput(input: BulkPlaceOrderInput): void {
 //   side="buy" (false) -> pay path[0] (canonical low), receive path[last] (high)
 //   side="sell" (true) -> pay path[last] (high), receive path[0] (low)
 
+// Mirrors the orderbook contract's `path[0] as u128 < path[last] as u128`
+// canonicalization check. The Field-to-u128 cast truncates to the lower 128
+// bits; a naive full-bigint compare disagrees with the on-chain ordering for
+// many address pairs (see Sub-9.1 findings). Always compare canonical paths
+// using the same u128 truncation the contract uses.
+const U128_MASK = (1n << 128n) - 1n;
+
 export function canonicalizePath(
   side: OrderSide,
   path: string[],
@@ -61,10 +68,10 @@ export function canonicalizePath(
   if (path.length < 2 || path.length > 3) {
     throw new OrderError("INVALID_PATH", `path length must be 2 or 3; got ${path.length}`);
   }
-  const lo = BigInt(path[0]);
-  const hi = BigInt(path[path.length - 1]);
+  const lo = BigInt(path[0]) & U128_MASK;
+  const hi = BigInt(path[path.length - 1]) & U128_MASK;
   if (lo === hi) {
-    throw new OrderError("INVALID_PATH", "path endpoints must differ");
+    throw new OrderError("INVALID_PATH", "path endpoints must differ (u128-truncated)");
   }
   if (lo < hi) return { side, path };
   return {
@@ -91,34 +98,50 @@ interface PathTriple {
   pathFields: [Fr, Fr, Fr];
 }
 
-function resolvePath(client: QuetzalClient, aliases: string[]): PathTriple {
+/**
+ * Resolve alias OR hex-address path entries to hex addresses. Tolerates a
+ * mixed list (e.g. ["tUSDC", "0xabc…"]) by passing hex inputs through
+ * unchanged. Pre-canonicalization step.
+ */
+function resolveAliasesToHex(client: QuetzalClient, path: string[]): string[] {
   const contracts = requireContracts(client);
   const map: Record<string, string | undefined> = {
     tUSDC: contracts.tUSDC,
     tETH: contracts.tETH,
     tBTC: contracts.tBTC,
   };
-  if (aliases.length < 2 || aliases.length > 3) {
-    throw new OrderError("INVALID_PATH", `path_len must be 2 or 3, got ${aliases.length}`);
+  if (path.length < 2 || path.length > 3) {
+    throw new OrderError("INVALID_PATH", `path_len must be 2 or 3, got ${path.length}`);
   }
-  const resolved = aliases.map((a) => {
-    const addr = map[a];
-    if (!addr) throw new OrderError("INVALID_PATH", `unknown token alias: ${a}`);
+  return path.map((p) => {
+    if (p.startsWith("0x")) return p;
+    const addr = map[p];
+    if (!addr) throw new OrderError("INVALID_PATH", `unknown token alias: ${p}`);
     return addr;
   });
-  for (let i = 0; i < resolved.length; i++) {
-    for (let j = i + 1; j < resolved.length; j++) {
-      if (resolved[i] === resolved[j]) {
-        throw new OrderError("INVALID_PATH", `path[${i}] == path[${j}]: ${resolved[i]}`);
+}
+
+/**
+ * Pack a 2- or 3-element hex-address path into a (path_len, [Fr;3]) tuple
+ * suitable for the orderbook's submit_order ABI. Post-canonicalization step.
+ */
+function pathHexToFields(hexes: string[]): PathTriple {
+  if (hexes.length < 2 || hexes.length > 3) {
+    throw new OrderError("INVALID_PATH", `path_len must be 2 or 3, got ${hexes.length}`);
+  }
+  for (let i = 0; i < hexes.length; i++) {
+    for (let j = i + 1; j < hexes.length; j++) {
+      if (hexes[i] === hexes[j]) {
+        throw new OrderError("INVALID_PATH", `path[${i}] == path[${j}]: ${hexes[i]}`);
       }
     }
   }
-  const path: [Fr, Fr, Fr] = [
-    Fr.fromString(resolved[0]!),
-    Fr.fromString(resolved[1]!),
-    resolved[2] ? Fr.fromString(resolved[2]) : Fr.ZERO,
+  const fields: [Fr, Fr, Fr] = [
+    Fr.fromString(hexes[0]!),
+    Fr.fromString(hexes[1]!),
+    hexes[2] ? Fr.fromString(hexes[2]) : Fr.ZERO,
   ];
-  return { path_len: aliases.length as 2 | 3, pathFields: path };
+  return { path_len: hexes.length as 2 | 3, pathFields: fields };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -129,12 +152,13 @@ export class OrdersApi {
   async placeOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
     validatePlaceOrderInput(input);
     const contracts = requireContracts(this.client);
-    // Sub-6c A3: canonicalize path BEFORE alias resolution so the side
-    // semantics carry through. canonicalizePath operates on the alias
-    // strings (compared as BigInt) and returns the canonical {side, path};
-    // resolvePath then turns them into Fr fields for the circuit.
-    const canonical = canonicalizePath(input.side, input.path);
-    const { path_len, pathFields } = resolvePath(this.client, canonical.path);
+    // Sub-9.1 fix: resolve aliases to hex addresses FIRST, then canonicalize.
+    // The previous order (canonicalize then resolve) called BigInt() on alias
+    // strings ("tUSDC") and threw SyntaxError. Canonicalization needs to
+    // compare addresses as bigints, which only works on hex inputs.
+    const resolvedPathHex = resolveAliasesToHex(this.client, input.path);
+    const canonical = canonicalizePath(input.side, resolvedPathHex);
+    const { path_len, pathFields } = pathHexToFields(canonical.path);
 
     const realSide = canonical.side === "sell"; // false = bid, true = ask
     const orderNonce = randomField();
@@ -181,11 +205,13 @@ export class OrdersApi {
   async placeOrderBulk(input: BulkPlaceOrderInput): Promise<BulkPlaceOrderResult> {
     validateBulkInput(input);
     const contracts = requireContracts(this.client);
-    // Sub-6c A3: same canonicalization treatment as placeOrder. The real
-    // order (slot 0) inherits the canonical side; decoys (slots 1..K-1) use
-    // unfillable limit-price so direction is irrelevant for them.
-    const canonical = canonicalizePath(input.side, input.path);
-    const { path_len, pathFields } = resolvePath(this.client, canonical.path);
+    // Sub-6c A3 / Sub-9.1 fix: resolve aliases to hex addresses FIRST, then
+    // canonicalize. See placeOrder for rationale. The real order (slot 0)
+    // inherits the canonical side; decoys (slots 1..K-1) use an unfillable
+    // limit-price so direction is irrelevant for them.
+    const resolvedPathHex = resolveAliasesToHex(this.client, input.path);
+    const canonical = canonicalizePath(input.side, resolvedPathHex);
+    const { path_len, pathFields } = pathHexToFields(canonical.path);
 
     const realSide = canonical.side === "sell";
     const decoyCount = input.decoyCount;
