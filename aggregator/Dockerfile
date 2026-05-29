@@ -1,12 +1,11 @@
 # Sub-8.1 aggregator — multi-stage Docker build.
+# Sub-9.3 update: runtime stage now FROMs aztecprotocol/aztec:4.2.1 so the
+# clearing loop's `nargo execute` + `bb prove` shellouts work in-container
+# without an extra build. The image grows from ~600MB to ~2.4GB but the alternative
+# (bespoke toolchain install) is fragile across Aztec releases.
 #
 # Build context: monorepo root (one level above this file). From /repo root:
 #   docker build -t quetzal-aggregator:latest -f aggregator/Dockerfile .
-#
-# The aggregator package runs via tsx (no JS emit) so we don't need a separate
-# build stage like the faucet does. We DO pull in @quetzal/sdk + cli/src/
-# (relayer-mode imports cli/src/config.js) so the runtime needs both source
-# trees + node_modules.
 #
 # Prerequisite: BEFORE `docker build`, run from repo root:
 #   pnpm install
@@ -15,10 +14,13 @@
 #                       # The reveal-server path (/reveal + /health) does NOT
 #                       # need compiled Noir artifacts.
 #
-# Image footprint stays small: only ~3 source trees + node_modules ship.
+# Sub-9.3 ENV switches:
+#   CLEARING_ENABLED=1   wire the full multi-pair close_epoch_and_clear_verified path
+#   NARGO_BIN=...        override nargo binary path (default: /usr/src/noir/noir-repo/target/release/nargo)
+#   BB_BIN=...           override bb binary path (default: /usr/src/barretenberg/ts/build/amd64-linux/bb)
 
 # ---------------------------------------------------------------------------
-# Stage 1: deps — install workspace deps from lockfile.
+# Stage 1: deps — install workspace deps from lockfile on a slim node image.
 # Cached aggressively when only source files change.
 # ---------------------------------------------------------------------------
 FROM node:22-trixie-slim AS deps
@@ -46,67 +48,69 @@ COPY tools/exporters/package.json ./tools/exporters/package.json
 COPY tests ./tests
 
 # --frozen-lockfile=false: tolerate lockfile drift across contributor branches.
-# Workspace topology is stable so the resolved tree is deterministic anyway.
 RUN pnpm install --frozen-lockfile=false
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime — slim node:22 with source + node_modules from deps.
-# No build step required (tsx executes TS directly).
+# Stage 2: runtime — aztecprotocol/aztec:4.2.1 with our source + node_modules.
+# This image bakes in nargo + bb (Sub-9.3 clearing-cycle uses them).
+# Image WORKDIR resets; we set our own.
 # ---------------------------------------------------------------------------
-FROM node:22-trixie-slim AS runtime
+FROM aztecprotocol/aztec:4.2.1 AS runtime
 
-RUN corepack enable pnpm
+# Bring corepack into PATH if missing.  The aztec image has node 24; corepack
+# ships with it.
+RUN corepack enable pnpm || true
 
-# curl for HEALTHCHECK; ca-certificates so the L2 PXE HTTPS works.
+# curl + ca-certificates: needed for HEALTHCHECK and L2 PXE HTTPS.
+# The aztec image is bookworm-based; apt is available.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    || (echo "apt-get failed; assuming curl + ca-certificates already present" && which curl)
 
 WORKDIR /repo
 
-# Workspace metadata + installed dependencies.
+# Workspace metadata + installed dependencies (from deps stage).
 COPY --from=deps /repo/package.json ./package.json
 COPY --from=deps /repo/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=deps /repo/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=deps /repo/node_modules ./node_modules
 
-# Source trees the aggregator touches at runtime:
-# - aggregator/  — the daemon + server + main.ts
-# - sdk/         — workspace dep (exports point at src/*.ts directly)
-# - cli/         — relayer-mode imports cli/src/config.js + cli/src/bridge-helpers.js
-# - tests/       — relayer-mode imports tests/integration/generated/Treasury.js
-# - contracts/   — Noir artifacts for SDK contract registration (optional;
-#                  reveal-server-only path doesn't need them)
+# Source trees the aggregator touches at runtime.
 COPY aggregator ./aggregator
 COPY sdk ./sdk
 COPY cli ./cli
 COPY tests ./tests
 COPY contracts ./contracts
+# Sub-9.3: circuit dir for nargo + bb prove. Includes target/ with the
+# pre-baked vk.bin/vk + vk_hash; nargo execute regenerates clearing.gz +
+# public_inputs per cycle. The on-chain orderbook is bound to vk_hash from
+# this exact target/ — if you replace circuits/, you must redeploy the
+# orderbook to match the new vk_hash.
+COPY circuits ./circuits
 
-# Re-link the per-workspace node_modules symlink farm.  pnpm's deps stage
-# installs into /repo/node_modules/.pnpm/ but the symlink farms inside
-# /repo/aggregator/node_modules/, /repo/sdk/node_modules/, etc. get clobbered
-# by the host COPYs above (host doesn't carry node_modules — see
-# Dockerfile.dockerignore).  Re-running `pnpm install` with the cached store
-# is a no-op for content but rebuilds the per-pkg symlinks `pnpm start` needs
-# to resolve fastify/sdk/etc.  --frozen-lockfile=false matches deps stage.
+# Re-link the per-workspace node_modules symlink farm. Same reasoning as
+# Sub-8.1: per-pkg symlinks get clobbered by the host COPYs.
 RUN pnpm install --frozen-lockfile=false --prefer-offline
 
 # Pre-create the snapshots dir so the bind-mount volume picks up clean perms.
-RUN mkdir -p /repo/aggregator/data && chmod 0755 /repo/aggregator/data
+RUN mkdir -p /repo/aggregator/data/snapshots && chmod -R 0755 /repo/aggregator/data
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    LOG_LEVEL=info
+    LOG_LEVEL=info \
+    NARGO_BIN=/usr/src/noir/noir-repo/target/release/nargo \
+    BB_BIN=/usr/src/barretenberg/ts/build/amd64-linux/bb
 
 EXPOSE 3000
 
-# Container-level healthcheck.  Docker-compose also defines a healthcheck
-# (with start_period for cold-start tolerance); this one keeps `docker ps`
-# accurate even when the image runs standalone.
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
+# Container-level healthcheck.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
     CMD curl -sf http://localhost:${PORT}/health || exit 1
 
 WORKDIR /repo/aggregator
 
-CMD ["pnpm", "start"]
+# Use the aztec image's bash + our app via npx pnpm. We override the aztec
+# entrypoint (which runs `aztec`) by setting ours explicitly.
+ENTRYPOINT []
+CMD ["sh", "-c", "pnpm start"]

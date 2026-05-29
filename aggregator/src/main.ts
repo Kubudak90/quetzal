@@ -330,6 +330,11 @@ async function buildDaemonContextMP(args: {
     queue: args.queue,
     snapshotsDir: args.snapshotsDir,
     registry,
+    circuitDir: process.env.CIRCUIT_DIR ?? "/repo/circuits/clearing",
+    nargoBin: process.env.NARGO_BIN ?? "nargo",
+    bbBin: process.env.BB_BIN ?? "bb",
+    proveDeadlineMs: Number(process.env.PROVE_DEADLINE_MS ?? "300000"),
+    verbose: process.env.PROVE_VERBOSE !== "0",
     getEpoch: async () => {
       const e = await c.reads.getCurrentEpochFull();
       return {
