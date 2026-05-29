@@ -1,0 +1,97 @@
+---
+title: Get test tokens
+---
+
+import { Callout } from 'nextra/components';
+
+# Get test tokens
+
+The faucet at [faucet.quetzaldex.xyz](https://faucet.quetzaldex.xyz) drips three assets per request, on Aztec L2:
+
+| Asset | Amount | What it is |
+|---|---|---|
+| Fee-juice | 100 | Aztec's native gas asset (L1 → L2 bridged) |
+| tUSDC | 1,000 | Quetzal's test stablecoin (admin-minted on L2) |
+| tETH | 1 | Quetzal's test ETH (admin-minted on L2) |
+
+The faucet is not a token contract. It is a small Next.js API that:
+
+1. Bridges fee-juice from a hot L1 account into your L2 address (one L1 deposit, one L2 claim).
+2. Mints tUSDC + tETH directly to your L2 address using the admin minter role on the `Token` contract.
+
+A single request takes 2–4 minutes end-to-end. Most of that is ClientIVC proof generation on the L2 side, then waiting for the L1 inbox tree to ingest.
+
+## Calling it manually
+
+If you want to bypass the wizard — for example, to top up a CLI account — POST to `/api/drip`:
+
+```bash
+curl -X POST https://faucet.quetzaldex.xyz/api/drip \
+  -H "Content-Type: application/json" \
+  -d '{"address": "0xYOUR_AZTEC_ADDRESS"}'
+```
+
+The response is sync. Successful calls return:
+
+```json
+{
+  "success": true,
+  "l1TxHash": "0x...",
+  "l2ClaimAmount": "100000000000",
+  "l2LeafIndex": 95092738,
+  "tUSDCTxHash": "0x...",
+  "tETHTxHash": "0x..."
+}
+```
+
+Failures return `{ "success": false, "error": "..." }` with HTTP 400 / 429 / 500.
+
+## Rate limits
+
+The faucet enforces **4 requests per IP per 8 hours** as a sliding window. Concretely:
+
+- The window stores 4 timestamps per IP.
+- A 5th request inside an 8-hour window returns HTTP 429.
+- The earliest of the four timestamps expiring opens a new slot.
+
+The wizard hits the faucet `N` times back-to-back (N = pool size), so a pool of 5 will consume your full budget for the next 8 hours.
+
+## Health endpoint
+
+Anyone can check the faucet's liveness + operator balances:
+
+```bash
+curl -s https://faucet.quetzaldex.xyz/api/health | head -c 400
+```
+
+Returns:
+
+```json
+{
+  "status": "ok",
+  "l1": { "blockNumber": 8123456, "operatorBalanceEth": "0.42", ... },
+  "l2": { "operatorBalanceTUSDC": "9999000000", "operatorBalanceTETH": "950000000000000000000" },
+  "rateLimit": { "uniqueIps": 17, "windowed": 12 }
+}
+```
+
+`status: "degraded"` means the operator's L2 tUSDC or tETH balance is below the drain threshold and the faucet will reject new drips until it's topped up.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `429 too many requests` | More than 4 drips from this IP in 8h | Wait, or use a different network. |
+| `503 degraded` | Operator's L2 mint balance drained | Report on GitHub; operator will reseed. |
+| `500` for several minutes | Aztec testnet L1 RPC throttling (Quicknode 429s upstream) | Retry in 15–30 min. See `project_sub8_public_dex_alpha` memory for full context. |
+| Drip succeeds but balance never shows | PXE tagging window stalled this child | Round-robin to the next child in your pool, or restart the wizard. |
+| Long wait (>5 min) | L1 confirmation slowness | Normal during peak Sepolia load; the wizard will eventually mark it done. |
+
+<Callout type="warning">
+  **The faucet is shared infrastructure.** Don't script bulk drips. The operator is paying real Sepolia ETH for the L1 deposits; abusing the endpoint depletes the hot wallet and degrades the whole testnet for everyone.
+</Callout>
+
+## Where to file bugs
+
+- Faucet issues: [github.com/Kubudak90/quetzal/issues](https://github.com/Kubudak90/quetzal/issues) with `[faucet]` in the title.
+- Wizard / onboarding issues: same repo, label `[onboarding]`.

@@ -1,0 +1,105 @@
+---
+title: Contract addresses
+---
+
+import { Callout } from 'nextra/components';
+
+# Contract addresses
+
+Current testnet deployment, from [quetzal.config.json](https://github.com/Kubudak90/quetzal/blob/main/quetzal.config.json) (Sub-9.4, 2026-05-29).
+
+<Callout type="warning">
+  Aztec testnet is regularly redeployed by Aztec Labs. Addresses below were live at the time of writing; verify against the canonical [`quetzal.config.json`](https://github.com/Kubudak90/quetzal/blob/main/quetzal.config.json) in the repo before relying on them.
+</Callout>
+
+## Network
+
+| Field | Value |
+|---|---|
+| Network | `alpha-testnet` |
+| Aztec node | `https://rpc.testnet.aztec-labs.com` |
+| L1 chain | Ethereum Sepolia (chain id 11155111) |
+| Epoch length | 10 L2 blocks (~15–25 min) |
+| VK hash (clearing circuit) | `0x2aae33dd4ea01690b07b5a74e293fde5512be5d4ed1853705f95d1628454edaa` |
+| L2 rollup version | `4127419662` |
+
+## Core L2 contracts
+
+| Contract | Address |
+|---|---|
+| **Admin (deploy)** | `0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00` |
+| **Orderbook** | `0x1744f34ce7b612a6c288ac53a7ba08af90c58c435f8b05ae7c4e3dcbded81a38` |
+| **Treasury** | `0x29c6c88866c8f9002f800340ab983f09974873384e5e8ea1ee1fbcc40142418e` |
+| **AggregatorRegistry** | `0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff` |
+
+## Test tokens (L2)
+
+Quetzal-native; admin-mintable; non-bridged.
+
+| Token | Address | Decimals |
+|---|---|---|
+| **tUSDC** | `0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c` | 6 |
+| **tETH** | `0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5` | 18 |
+| **tBTC** | `0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc` | 8 |
+
+## Pools
+
+The testnet runs a 3-pool triangle so [multi-pair routing](/trading/multi-hop) can be exercised end-to-end.
+
+| Pool | Pair | Address |
+|---|---|---|
+| 0 | tUSDC / tETH | `0x0cd94fcc272b8d0a6aefb6158cb9b391efeb2734bd5bc7598a7864f5564949a0` |
+| 1 | tUSDC / tBTC | `0x15d463454956baa3f7ab8e8ef1de94b2805cb8b3f86ca6ceb4206dbdf6f094c6` |
+| 2 | tETH / tBTC | `0x1b0715f1d07a05ed00215ea1234734282b6d709c16aba8c86016fdfdb4efea63` |
+
+Per-pool bucket math is parameterized by:
+
+- `bucketPMinSqrt = 100_000_000_000_000_000` (1e17)
+- `bucketGrowthNum = 1_500_000_000_000_000_000` (1.5e18)
+
+## Bridged tokens (L2)
+
+These are the same `Token` contract in bridge mode. They are credited via [the L1 bridge](/bridge) — `mint_to_*` reverts on these.
+
+| Token | L2 address |
+|---|---|
+| **aUSDC** | `0x19aec530674b3b54977b5216fdcad01d5219346e902f2bcb84653a950dd23369` |
+| **aWETH** | `0x0a6628fb7806e3fbb8c200dbf707b6eddaa29b54550d488f1a1d4aa56f7d65f7` |
+| **aWBTC** | `0x150c2f827a1a6e44d3c17ebb0ea4678dd2115296c201bffead05c6718d56e2b3` |
+
+## L1 contracts (Sepolia)
+
+| Contract | Address |
+|---|---|
+| **Governance Timelock** | `0xef96f67642b285af270784e8f2febc253b0776a4` |
+| **Emergency Timelock** | `0xbd0b919ce971b05ba2199ea729fd6bc821d4e09c` |
+| **USDC bridge** | `0x219ffbb6a504fcd69ae80d1e70db699b48a9936b` |
+| **WETH bridge** | `0x3f5aab58fcef4da7d7de18dad88d83e5b97afe2d` |
+| **wBTC bridge** | `0x6ac87d986f6afcd6d13c51dd114b069ac4e5b5fd` |
+
+Each bridge is UUPS-upgradeable. The implementation behind the proxy is owned by the Governance Timelock (7-day delay) via `GOVERNANCE_ROLE`. Pause is owned by the Emergency Timelock (0-day delay) via `EMERGENCY_PAUSER_ROLE`.
+
+## Aggregator endpoint
+
+| Endpoint | URL |
+|---|---|
+| Health | `http://194.163.136.1:3001/health` |
+| Reveal | `http://194.163.136.1:3001/reveal` |
+
+DNS for `aggregator.quetzaldex.xyz` is pending operator setup; once it's wired, Caddy issues TLS automatically. See `aggregator/ops/RUNBOOK-aggregator.md` for the production runbook.
+
+## Faucet endpoint
+
+| Endpoint | URL |
+|---|---|
+| Drip | `https://faucet.quetzaldex.xyz/api/drip` |
+| Health | `https://faucet.quetzaldex.xyz/api/health` |
+| Metrics | `https://faucet.quetzaldex.xyz/api/metrics` |
+
+## Frontend
+
+| URL | Use |
+|---|---|
+| [aztec-project.vercel.app](https://aztec-project.vercel.app) | Main app (production) |
+| [docs.quetzaldex.xyz](https://docs.quetzaldex.xyz) | This documentation |
+| [github.com/Kubudak90/quetzal](https://github.com/Kubudak90/quetzal) | Source repo |
