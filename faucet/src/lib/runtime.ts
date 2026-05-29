@@ -20,7 +20,7 @@
 import { loadConfig, type FaucetConfig } from "./config.js";
 import { RateLimiter } from "./rate-limit.js";
 import { L1Bridge } from "./l1-bridge.js";
-import { mintToPublic, getOperatorL2Balance, type MintResult } from "./l2-mint.js";
+import { mintToPublic, mintToPrivate, getOperatorL2Balance, type MintResult } from "./l2-mint.js";
 import { AuditLog } from "./audit-log.js";
 
 export interface Runtime {
@@ -57,8 +57,12 @@ export function getRuntime(): Runtime {
 
   const auditLog = new AuditLog(config.auditLogPath);
 
+  // Sub-9.2 P2 fix: mint PRIVATELY so users can place orders without an
+  // extra public→private hop. The orderbook's submit_order reads the maker's
+  // private balance for escrow; minting public left a footgun ("Balance too
+  // low" reverts) for any fresh wizard user.
   const mintTUSDC = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
-    mintToPublic(
+    mintToPrivate(
       {
         nodeUrl: config.l2NodeUrl,
         operatorSecret: config.l2Secret,
@@ -70,7 +74,7 @@ export function getRuntime(): Runtime {
       amount,
     );
   const mintTETH = (to: `0x${string}`, amount: bigint): Promise<MintResult> =>
-    mintToPublic(
+    mintToPrivate(
       {
         nodeUrl: config.l2NodeUrl,
         operatorSecret: config.l2Secret,

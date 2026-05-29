@@ -207,6 +207,38 @@ export async function mintToPublic(
 }
 
 /**
+ * Mint `amount` of the token at `opts.tokenAddress` to `to`'s PRIVATE balance.
+ *
+ * Sub-9.2 P2 fix: the Orderbook's `submit_order` calls
+ * `Token.transfer_private_to_public(maker, orderbook, amount, nonce)` on the
+ * escrow leg — which reads the maker's PRIVATE balance. Fresh users from the
+ * faucet need a private balance to be tradeable. The previous flow minted
+ * publicly + required a wizard-side `transfer_public_to_private` hop,
+ * adding ~30s of user-side proof generation and a footgun.
+ *
+ * `mint_to_private` is a `#[external("private")]` function on Token.nr:
+ *   - it asserts `_validate_minter(msg_sender, minter)` (we're the minter)
+ *   - it directly creates a UintNote in the recipient's PrivateSet
+ *   - **no auth witness needed** since msg_sender IS the minter
+ *
+ * Same signature shape as `mint_to_public`: `(AztecAddressLike, bigint)`.
+ */
+export async function mintToPrivate(
+  opts: L2MintOpts,
+  to: `0x${string}`,
+  amount: bigint,
+): Promise<MintResult> {
+  if (amount <= 0n) {
+    throw new Error(`[l2-mint] amount must be positive (got ${amount})`);
+  }
+  const { operatorAddress, token } = await getToken(opts);
+  const sent = await token.methods
+    .mint_to_private(AztecAddress.fromString(to), amount)
+    .send({ from: operatorAddress });
+  return { txHash: sent.receipt.txHash.toString() };
+}
+
+/**
  * Read the operator's public balance for the token at `opts.tokenAddress`.
  * Used by the drain-detection / Prometheus balance gauge (Task 13).
  *

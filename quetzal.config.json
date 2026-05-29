@@ -3,27 +3,27 @@
   "admin": "0x0524b493a6766243d07f655a26ceb5e71c44af9cf0060c670f49ee7699c92a00",
   "tUSDC": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
   "tETH": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
-  "orderbook": "0x218ad28908f52d430a9d18a4f281e41e0cf3df547d7e2c74012e952c9e0d28cc",
-  "treasury": "0x023b6096335ec3bc7671429c35ba01658ec2245896fd25deae8575fb36c5f12f",
+  "orderbook": "0x235c926bef98747944c60ac8b45e2ef17045ac34f4627a23818111bf34b1aabf",
+  "treasury": "0x07ca439e1e0f7356c78bfb9bb2a6f72a57d5189707f7c393cff717be4bab6b04",
   "aggregatorRegistry": "0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff",
   "pools": [
     {
       "pool_id": 0,
-      "address": "0x12f3300a5ba91cf46591f19d9ef4a6c05f85a5fb49801087f66c5d776f894795",
-      "token_a": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
-      "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+      "address": "0x2bbf89b0737b76de8796a3d2e08fc2fc8f947b1a3e311c4e9b8592c694289a70",
+      "token_a": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
+      "token_b": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c"
     },
     {
       "pool_id": 1,
-      "address": "0x0a474c95cd872fb51cd9123f5e5e46a240a508c1d205b657ba610743650b5521",
+      "address": "0x1ed0b0527b1d33b15193129a733f6446b579035a56201a8062c2278c3695420b",
       "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
       "token_b": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c"
     },
     {
       "pool_id": 2,
-      "address": "0x061679154adf5c7f30ceb7a7efe03a1b2450a787868807e43a204443c563ebc8",
-      "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
-      "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+      "address": "0x202e33e0e6719cbeee1aab4a95aa3c7c15fd9fa89d9f3c9401cc365409fa99c0",
+      "token_a": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
+      "token_b": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc"
     }
   ],
   "bucketPMinSqrt": "100000000000000000",
@@ -70,5 +70,30 @@
     ],
     "notes": "Pre Sub-9 redeploy snapshot (taken 2026-05-28T20:43:26.756Z; replaced due to aztec.js 4.2.1 transpile incompatibility)."
   },
-  "tBTC": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc"
+  "tBTC": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+  "m4_pre_92_legacy": {
+    "orderbook": "0x218ad28908f52d430a9d18a4f281e41e0cf3df547d7e2c74012e952c9e0d28cc",
+    "treasury": "0x023b6096335ec3bc7671429c35ba01658ec2245896fd25deae8575fb36c5f12f",
+    "pools": [
+      {
+        "pool_id": 0,
+        "address": "0x12f3300a5ba91cf46591f19d9ef4a6c05f85a5fb49801087f66c5d776f894795",
+        "token_a": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+        "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+      },
+      {
+        "pool_id": 1,
+        "address": "0x0a474c95cd872fb51cd9123f5e5e46a240a508c1d205b657ba610743650b5521",
+        "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+        "token_b": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c"
+      },
+      {
+        "pool_id": 2,
+        "address": "0x061679154adf5c7f30ceb7a7efe03a1b2450a787868807e43a204443c563ebc8",
+        "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+        "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+      }
+    ],
+    "notes": "Pre Sub-9.2 redeploy snapshot (taken 2026-05-29T03:20:38.587Z; replaced due to Sub-9.1 P3 canon-mismatch on previous orderbook)."
+  }
 }

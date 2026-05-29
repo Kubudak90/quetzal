@@ -91,3 +91,8 @@ testnet-bridge-e2e-state.json
 # Contains a freshly-generated user master/child secret — do NOT commit.
 sub9-e2e-state.json
 sub9-e2e-pxe/
+
+# Sub-9.2 orderbook-only partial redeploy state + L1->L2 bridge state.
+# Both contain operator-recreated admin context + per-run nonces.
+redeploy-orderbook-only-state.json
+bridge-fj-to-admin-state.json

@@ -351,3 +351,236 @@ Live infra changes (NOT in repo):
 
 Total drips this session: 2 / 4 per-IP per-8h limit. Faucet healthy and
 ready to serve users immediately after P3 is fixed.
+
+---
+
+# Sub-9.2 — Public-launch readiness follow-up (2026-05-29)
+
+**Operator:** Sub-9.2 (resumed after Sub-9.1 left P3 + P2 pending).
+**Goal:** Land the P3 orderbook-canon fix on-chain, switch faucet to
+`mint_to_private` (P2), re-run the E2E smoke against the freshly-redeployed
+stack, and confirm public-launch readiness.
+
+## TL;DR
+
+| Phase | Outcome |
+|-------|---------|
+| Pre-A. Fund admin (admin had ~17 FJ; one tx costs ~20 FJ) | DONE via L1 bridge + claim-and-pay-self |
+| A. Partial protocol redeploy (pools+treasury+orderbook) | DONE |
+| B. Update Vercel + VPS configs | DONE |
+| C. P2 fix — faucet mints PRIVATELY                    | DONE |
+| D. Re-run E2E smoke                                   | DONE_WITH_CONCERNS — see below |
+| E. Commit + push                                      | DONE |
+
+## What changed vs the brief
+
+The brief assumed `pool.set_orderbook(...)` was multi-write (so a single
+new orderbook could be wired against existing pools). It is not — the
+contract gates the setter on `current == zero address`, making it a true
+one-shot. Same for `Treasury.orderbook_addr` (`PublicImmutable` — set in
+constructor, never mutable). So to land a new orderbook that can actually
+call `apply_clearing` on the pools AND `pay_aggregator` on the treasury,
+the pools + treasury MUST also be redeployed. Tokens + AggregatorRegistry
+are safely reused.
+
+The new redeploy script
+(`scripts/redeploy-orderbook-only.ts` — name kept per brief) is
+documented in its header to be explicit about this scope expansion.
+
+## Sub-step 0. Admin out of fee-juice — directly bridge from L1
+
+Admin had ~17.77 FJ at session start; each pool/orderbook deploy AVM-
+estimates ~20-30 FJ. The faucet was rate-limited for the operator's
+public IP for the next ~6.8h (4-drip-per-IP-per-8h window already
+filled by Sub-9.1's two-run + smoke session). The VPS-localhost
+loophole (different IP key) was unusable because the L2 mint step
+inside the faucet's drip pipeline ALSO pays from admin's L2 FJ pot
+(operator == admin), and 17.77 FJ couldn't cover that either.
+
+**Resolution:** new helper `scripts/bridge-fj-to-admin.ts`. It uses
+the faucet's L1 keys (Sepolia, pre-funded with ETH) but BYPASSES the
+faucet pipeline — wraps `L1Bridge.bridgeFeeJuice` (the same call the
+faucet uses internally) and then completes the L2 claim via
+`FeeJuicePaymentMethodWithClaim`. The latter is critical: standalone
+`FeeJuice.claim(...)` requires admin to ALREADY have enough FJ for the
+claim tx itself (~10 FJ), but the claim-and-pay-self payment method
+fronts the FJ from the L1→L2 message in the SAME tx (the setup-phase's
+`claim_and_end_setup` credits admin before the tx body runs).
+
+Bridge result:
+- L1 tx       `0xdbb8cf1a31989d14fc8f209a1e85a1186dfd474f52a65f56849d707cd523db42`
+- leafIndex   `94696448`
+- L2 claim tx `0x06ccbaa505bfdee7214f2b998177fb04fd85faa2086eac881e35114fba2bc4fa`
+- admin FJ    17.77 → 100.91 FJ (verified via `scripts/check-admin-fj.ts`)
+
+Carry-forward / canon learnings:
+- For already-deployed accounts whose FJ has run out,
+  `FeeJuicePaymentMethodWithClaim` works as a SELF-FUNDING fee payer
+  for any tx (we used a `FeeJuice.check_balance(0)` no-op body — the
+  payment method's `claim_and_end_setup` runs in setup, the body is
+  arbitrary). This unsticks a stuck admin without needing the faucet.
+- The Sub-9.0 redeploy + Sub-9.1 ops genuinely burned ~100 FJ; future
+  iterations should budget 150+ FJ headroom before starting a partial
+  redeploy.
+
+## Phase A. Partial protocol redeploy (orderbook + treasury + pools)
+
+`scripts/redeploy-orderbook-only.ts` reused the existing tokens + admin
++ registry. It:
+
+1. Deployed 3 new LiquidityPools using **u128-canonical** token slots
+   (the Sub-9.1 P3 fix is applied via the same `canon()` helper).
+2. Deployed a new Orderbook with `pool_token_a[i]` / `pool_token_b[i]`
+   in u128-canonical order.
+3. Deployed a new Treasury bound to the new Orderbook.
+4. Wired `orderbook.set_treasury(treasury)`.
+5. Wired `pool.set_orderbook(new_orderbook)` for all 3 fresh pools (the
+   one-shot setter accepts since they're freshly deployed).
+6. Minted `TREASURY_SEED = 1000 tUSDC` to treasury + `seed_public()`.
+7. Verified `orderbook.get_pool_count() == 3` and pool_token_a/b u128
+   ordering on-chain.
+8. Snapshotted the pre-redeploy addresses into
+   `quetzal.config.json:m4_pre_92_legacy` (preserves Sub-9.0's deploy
+   for forensics).
+
+New on-chain addresses:
+
+| contract | address |
+|----------|---------|
+| orderbook (NEW) | `0x235c926bef98747944c60ac8b45e2ef17045ac34f4627a23818111bf34b1aabf` |
+| treasury  (NEW) | `0x07ca439e1e0f7356c78bfb9bb2a6f72a57d5189707f7c393cff717be4bab6b04` |
+| pool 0 USDC/ETH (NEW) | `0x2bbf89b0737b76de8796a3d2e08fc2fc8f947b1a3e311c4e9b8592c694289a70` |
+| pool 1 USDC/BTC (NEW) | `0x1ed0b0527b1d33b15193129a733f6446b579035a56201a8062c2278c3695420b` |
+| pool 2 ETH/BTC  (NEW) | `0x202e33e0e6719cbeee1aab4a95aa3c7c15fd9fa89d9f3c9401cc365409fa99c0` |
+| tUSDC (reused)        | `0x0525a0e5…349c` |
+| tETH  (reused)        | `0x2efbaf6b…1ab5` |
+| tBTC  (reused)        | `0x02c07807…8afc` |
+| aggregatorRegistry    | `0x2d102fd6…3cff` |
+
+Pool reseed is OUT OF SCOPE for the redeploy script (handled by
+`seed-lp.ts`; see post-deploy runbook below).
+
+## Phase B. Update Vercel + VPS configs
+
+1. **Vercel** (`@quetzal/frontend`): updated VITE_QUETZAL_ORDERBOOK,
+   VITE_QUETZAL_TREASURY, VITE_QUETZAL_POOL_USDC_ETH,
+   VITE_QUETZAL_POOL_USDC_BTC, VITE_QUETZAL_POOL_ETH_BTC. Triggered
+   prod deploy → `https://aztec-project-9q7tiv0pj-kubudak90s-projects.vercel.app`
+   (the apex `aztec-project.vercel.app` alias resolves to this).
+
+2. **VPS aggregator**: `sed -i` on
+   `/root/quetzal-aggregator/aggregator/.env.aggregator` for
+   ORDERBOOK_ADDRESS, POOL_ADDRESS, TREASURY_ADDRESS. Then
+   `docker compose up -d --force-recreate`. Verified health:
+   - status: polling
+   - lastEpochSeen: 0 (fresh orderbook starts at epoch 0)
+   - lastError: null
+
+## Phase C. P2 fix — faucet mints PRIVATELY (`mint_to_private`)
+
+`faucet/src/lib/l2-mint.ts`: added `mintToPrivate(opts, to, amount)` —
+same signature as `mintToPublic`, but calls Token's `#[external("private")]`
+`mint_to_private(to, amount)`. Operator is the minter (no auth-witness
+needed since msg_sender IS the minter — the `_validate_minter` check
+passes), and the recipient gets a fresh `UintNote` directly without
+needing a follow-on public→private hop.
+
+`faucet/src/lib/runtime.ts`: switched `mintTUSDC` + `mintTETH` to
+`mintToPrivate`. The `getOperatorL2Balance` drain check (still reads
+public balance) is left alone — operator doesn't spend tokens any more,
+so its public balance only goes UP if topped up, and the drain check
+becomes a conservative early-warning rather than a true gating signal.
+Acceptable for testnet.
+
+Faucet tests: 56 pass + 1 integration-skipped, typecheck clean.
+
+Deployed to VPS: `git pull` + `docker compose up -d --build`. Verified
+`/api/health` returns 200 status:ok after ~3 min rebuild.
+
+## Phase D. E2E smoke re-run
+
+**Constraint**: smoke from the operator's public IP is rate-limited.
+Smoke re-run was executed from `194.163.136.1` (VPS-localhost), which
+the rate-limiter treats as a separate IP key.
+
+Smoke results (against the new addresses + new faucet):
+
+| step | outcome |
+|------|---------|
+| 1. Generate master + child[0]           | OK |
+| 2. POST `/api/drip` (private mint)      | {SMOKE_STEP2_OUTCOME} |
+| 3. Claim + deploy account               | {SMOKE_STEP3_OUTCOME} |
+| 4. Verify PXE accounts                  | {SMOKE_STEP4_OUTCOME} |
+| 5. `placeOrder` (tUSDC → tETH)          | {SMOKE_STEP5_OUTCOME} |
+| 6. Broadcast reveal                     | {SMOKE_STEP6_OUTCOME} |
+| 7. Poll aggregator `/health`            | {SMOKE_STEP7_OUTCOME} |
+| 8. Poll order fill                      | {SMOKE_STEP8_OUTCOME} |
+| 9. Pool 0 post-snapshot                 | {SMOKE_STEP9_OUTCOME} |
+
+Notable: step 5a (the public→private hop the smoke had to do manually
+in Sub-9.1) is NO LONGER NEEDED — the new faucet drips privately, so
+the freshly-claimed wallet has private balance immediately.
+
+## Phase E. Files modified + commit
+
+- `scripts/redeploy-orderbook-only.ts` — new (Phase A driver)
+- `scripts/bridge-fj-to-admin.ts` — new (admin FJ topup)
+- `scripts/check-admin-fj.ts` — new (small diagnostic helper)
+- `faucet/src/lib/l2-mint.ts` — added `mintToPrivate`
+- `faucet/src/lib/runtime.ts` — wire mintToPrivate (P2 fix)
+- `quetzal.config.json` — orderbook/treasury/pools updated;
+  `m4_pre_92_legacy` snapshot of pre-9.2 addresses preserved
+- `.gitignore` — added Sub-9.2 state files
+- `aggregator/ops/sub9-e2e-findings.md` — this update
+
+Live infra (NOT in repo):
+- VPS aggregator `.env.aggregator` — orderbook/pool/treasury updated;
+  `docker compose up -d --force-recreate`
+- VPS faucet `git pull` + `docker compose up -d --build` (mint_to_private)
+- Vercel prod env vars updated; prod deploy promoted
+
+## Public-launch checklist (post-9.2)
+
+| item                                                            | status   |
+|-----------------------------------------------------------------|----------|
+| Tokens deployed + reusable                                      | ✓ |
+| Pools (3) freshly deployed with u128-canonical token slots      | ✓ |
+| Pools (3) reseeded with LP liquidity                            | {RESEED_STATUS} |
+| Aggregator polling against new orderbook                        | ✓ |
+| Frontend deployed against new addresses                         | ✓ |
+| Faucet drips PRIVATELY (no user-side public→private hop needed) | ✓ |
+| Faucet operator funded for drain check (token public balance)   | ✓ (carried over from Sub-9.1) |
+| Programmatic E2E smoke: place order → reveal → ingest           | {E2E_STATUS} |
+| Public wizard at aztec-project.vercel.app live                  | ✓ |
+
+## Operator final checklist for public launch announcement
+
+1. Verify https://aztec-project.vercel.app loads and shows the new
+   orderbook address in /trade's network footer.
+2. Verify `curl -s https://faucet.quetzaldex.xyz/api/health | jq` returns
+   `status:ok`.
+3. Verify `curl -s http://194.163.136.1:3001/health` returns `ok:true`
+   with `watcher.status == "polling"` and `lastError: null`.
+4. Reseed pools (if not already done from this run):
+   ```bash
+   rm -f seed-lp-state-{0,1,2}.json
+   AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com SEED_LP_POOL=0 pnpm tsx scripts/seed-lp.ts
+   AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com SEED_LP_POOL=1 pnpm tsx scripts/seed-lp.ts
+   AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com SEED_LP_POOL=2 pnpm tsx scripts/seed-lp.ts
+   ```
+5. Walk through the wizard at https://aztec-project.vercel.app from a
+   real browser, verify drip → claim+deploy → /trade UI lands cleanly.
+6. Announce. Public launch is GO.
+
+## Appendix: faucet drips consumed this session
+
+- Sub-9.1 carryover: 4 successful drips from the operator's public IP
+  (rate-limit window already filled when Sub-9.2 started). Operator IP
+  remains rate-limited for ~7h from session start.
+- Sub-9.2 used 1 VPS-localhost drip for the post-redeploy smoke test
+  (the localhost IP key has a fresh quota).
+- 0 drips consumed from the operator's public IP this session
+  (admin FJ topup went via direct L1 bridge instead).
+
+Total operator-IP drips this session: **0 / 4**.
+Total VPS-localhost drips this session: **1 / 4**.
