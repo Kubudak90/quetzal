@@ -93,7 +93,19 @@ const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n;
 // Sub-3 economic parameters (must match the original deploy).
 const TREASURY_SEED   = 1_000_000_000n;       // 1000 tUSDC (covers ~2000 clearings)
 const AGGREGATOR_FEE  = 500_000n;             // 0.5 tUSDC per clearing
-const EPOCH_LENGTH    = 100;
+// EPOCH_LENGTH: number of L2 blocks per epoch. Parameterizable via env so we can
+// tune UX without forking the script. Default 10 (post Sub-9.4): testnet block
+// rate ~95-110s/block → ~15-min epochs → ~8-min average user wait. Sub-9.2
+// originally used 100 (~2.5h epochs) which proved unusable for public UX.
+const EPOCH_LENGTH    = (() => {
+  const raw = process.env.EPOCH_LENGTH;
+  if (raw === undefined || raw === "") return 10;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`EPOCH_LENGTH env must be a positive integer, got: ${raw}`);
+  }
+  return n;
+})();
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -178,6 +190,7 @@ async function main(): Promise<void> {
   const state  = loadState();
 
   console.log(`[redeploy-ob] node=${NODE_URL}`);
+  console.log(`[redeploy-ob] EPOCH_LENGTH=${EPOCH_LENGTH}`);
   console.log(`[redeploy-ob] resuming from step ${state.step}`);
   console.log(`[redeploy-ob] reusing tokens:`);
   console.log(`  tUSDC:    ${config.tUSDC}`);
@@ -417,15 +430,26 @@ async function main(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const existing: any = JSON.parse(readFileSync(CONFIG, "utf8"));
 
-  // Snapshot the about-to-be-replaced trio into m4_legacy if not already.
-  if (existing.orderbook !== state.orderbook && !existing.m4_pre_92_legacy) {
-    existing.m4_pre_92_legacy = {
+  // Snapshot the about-to-be-replaced trio into a versioned legacy key, picking
+  // the next unused slot so successive redeploys (9.2 → 9.4 → future) all
+  // preserve history without overwriting.
+  if (existing.orderbook !== state.orderbook) {
+    const legacyKey = ((): string => {
+      // Sub-9.4: the brief calls for `m4_postSub92_legacy`. Prefer that if free,
+      // otherwise append a timestamp to avoid clobbering.
+      if (!existing.m4_postSub92_legacy) return "m4_postSub92_legacy";
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return `m4_legacy_${stamp}`;
+    })();
+    existing[legacyKey] = {
       orderbook: existing.orderbook,
       treasury:  existing.treasury,
       pools:     existing.pools,
-      notes: `Pre Sub-9.2 redeploy snapshot (taken ${new Date().toISOString()}; replaced due to Sub-9.1 P3 canon-mismatch on previous orderbook).`,
+      epoch_length_when_deployed: existing.epoch_length ?? null,
+      notes: `Legacy snapshot (taken ${new Date().toISOString()}; replaced by EPOCH_LENGTH=${EPOCH_LENGTH} redeploy).`,
     };
   }
+  existing.epoch_length = EPOCH_LENGTH;
 
   existing.orderbook = state.orderbook!;
   existing.treasury  = state.treasury!;
@@ -481,6 +505,7 @@ async function main(): Promise<void> {
   console.log(`  pool 1 (NEW):       ${state.pool_usdc_btc!.address}`);
   console.log(`  pool 2 (NEW):       ${state.pool_eth_btc!.address}`);
   console.log(`  vk_hash:            ${state.vkHash}`);
+  console.log(`  epoch_length:       ${EPOCH_LENGTH}`);
 
   await wallet.stop();
 }
