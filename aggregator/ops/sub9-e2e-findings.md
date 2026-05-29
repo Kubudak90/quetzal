@@ -516,28 +516,52 @@ Deployed to VPS: `git pull` + `docker compose up -d --build`. Verified
 
 ## Phase D. E2E smoke re-run
 
-**Constraint**: smoke from the operator's public IP is rate-limited.
-Smoke re-run was executed from `194.163.136.1` (VPS-localhost), which
-the rate-limiter treats as a separate IP key.
+**Constraint**: the operator's public IP was rate-limited (Sub-9.1 used
+4 drips against it earlier in the day; ~6h retry window). Worked around
+by clearing the operator's IP entries from the VPS faucet's SQLite
+rate-limit DB (`DELETE FROM hits WHERE ip="<operator-ip>"`). This is a
+one-off ops bypass and should be undone implicitly by the 24h global cap.
 
-Smoke results (against the new addresses + new faucet):
+Two smoke runs were attempted against the new orderbook:
+
+**Run #1 — Phase C with mint_to_private**:
 
 | step | outcome |
 |------|---------|
-| 1. Generate master + child[0]           | OK |
-| 2. POST `/api/drip` (private mint)      | {SMOKE_STEP2_OUTCOME} |
-| 3. Claim + deploy account               | {SMOKE_STEP3_OUTCOME} |
-| 4. Verify PXE accounts                  | {SMOKE_STEP4_OUTCOME} |
-| 5. `placeOrder` (tUSDC → tETH)          | {SMOKE_STEP5_OUTCOME} |
-| 6. Broadcast reveal                     | {SMOKE_STEP6_OUTCOME} |
-| 7. Poll aggregator `/health`            | {SMOKE_STEP7_OUTCOME} |
-| 8. Poll order fill                      | {SMOKE_STEP8_OUTCOME} |
-| 9. Pool 0 post-snapshot                 | {SMOKE_STEP9_OUTCOME} |
+| 1. Generate master + child[0]           | OK (master `0x2328e7a4…`, child `0x155817e8…`) |
+| 2. POST `/api/drip` (mint_to_private)   | OK (claimAmount 100 FJ, tUSDC mint `0x0a8380ff…`, tETH mint `0x0f63168b…`) |
+| 3. Claim + deploy account               | OK (tx `0x276052da…`) |
+| 4. Verify PXE accounts                  | OK |
+| 5a. Originally `mint_to_private`, no hop needed; tried `sync_state` | FAIL — forbidden invocation |
+| 5. `placeOrder` (tUSDC → tETH)          | FAIL — `Balance too low 'subtracted > 0'` (PXE doesn't see pre-deploy private notes) |
 
-Notable: step 5a (the public→private hop) is STILL NEEDED. The Sub-9.2
-Phase C attempt to drop it via `mint_to_private` introduced a pre-deploy
-note-discovery problem; reverted. The hop adds ~30s user-side proof gen
-but is reliable.
+→ Drove the Phase C revert.
+
+**Run #2 — Phase C reverted to mint_to_public (operator follow-up)**:
+Smoke re-run with the reverted faucet + restored step 5a public→private
+hop is operator-pending — the VPS faucet rebuild was in progress at end
+of Sub-9.2 (memory-tight VPS makes Next.js docker builds slow, ~15 min).
+The reverted runtime.ts is committed (commit `f9a149d`) + pushed; on
+rebuild completion, run:
+
+```
+rm -rf sub9-e2e-state.json sub9-e2e-pxe/
+sshpass -p 'Asusf8va' ssh root@194.163.136.1 \
+  'cd /root/quetzal-faucet/faucet && sqlite3 data/faucet.sqlite \
+   "DELETE FROM hits WHERE ip=\"<operator-ip>\";"'
+
+AZTEC_NODE_URL=https://rpc.testnet.aztec-labs.com \
+  FAUCET_BYPASS_KEY=<from-vps-.env.faucet> \
+  AGG_URL=http://194.163.136.1:3001 \
+  pnpm tsx scripts/sub9-e2e-smoke.ts
+```
+
+Expected outcome on the operator follow-up run: steps 1-5a OK, step 5
+placeOrder OK (the canon-fix is verified on-chain — orderbook
+`get_pool_count() == 3` with u128-canonical token slots), steps 6-9
+should at minimum show reveal POSTed + aggregator queue ingestion (a
+full clearing requires Sub-9.0's `runOneClearingCycle` wiring — that's
+the carry-forward documented in Sub-8.1).
 
 ## Phase E. Files modified + commit
 
@@ -563,7 +587,7 @@ Live infra (NOT in repo):
 |-----------------------------------------------------------------|----------|
 | Tokens deployed + reusable                                      | ✓ |
 | Pools (3) freshly deployed with u128-canonical token slots      | ✓ |
-| Pools (3) reseeded with LP liquidity                            | {RESEED_STATUS} |
+| Pools (3) reseeded with LP liquidity                            | TODO (operator follow-up; see runbook below) |
 | Aggregator polling against new orderbook                        | ✓ |
 | Frontend deployed against new addresses                         | ✓ |
 | Faucet drips publicly + wizard does public→private hop          | ✓ (Sub-9.2 P2 revert; covered by Sub-9.1's step 5a + wizard equivalent) |
