@@ -775,3 +775,149 @@ gating sub-project for true end-to-end public launch.
 
 → Sub-9.4 deploy itself is DONE_WITH_CONCERNS: infra ready, but UX path
 still depends on a Sub-9.5 SDK fix.
+
+---
+
+## Sub-9.7 — Nethermind-faucet variant of the smoke (2026-05-29)
+
+**Status: BLOCKED** — surfaces a deeper infrastructure issue than Sub-9.1/9.4
+ever could.
+
+### Why this variant exists
+
+Our faucet at `https://faucet.quetzaldex.xyz` has been returning HTTP 500 on
+`/api/drip`. Inspection of the stack trace pointed to the deposit-to-aztec
+flow's L1 RPC call (`getTimestampForSlot`) returning HTTP 429 from
+`empty-dark-film.ethereum-sepolia.quiknode.pro` — the L1 RPC endpoint that
+the Aztec Labs PXE/node has hard-wired (`viem@2.38.2` per error, not our
+viem 2.50.4 → upstream). That's not OUR Quicknode key; it's the one baked
+into the Aztec Labs sandbox infrastructure.
+
+Nethermind operates a parallel public Aztec faucet at
+`https://aztec-faucet.dev-nethermind.xyz` that uses different upstream L1
+RPC and is alive. Theory: route the user's drip through Nethermind, then
+have the admin (our minter for tUSDC + tETH) directly mint protocol tokens
+to the new user's public balance, then continue the normal smoke.
+
+### What was built
+
+- `scripts/sub9-e2e-smoke-nethermind.ts` — clone of `scripts/sub9-e2e-smoke.ts`
+  with three deltas:
+  1. Step 2 POSTs `{address, asset:"fee-juice"}` to Nethermind instead of
+     `{address, captchaToken}` to our faucet.
+  2. NEW step 2.5: admin (from `testnet-m1-state.json`) connects via
+     `./testnet-m4-pxe`, then calls `Token.mint_to_public(user, …)` for
+     tUSDC (5K atomic) and tETH (2 atomic) so the user has protocol-token
+     public balance before the public→private hop.
+  3. Deploy retry regex broadened to catch HTTP 429 / "Too Many Requests"
+     and back off 90 s (vs 30 s for other retryables).
+- New gitignore entries for `sub9-e2e-smoke-nethermind-state.json` and
+  `sub9-e2e-smoke-nethermind-pxe/`.
+
+### What happened on the run
+
+| Step | Outcome    | Detail |
+|------|------------|--------|
+| 1    | OK         | Fresh master+child generated (child = `0x0327c37c…f04cc`) |
+| 2    | OK         | Nethermind `/api/drip` returned HTTP 200 + valid claimData (claimAmount = 100 FJ, leafIndex = 95092738, claimSecret prefix `0x0c438d…`) |
+| 3    | **BLOCKED** | Account deploy timed out after **30 minutes / 21 retry attempts**, every single one rejected with HTTP 429 from the Aztec Labs Quicknode |
+
+#### Step 2: confirmation that Nethermind works around the faucet block
+
+Drip succeeded on the second attempt (first 429ed on a then-recent test
+request from the brief author). The `claimData` shape exactly matches our
+own faucet's, so `FeeJuicePaymentMethodWithClaim` consumes it without code
+changes. Cached in `sub9-e2e-smoke-nethermind-state.json` and reused on
+the resume.
+
+Important nuance: Nethermind's rate limit is **per L2 address**, not per
+IP. A fresh child address gets a fresh drip window even from the same
+client. The `retryAfter` field in the 429 body suggested 30 s but in
+practice the cooldown for a previously-drained address was ~8 hours
+(`retryAfter: 28674777` ms observed on re-probe).
+
+#### Step 3: the deeper infrastructure block
+
+Every deploy attempt sent by the user's PXE hits this:
+
+```
+HTTP request failed.
+Status: 429
+URL: https://empty-dark-film.ethereum-sepolia.quiknode.pro/d8bec71ef5b549e7337d8a140e0d4696132ddf11
+Request body: {"method":"eth_call","params":[{"data":"0xd03b2bae00018c7e",
+"to":"0xf6d0d42ace06829becb78c74f49879528fc632c1"},"latest"]}
+Raw Call Arguments:
+  to:    0xf6d0d42ace06829becb78c74f49879528fc632c1
+  function:  getTimestampForSlot(uint256 _slotNumber)
+  args:                         (101502)
+Version: viem@2.38.2
+```
+
+This is **the same QuickNode endpoint** that breaks our faucet. The viem
+version (2.38.2) does not match our project's pinned viem (2.50.4) — it
+comes from the Aztec Labs node (the one our `AZTEC_NODE_URL` points at)
+which uses an embedded viem when servicing PXE-side L1 reads. So the
+moment the user's deploy flow triggers any L1 read (timestamp, message
+membership proof, etc.) it routes through that throttled tier.
+
+**Critical implication**: routing the faucet around Quicknode via
+Nethermind does NOT unblock public users, because the user's own PXE
+will still hit the same throttled L1 tier the instant it tries to claim
++ deploy. The faucet is one tendril of a larger problem; the user's PXE
+is another, and we cannot route around it without either (a) running our
+own Aztec node with a non-Quicknode L1 RPC, or (b) waiting for Aztec
+Labs ops to rotate / upgrade their RPC tier.
+
+#### Retry pattern (all 21 attempts hit 429)
+
+```
+elapsed  0s →  90s →  181s →  272s →  363s →  454s →  545s →  636s →
+       727s →  818s →  908s →  999s → 1090s → 1181s → 1272s → 1363s →
+      1454s → 1544s → 1635s → 1726s → 1817s (timeout)
+```
+
+Sustained throttling across 30 minutes confirms this is not a transient
+hot-spot but a saturated tier.
+
+### Steps not reached (because deploy is gating)
+
+- 4: PXE accounts list verify
+- 2.5: admin direct-mint tUSDC + tETH (code present, never executed)
+- 5a: public→private hop
+- 5: placeOrder (the **first real test of Sub-9.6 SDK fix** — non-zero
+  txHash / epoch / blockNumber)
+- 6: reveal broadcast
+- 7-9: aggregator health poll, order fill poll, pool delta
+
+### Files added in Sub-9.7
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `scripts/sub9-e2e-smoke-nethermind.ts` | 596 | Nethermind-faucet variant + admin direct-mint step |
+| `.gitignore` (delta)                   | +5  | Gitignore new state file + per-run PXE |
+| `aggregator/ops/sub9-e2e-findings.md` (delta) | this section | This writeup |
+
+Carry-forward when Aztec Labs unblocks Quicknode (or we switch to a
+self-hosted node): re-run `pnpm tsx scripts/sub9-e2e-smoke-nethermind.ts`
+and the script will resume from the cached step 2 (claim valid for ~48h
+window) → step 3 deploy → step 2.5 admin mint → step 5 placeOrder →
+through to the fill check. This is the unblocked path validation for
+Sub-9.6's SDK fix.
+
+### Verdict
+
+**Sub-9.7 status: BLOCKED on Aztec Labs infrastructure (Quicknode L1 RPC
+rate-limit exhausted)**. Phase A (script) DONE; Phase B (execution)
+blocked at deploy step; Phase C (commit + docs) DONE. The Nethermind
+faucet variant **proves the workaround works for the faucet** itself
+(step 2 OK), but **also proves the workaround is insufficient** because
+the same Quicknode tier blocks the user's own L1 reads during deploy.
+
+Public-launch is BLOCKED on either:
+- (Easiest)  Aztec Labs rotating / upgrading their Sepolia RPC tier.
+- (Hardest)  Quetzal running its own Aztec node with our own L1 RPC.
+
+The middle option — `Sub-9.8`-style instrumentation to detect when the
+Quicknode tier recovers + auto-resume — is a candidate next sub-project
+but doesn't change the underlying availability story.
+

@@ -92,6 +92,11 @@ testnet-bridge-e2e-state.json
 sub9-e2e-state.json
 sub9-e2e-pxe/
 
+# Sub-9.7 Nethermind-faucet variant of the smoke (routes around Aztec Labs
+# node L1 RPC throttling). Same per-run secret + PXE state semantics.
+sub9-e2e-smoke-nethermind-state.json
+sub9-e2e-smoke-nethermind-pxe/
+
 # Sub-9.2 orderbook-only partial redeploy state + L1->L2 bridge state.
 # Both contain operator-recreated admin context + per-run nonces.
 redeploy-orderbook-only-state.json
