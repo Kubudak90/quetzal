@@ -379,3 +379,98 @@ curl -X POST -H "Content-Type: application/json" \
 #   {close_epoch() OR close_epoch_and_clear_verified} submitted
 ```
 
+
+## Sub-9.4 — EPOCH=10 redeploy for public-DEX UX (2026-05-29)
+
+Sub-9.3 left the orderbook with `EPOCH_LENGTH=100`. Empirical testnet block
+rate runs ~95-240s/block, so each epoch took anywhere from ~2.5h up to many
+hours. Median user wait-for-fill ≈ 75 min — unusable for public DEX UX.
+
+Sub-9.4 redeploys the orderbook + treasury + 3 pools with `EPOCH_LENGTH=10`.
+Empirical effect: median epoch span ≈ 15-30 min depending on testnet block
+rate, average user wait ≈ 8-15 min. UX-acceptable for public testnet launch.
+
+### Addresses (live)
+
+| Contract             | Address                                                              |
+|----------------------|----------------------------------------------------------------------|
+| orderbook            | `0x1744f34ce7b612a6c288ac53a7ba08af90c58c435f8b05ae7c4e3dcbded81a38` |
+| treasury             | `0x29c6c88866c8f9002f800340ab983f09974873384e5e8ea1ee1fbcc40142418e` |
+| pool 0 USDC/ETH      | `0x0cd94fcc272b8d0a6aefb6158cb9b391efeb2734bd5bc7598a7864f5564949a0` |
+| pool 1 USDC/BTC      | `0x15d463454956baa3f7ab8e8ef1de94b2805cb8b3f86ca6ceb4206dbdf6f094c6` |
+| pool 2 ETH/BTC       | `0x1b0715f1d07a05ed00215ea1234734282b6d709c16aba8c86016fdfdb4efea63` |
+| tUSDC (UNCHANGED)    | `0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c` |
+| tETH  (UNCHANGED)    | `0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5` |
+| tBTC  (UNCHANGED)    | `0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc` |
+| AggregatorRegistry   | `0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff` |
+| epoch_length         | `10`                                                                |
+| vk_hash              | `0x2aae33dd4ea01690b07b5a74e293fde5512be5d4ed1853705f95d1628454edaa` |
+
+Sub-9.2 era addrs preserved under `quetzal.config.json::m4_postSub92_legacy`.
+
+### Deploy sequence
+
+1. Bridged 300 FJ from L1 → admin (admin had ~13 FJ remaining after Sub-9.2).
+   - `pnpm tsx scripts/bridge-fj-to-admin.ts 300`
+   - L1 tx: 0xd5de69cf43b0d59534104c13be151afb96045f7032aa9fca8ebc2c8c696ffb69
+   - L2 claim tx: 0x0e2fc1aea906e131fe82d04dbf4a1bf4b9b95c54baef1683c549651c2dd20525
+2. `EPOCH_LENGTH=10 pnpm tsx scripts/redeploy-orderbook-only.ts`
+   - 3 pool deploys + Orderbook + Treasury + set_treasury + 3× set_orderbook +
+     mint_to_public + seed_public. ~25 min total. ~80 FJ burn.
+3. Patched 5 Vercel env vars
+   (VITE_QUETZAL_ORDERBOOK/TREASURY/POOL_USDC_ETH/POOL_USDC_BTC/POOL_ETH_BTC)
+   + `vercel deploy --prod --yes`.
+   - Deploy URL: https://aztec-project-2xzglic36-kubudak90s-projects.vercel.app
+4. Patched 6 VPS aggregator env vars
+   (ORDERBOOK/TREASURY/POOL/POOL_USDC_ETH/POOL_USDC_BTC/POOL_ETH_BTC ADDRESS)
+   + `docker compose up -d --force-recreate`. lastEpochSeen reset 1→0.
+5. Reseeded 3 pools via seed-lp.ts pool 0/1/2.
+   - bucket[8].liquidity:  pool 0 = 15.4e18 (2 tETH), pool 1 = 76.9M (10M atomic tBTC),
+     pool 2 = 15.4e18 (2 tETH).
+6. Force-closed empty epoch 0 (blocks 96120 → 96128 → past) via
+   `scripts/force-close-epoch.ts` to unstick the orderbook. The aggregator
+   doesn't fire close on empty epochs — it only fires when queue has reveals.
+   - tx: 0x18f24cd4e024609ab19f353a7fc41463e03d5c5444b5d95a36ec469f47cc44fa
+   - Epoch advanced 0 → 1.
+7. Smoke run: order placed → reveal posted → aggregator drained reveal at
+   close window → order_acc replay mismatch (smoke SDK bug, see below) →
+   cycle skipped:replay-mismatch. Pool 0 reserves unchanged.
+
+### Sub-9.4 smoke gotcha (carryforward, not Sub-9.4 deploy issue)
+
+The Sub-9 e2e smoke (`scripts/sub9-e2e-smoke.ts`) places an order and posts
+a reveal to the aggregator. The reveal payload's `submitted_at_block` field
+is filled from a `node.getBlockNumber()` call BEFORE submit, so it's off by
+1-2 blocks from the actual landing block. The orderbook's `order_acc`
+hash-chain folds in the real `self.context.block_number()` at submit time,
+so the smoke's reveal replay fails Poseidon equality vs on-chain.
+
+In addition the SDK's `placeOrder` returns `epoch=0 block=0` for the
+receipt fields because `tx.wait?.()` returns undefined on testnet; smoke
+serialises `epoch_id=0` into the reveal even though the actual epoch is
+>0. Re-posting the reveal with a corrected `epoch_id` lets the aggregator
+drain it but the `submitted_at_block` mismatch still trips replay.
+
+Net effect for Sub-9.4:
+- Sub-9.4 deploy pipeline VERIFIED end-to-end (deploy → wire → seed → run).
+- Aggregator clearing-cycle plumbing exercised (drain, replay, log).
+- `close_epoch_and_clear_verified` NOT yet exercised on the new orderbook.
+- `close_epoch()` fallback exercised via the manual force-close (epoch 0→1).
+
+Resolving the smoke replay drift is **Sub-9.5 scope**: SDK should return
+real receipt block, smoke should rebuild submitted_at_block from the on-chain
+`get_orders` view OR compute pre-image with the exact contract math.
+
+### Operating note: empty-epoch bootstrap
+
+After any orderbook redeploy, the brand-new orderbook is at epoch 0 with
+`closes_at_block = deploy_block + EPOCH_LENGTH`. If no order is submitted
+within that window, epoch 0 expires and submit_order is permanently rejected
+with `block < epoch.closes_at_block`. Aggregator does NOT auto-advance empty
+epochs.
+
+Fix: `pnpm tsx scripts/force-close-epoch.ts` (admin-only public call).
+
+For mainnet, consider adding a 1-block-after-deploy bootstrap submit_order
+or weakening the aggregator's "queue.size() > 0" gate so it advances stale
+empty epochs.

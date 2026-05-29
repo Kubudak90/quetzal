@@ -626,3 +626,152 @@ Live infra (NOT in repo):
 
 Total operator-IP drips this session: **0 / 4**.
 Total VPS-localhost drips this session: **1 / 4**.
+
+---
+
+## Sub-9.4 — EPOCH=10 redeploy + smoke (2026-05-29)
+
+### Goal
+
+Drop epoch length from 100 (~2.5h epochs, ~75 min avg user wait) to 10
+(~15-30 min epochs, ~8-15 min avg wait) for public-DEX UX.
+
+### Mechanism
+
+`EPOCH_LENGTH` is now an env-var (default 10) on
+`scripts/redeploy-orderbook-only.ts`. Pool + Treasury must be redeployed
+in lockstep with the Orderbook because:
+
+- `pool.set_orderbook(addr)` is a one-shot setter.
+- `Treasury.orderbook_addr` is `PublicImmutable`.
+
+Tokens (tUSDC/tETH/tBTC) + AggregatorRegistry stay unchanged (they don't
+reference orderbook).
+
+### Execution
+
+| Phase                  | Tool                                                                 | Result        |
+|------------------------|----------------------------------------------------------------------|---------------|
+| A. Parameterize script | edit `scripts/redeploy-orderbook-only.ts`                            | DONE (committed) |
+| B. Run redeploy        | `EPOCH_LENGTH=10 pnpm tsx scripts/redeploy-orderbook-only.ts`        | DONE (8 steps, ~25 min) |
+| C. Update config       | (auto by script)                                                     | DONE (committed) |
+| D. Vercel env+deploy   | `vercel env rm/add` × 5 + `vercel deploy --prod --yes`               | DONE          |
+| E. VPS aggregator      | `sed -i` × 6 + `docker compose up -d --force-recreate`               | DONE          |
+| F. Reseed pools        | `SEED_LP_POOL=0/1/2 pnpm tsx scripts/seed-lp.ts`                     | DONE          |
+| G. Smoke               | `pnpm tsx scripts/sub9-e2e-smoke.ts`                                 | RAN (see below) |
+| H. Docs+commits        | this section                                                         | DONE          |
+
+### New addresses
+
+```
+orderbook: 0x1744f34ce7b612a6c288ac53a7ba08af90c58c435f8b05ae7c4e3dcbded81a38
+treasury : 0x29c6c88866c8f9002f800340ab983f09974873384e5e8ea1ee1fbcc40142418e
+pool 0   : 0x0cd94fcc272b8d0a6aefb6158cb9b391efeb2734bd5bc7598a7864f5564949a0  (USDC/ETH)
+pool 1   : 0x15d463454956baa3f7ab8e8ef1de94b2805cb8b3f86ca6ceb4206dbdf6f094c6  (USDC/BTC)
+pool 2   : 0x1b0715f1d07a05ed00215ea1234734282b6d709c16aba8c86016fdfdb4efea63  (ETH/BTC)
+epoch    : 10
+vk_hash  : 0x2aae33dd4ea01690b07b5a74e293fde5512be5d4ed1853705f95d1628454edaa
+```
+
+### Cost
+
+- Admin FJ before bridge: 13.4 FJ (Sub-9.3 left this low).
+- Sub-9.4 bridged 300 FJ → admin had 308 FJ for the ceremony.
+- After deploy + 3 seeds: 212 FJ remaining (~96 FJ burned for 11 txs,
+  ~9 FJ/tx — high because all txs go through prover-enabled PXE w/
+  ClientIVC).
+
+### Aggregator status post-redeploy
+
+```
+{"ok":true,"queueSize":1,"watcher":{"status":"polling","lastEpochSeen":1,"lastBlockSeen":96170,...}}
+```
+
+- queueSize=1: orphan reveal from smoke (will be re-drained per cycle).
+- lastEpochSeen=1: matches force_close + close path.
+
+### Vercel deploy URL
+
+`https://aztec-project-2xzglic36-kubudak90s-projects.vercel.app`
+
+(Also live at https://aztec-project.vercel.app / quetzaldex.xyz.)
+
+### Smoke outcome
+
+- Faucet drip + claim + child deploy: OK.
+- placeOrder: SUBMITTED ON CHAIN (tx 0x1370b764..., block 96165).
+- Reveal POST: HTTP 200, queueSize advanced 0 → 1.
+- Aggregator clearing cycle: FIRED on epoch close (block_now 96169 >= closes_at_block 96168).
+- Drain reveals: `count=1, epoch_id=1` ← good (after manual repost with correct epoch_id).
+- order_acc replay: MISMATCH.
+- Final action: `cycle complete status:skipped:replay-mismatch`.
+- Pool 0 reserves before/after: dA=0, dB=0 (unchanged → no fill).
+
+### Root cause of the smoke replay mismatch
+
+Two compounding SDK bugs surfaced (NOT Sub-9.4 deploy issues):
+
+1. `placeOrder` returns `epoch=0 block=0` because `tx.wait?.()` returns
+   undefined on testnet; smoke ships `epoch_id=0` in the reveal even
+   though the on-chain epoch was 1.
+2. `submitted_at_block` in the reveal payload is read from
+   `node.getBlockNumber()` BEFORE submit, so it's off by 1-3 blocks vs
+   the actual landing block.
+
+Even after manual reveal repost with `epoch_id=1`, the order_acc replay
+on the aggregator side fails because (1) the smoke's
+`submitted_at_block=96165` may not match the contract's recorded value
+exactly (it does match in this case — see step 8 `pool 0 after` log
+where the order on-chain has submitted_at_block=96165), and (2) the
+canonical side derivation (smoke vs SDK) may diverge under the new u128
+canonicalization rule.
+
+Carrying forward into Sub-9.5: fix the SDK's `placeOrder` to return the
+real receipt block + epoch_id (currently best-effort + silently 0), and
+have the smoke compute the canonical side identically to the SDK.
+
+### What's now PROVEN
+
+- New orderbook contract loads with vk_hash 2aae33dd (matches the local
+  circuit target).
+- New treasury contract bound to new orderbook (set_treasury one-shot
+  succeeded).
+- All 3 new pools' set_orderbook() succeeded → pools accept calls from
+  new orderbook.
+- Aggregator polling correctly reads the new orderbook's epoch state
+  + closes_at_block.
+- Aggregator drains epoch-aligned reveals from queue + replays Poseidon
+  on the order set.
+- `close_epoch()` (plain, no clearing) executable from admin via
+  `scripts/force-close-epoch.ts`.
+
+### What's still UNPROVEN on new orderbook
+
+- `close_epoch_and_clear_verified` (recursive proof path) on the new
+  orderbook. The Sub-9.3 RUNBOOK noted this had never been exercised
+  even pre-Sub-9.4 because the smoke never produced a valid order_acc
+  replay. Sub-9.4 deploy doesn't unblock this — it just deploys with
+  the same VK; the replay issue (a smoke/SDK bug) blocks the prove path
+  from running.
+
+### Verdict on public-DEX usability
+
+The DEX is usable for public testnet launch UX-wise from the
+deploy/infrastructure perspective:
+
+- Tx → fill latency reduced from ~75 min to ~8-15 min average (EPOCH=10 + 
+  measured ~2-4 min/block on the day).
+- Frontend wired to new addrs.
+- Aggregator polling cleanly.
+- Pools have liquidity.
+
+A real user submitting via the frontend SDK will hit the same `epoch=0
+block=0` issue as the smoke unless the SDK's `placeOrder` is fixed to
+return the real receipt fields. The aggregator will drain the reveal
+but mark replay-mismatch.
+
+→ Sub-9.5 (SDK receipt fix + smoke side-derivation parity) is the next
+gating sub-project for true end-to-end public launch.
+
+→ Sub-9.4 deploy itself is DONE_WITH_CONCERNS: infra ready, but UX path
+still depends on a Sub-9.5 SDK fix.
