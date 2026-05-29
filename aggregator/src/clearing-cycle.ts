@@ -293,7 +293,28 @@ export async function runOneClearingCycleMP(
 
     const validated = await validateReveals(reveals, epoch.order_acc);
     if (validated.length === 0 && epoch.order_count > 0) {
-      log("warn", "order_acc replay mismatch — reveals tampered or incomplete");
+      // Diagnostic: replay independently to surface the mismatched acc.
+      const { computeCi, replayOrderAcc } = await import("./validate.js");
+      const cis = [];
+      for (const r of reveals) {
+        try {
+          cis.push(await computeCi({
+            owner: BigInt(r.owner),
+            side: r.side,
+            amount_in: BigInt(r.amount_in),
+            limit_price: BigInt(r.limit_price),
+            order_nonce: BigInt(r.order_nonce),
+            submitted_at_block: r.submitted_at_block,
+          }));
+        } catch { /* ignore parse */ }
+      }
+      const replayed = cis.length > 0 ? (await replayOrderAcc(cis)).toString() : "(empty)";
+      log("warn", "order_acc replay mismatch — reveals tampered or incomplete", {
+        on_chain_order_acc: epoch.order_acc.toString(),
+        on_chain_order_count: epoch.order_count,
+        replayed_order_acc: replayed,
+        reveals_in_queue: reveals.length,
+      });
       return "skipped:replay-mismatch";
     }
     log("info", "reveals validated", { count: validated.length });
