@@ -1,7 +1,7 @@
 // sdk/src/wallet/schnorr.ts
 // Mirrors the pattern used in cli/src/wallet.ts:openCli — EmbeddedWallet.create
 // with ephemeral storage, then createSchnorrAccount with the caller's secret key.
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fr, Fq } from "@aztec/aztec.js/fields";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import type { WalletAdapter } from "./adapter.js";
 import { ConfigError } from "../errors.js";
@@ -11,6 +11,19 @@ export interface SchnorrSecretAdapterOptions {
   secret: string;
   /** Aztec node JSON-RPC URL, e.g. http://localhost:8080 */
   nodeUrl: string;
+  /**
+   * Sub-9.3: optional 0x-prefixed 32-byte hex Fr salt. Default Fr.ZERO.
+   * Mainly used to reach a pre-deployed account whose addr depends on the
+   * tuple (secret, salt, signingKey) — the aggregator reuses admin's
+   * already-funded wallet.
+   */
+  salt?: string;
+  /**
+   * Sub-9.3: optional 0x-prefixed 32-byte hex Fq signing key. Default
+   * derived from secret. Pass this when reaching a pre-deployed wallet
+   * whose signingKey was sampled independently.
+   */
+  signingKey?: string;
 }
 
 /**
@@ -37,9 +50,12 @@ export class SchnorrSecretAdapter implements WalletAdapter {
       ephemeral: true,
       pxe: { proverEnabled: false },
     });
+    const salt = this.opts.salt ? Fr.fromString(this.opts.salt) : Fr.ZERO;
+    const signingKey = this.opts.signingKey ? Fq.fromString(this.opts.signingKey) : undefined;
     const accountManager = await wallet.createSchnorrAccount(
       Fr.fromString(this.opts.secret),
-      Fr.ZERO,
+      salt,
+      signingKey,
     );
     const account = await accountManager.getAccount();
     this.embeddedWallet = wallet;

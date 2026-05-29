@@ -26,7 +26,7 @@ import { PoolsApi } from "./pools.js";
  * - "aztec-wallet" — browser extension (window.aztec RPC provider)
  */
 export type AccountSpec =
-  | { type: "schnorr"; secret: string }
+  | { type: "schnorr"; secret: string; salt?: string; signingKey?: string }
   | { type: "test-account"; accountIndex: number }
   | { type: "external-pxe"; wallet: Wallet; address: AztecAddress }
   | { type: "aztec-wallet"; provider: AztecBrowserProvider };
@@ -117,6 +117,8 @@ export class QuetzalClient {
         adapter = new SchnorrSecretAdapter({
           secret: opts.account.secret,
           nodeUrl,
+          salt: opts.account.salt,
+          signingKey: opts.account.signingKey,
         });
         break;
       case "test-account":

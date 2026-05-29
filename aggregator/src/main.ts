@@ -184,7 +184,15 @@ async function startEpochWatcher(queue: RevealQueue): Promise<void> {
     client = await QuetzalClient.connect({
       network: nodeUrl.includes("testnet") ? "alpha-testnet" : "sandbox",
       nodeUrl,
-      account: { type: "schnorr", secret },
+      account: {
+        type: "schnorr",
+        secret,
+        // Sub-9.3: optional salt + signingKey to reach a pre-deployed wallet
+        // (e.g. admin's). Without these, the SDK derives address from secret
+        // + Fr.ZERO salt + derived signingKey -> a NEW unfunded account.
+        salt: process.env.AGGREGATOR_L2_SALT,
+        signingKey: process.env.AGGREGATOR_L2_SIGNING_KEY,
+      },
       contracts: {
         orderbook: orderbookAddr,
         tUSDC: tUSDC ?? "0x" + "0".repeat(64),
