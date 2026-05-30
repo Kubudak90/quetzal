@@ -5,15 +5,19 @@
 # Design source reference (3MB of HTML/JSX prototypes; not needed at build time)
 frontend/_design-source/
 
-# Aztec L2 contracts (Noir; not needed for frontend build)
-contracts/
+# Aztec L2 contracts (Noir).
+# NOTE: contracts/ is intentionally NOT excluded — the browser contract loader
+# (sdk/src/internal/contracts.browser.ts) bundles contracts/*/target/*.json via
+# the codegen'd bindings, so those committed artifacts must stay in the deploy
+# context. Only the compiled JSONs are committed (rest of target/ is gitignored).
 contracts-l1/
 circuits/
 
-# L1 tooling + ops
+# L1 tooling + ops.
+# NOTE: tests/ is intentionally NOT excluded — tests/integration/generated/*.ts
+# are the codegen'd contract bindings the frontend bundle imports.
 tools/
 aggregator/
-tests/
 scripts/
 docs/
 
