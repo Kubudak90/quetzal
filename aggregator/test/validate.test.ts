@@ -14,6 +14,9 @@ describe("validate.computeCi", () => {
       limit_price: 2_000_000_000_000_000_000n,
       order_nonce: 0x42n,
       submitted_at_block: 5,
+      // Audit #2: path is now part of the commitment.
+      path_len: 2,
+      path: [0x1111n, 0x2222n, 0n] as [bigint, bigint, bigint],
     };
     const ci = await computeCi(payload);
     const expected = await poseidon2Hash([
@@ -23,6 +26,10 @@ describe("validate.computeCi", () => {
       payload.limit_price,
       payload.order_nonce,
       BigInt(payload.submitted_at_block),
+      BigInt(payload.path_len),
+      payload.path[0],
+      payload.path[1],
+      payload.path[2],
     ]);
     assert.equal(ci.toString(), expected.toString());
   });
@@ -68,7 +75,7 @@ describe("validate.validateReveals", () => {
     const ci = await computeCi({
       owner: 0xa1n, side: false, amount_in: 1000n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x42n,
-      submitted_at_block: 5,
+      submitted_at_block: 5, path_len: 2, path: [0n, 0n, 0n],
     });
     const expected_acc = await replayOrderAcc([ci]);
 
@@ -82,7 +89,7 @@ describe("validate.validateReveals", () => {
     const ci_real = await computeCi({
       owner: 0xa1n, side: false, amount_in: 1000n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x42n,
-      submitted_at_block: 5,
+      submitted_at_block: 5, path_len: 2, path: [0n, 0n, 0n],
     });
     const expected_acc = await replayOrderAcc([ci_real]);
 
@@ -98,12 +105,12 @@ describe("validate.validateReveals", () => {
     const ci2 = await computeCi({
       owner: 0xa1n, side: false, amount_in: 200n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x20n,
-      submitted_at_block: 4,
+      submitted_at_block: 4, path_len: 2, path: [0n, 0n, 0n],
     });
     const ci1 = await computeCi({
       owner: 0xa1n, side: false, amount_in: 100n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x10n,
-      submitted_at_block: 5,
+      submitted_at_block: 5, path_len: 2, path: [0n, 0n, 0n],
     });
     const expected_acc = await replayOrderAcc([ci2, ci1]);
 

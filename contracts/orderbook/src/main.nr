@@ -298,7 +298,12 @@ pub contract Orderbook {
         self.storage.aggregator_fee.initialize(aggregator_fee);
         self.storage.pool_registry_admin.initialize(pool_registry_admin);
         // Sub-4 NEW; Sub-5a D1: .initialize() -> .write() (PublicMutable)
-        assert((pool_count > 0 as u32) & (pool_count <= MAX_NUM_POOLS as u32), "pool_count in [1, MAX_NUM_POOLS]");
+        // Audit #12: the constructor seeds the registry from fixed [AztecAddress; 4]
+        // arrays via the `0..4` loop below, so it can only seed up to 4 pools. The
+        // previous bound of MAX_NUM_POOLS (=8) silently dropped any pool_count in
+        // 5..=8 (slots 4..7 left zero). Cap the *constructor* seed at the array
+        // length; the registry still grows to MAX_NUM_POOLS post-deploy via add_pool.
+        assert((pool_count > 0 as u32) & (pool_count <= 4 as u32), "pool_count in [1, 4] (constructor seeds <=4 pools; use add_pool for more)");
         self.storage.pool_count.write(pool_count);
         for i in 0..4 {
             if (i as u32) < pool_count {
@@ -490,12 +495,18 @@ pub contract Orderbook {
         };
         self.storage.orders.at(maker).insert(order).deliver(MessageDelivery.ONCHAIN_CONSTRAINED);
 
-        // Per-order commitment hashing 6 core fields (maker, side, amount_in, limit_price,
-        // order_nonce, submitted_at_block). `order_nonce` is a random Field, so c_i is hiding:
-        // side/amount/limit cannot be recovered from c_i.
-        // NOTE: path_len and path are stored in the OrderNote but are NOT yet included in c_i.
-        // Task D2 (binding::replay_chain_with_path) will extend this hash to bind the full
-        // routing path and prevent order substitution across different hop sequences.
+        // Audit #2: per-order hiding commitment over 10 fields. `order_nonce` is a
+        // random Field, so c_i is hiding (maker/side/amount/limit cannot be recovered
+        // from c_i). The routing path (path_len + path[0..2]) is now BOUND into c_i so
+        // an aggregator cannot substitute an order across different hop sequences
+        // (Sub-4 substitution guard). This formula is byte-identical to:
+        //   - circuit  circuits/clearing/src/binding.nr::c_i_path
+        //   - aggregator aggregator/src/validate.ts::computeCi
+        // Field order MUST match exactly:
+        //   [ owner, side(0/1), amount_in, limit_price, order_nonce,
+        //     submitted_at_block, path_len, path[0], path[1], path[2] ]
+        // Computed in PRIVATE here; only the resulting c_i is enqueued to the PUBLIC
+        // _append_order fold, so side/amount/limit/path stay private (dark-pool intact).
         let c_i: Field = poseidon2_hash(
             [
                 maker.to_field(),
@@ -504,6 +515,10 @@ pub contract Orderbook {
                 limit_price as Field,
                 order_nonce,
                 submitted_at_block as Field,
+                path_len as Field,
+                path[0],
+                path[1],
+                path[2],
             ],
         );
 
@@ -787,8 +802,8 @@ pub contract Orderbook {
     /// produces a hash that fails this internal check (revert).
     ///
     /// Flow:
-    /// 1. Flatten public_inputs to the [Field; 42] vector matching the prover's view.
-    /// 2. `std::verify_proof_with_type(vk, proof, flat, vk_hash, 1)` -- recursive verify.
+    /// 1. Flatten public_inputs to the [Field; 114] vector matching the circuit's pub args.
+    /// 2. `std::verify_proof_with_type(vk, proof, flat, vk_hash, 6)` -- recursive ZK-Honk verify.
     /// 3. Enqueue `_apply_verified_clearing` which under public-state guards verifies
     ///    freshness (binding inputs match the current epoch's accumulators), runs the
     ///    net AMM swap + stores fills_root + advances the epoch.
@@ -798,8 +813,8 @@ pub contract Orderbook {
     #[external("private")]
     fn close_epoch_and_clear_verified(
         public_inputs: ClearingPublic,
-        proof: [Field; 456],
-        vk: [Field; 127],
+        proof: [Field; 500],
+        vk: [Field; 115],
     ) {
         let caller = self.msg_sender();
         // Sub-3: gate on caller being a bonded aggregator. Public callback because
@@ -807,11 +822,18 @@ pub contract Orderbook {
         self.enqueue_self._assert_aggregator_registered(caller);
 
         let vk_hash = self.storage.clearing_vk_hash.read();
-        // 1 = Honk proof type per Aztec/bb conventions.
-        // Honk proofs embed public inputs in the proof bytes (IVC IO); the
-        // public_inputs argument must be empty -- passing a non-empty array
-        // causes bb to abort with "unexpected non-empty public_inputs in HN constraint".
-        std::verify_proof_with_type(vk, proof, [], vk_hash, 1);
+        // Audit #1 (CRITICAL): bind the proof to the FULL public inputs. The clearing
+        // circuit exposes all 114 ClearingPublic fields as pub inputs (order_acc,
+        // cancel_acc, counts, fills_root, and every per-pool swap delta). Passing []
+        // here previously left the swap deltas + fills_root UNBOUND, letting a bonded
+        // aggregator replay a valid proof against fabricated calldata and drain a pool.
+        // We now pass the real flattened public inputs, so bb's recursive verify forces
+        // calldata == proven values; a single tampered field fails verification (proven
+        // empirically: positive verifies, one-field tamper -> "verification failed").
+        // proof_type 6 = PROOF_TYPE_HONK_ZK (bb -t noir-recursive, ZK UltraHonk):
+        // vk = [Field; 115], proof = [Field; 500], public_inputs passed separately.
+        let flat = flatten_clearing_public(public_inputs);
+        std::verify_proof_with_type(vk, proof, flat, vk_hash, 6);
         self.enqueue_self._apply_verified_clearing(public_inputs, caller);
     }
 
@@ -1141,6 +1163,10 @@ pub contract Orderbook {
         //    The ConfirmedNote carries every preimage field, so this matches the original
         //    c_i exactly. Equality with the submit-side c_i is what makes the submit-cancel
         //    invariant (IT4) hold.
+        //    Audit #2: this MUST be the SAME 10-field formula as _submit_one_order_internal's
+        //    c_i (and binding.nr::c_i_path), now including path_len + path[0..2]. The cancel
+        //    chain folds this full c_i (see _append_cancel) -- the circuit's
+        //    replay_cancel_chain_with_path folds c_i_path(order) identically.
         let c_i: Field = poseidon2_hash(
             [
                 maker.to_field(),
@@ -1149,6 +1175,10 @@ pub contract Orderbook {
                 order.limit_price as Field,
                 order.nonce,
                 order.submitted_at_block as Field,
+                order.path_len as Field,
+                order.path[0],
+                order.path[1],
+                order.path[2],
             ],
         );
 

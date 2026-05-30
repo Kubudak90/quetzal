@@ -148,8 +148,13 @@ export function isCycleInFlight(): boolean { return CYCLE_IN_FLIGHT; }
 // ---------------------------------------------------------------------------
 const HONK_PROOF_FIELDS = 500;
 const HONK_VK_FIELDS = 115;
-const CONTRACT_PROOF_SIZE = 456;
-const CONTRACT_VK_SIZE = 127;
+// Audit #1: the orderbook verify now consumes the FULL bb `-t noir-recursive`
+// shapes (proof = 500 fields, vk = 115 fields). These equal HONK_*_FIELDS, so the
+// bridge fns below are pass-through. The previous 456/127 truncation CORRUPTED the
+// proof + vk (dropping 44 proof + adding 12 zero vk fields), guaranteeing verify
+// failure -- one reason the verified clearing path was never exercised.
+const CONTRACT_PROOF_SIZE = 500;
+const CONTRACT_VK_SIZE = 115;
 const U128_MASK = (1n << 128n) - 1n;
 
 function bridgeProof(buf: Buffer): Fr[] {
@@ -301,6 +306,9 @@ export async function runOneClearingCycleMP(
       const cis = [];
       for (const r of reveals) {
         try {
+          // Audit #2: c_i binds path; default to a direct 1-hop path when the
+          // reveal omits it (mirrors validate.ts::validateReveals).
+          const rawPath = (r.path ?? ["0x0", "0x0", "0x0"]).map((s) => BigInt(s));
           cis.push(await computeCi({
             owner: BigInt(r.owner),
             side: r.side,
@@ -308,6 +316,8 @@ export async function runOneClearingCycleMP(
             limit_price: BigInt(r.limit_price),
             order_nonce: BigInt(r.order_nonce),
             submitted_at_block: r.submitted_at_block,
+            path_len: r.path_len ?? 2,
+            path: [rawPath[0] ?? 0n, rawPath[1] ?? 0n, rawPath[2] ?? 0n],
           }));
         } catch { /* ignore parse */ }
       }
@@ -403,10 +413,30 @@ export async function runOneClearingCycleMP(
       order_nonce: v.order_nonce.toBigInt(),
       submitted_at_block: v.submitted_at_block,
       owner: v.owner.toBigInt(),
-      // Sub-4 fields for circuit (the buildClearingWitnessMultiPair reads these via `as any`).
-      path_len: 2,
-      path: [pathTokens[0], pathTokens[1], pathTokens[2]],
+      // Audit #2: the circuit recomputes c_i over path; feed the SAME path the
+      // contract bound. ValidatedReveal now carries the real path_len/path; fall
+      // back to the MVP pool-0 1-hop path only when the reveal omitted them.
+      path_len: v.path_len ?? 2,
+      path: (v.path_len ?? 2) >= 2 && (v.path[0] !== 0n || v.path[1] !== 0n)
+        ? [v.path[0], v.path[1], v.path[2]]
+        : [pathTokens[0], pathTokens[1], pathTokens[2]],
     }));
+
+    // Audit #11: surface fallback use loudly. A reveal whose path is [0,0,0]
+    // omitted an explicit route, so we recomputed its c_i against the pool-0
+    // direct path. That is correct ONLY for pool-0 1-hop orders; any multi-hop or
+    // non-pool-0 reveal will fail the on-chain c_i / order_acc replay. Producers
+    // (SDK/CLI/smoke) should forward path_len + path[] to remove this fallback.
+    const revealsMissingPath = validated.filter(
+      (v) => v.path[0] === 0n && v.path[1] === 0n,
+    ).length;
+    if (revealsMissingPath > 0) {
+      log("warn", "reveal(s) lacked an explicit routing path; using pool-0 direct fallback", {
+        revealsMissingPath,
+        total: validated.length,
+        note: "correct only for pool-0 1-hop; multi-hop reveals will fail c_i replay",
+      });
+    }
 
     // Per-pool sqrt prices BEFORE clearing.
     const poolSqrtPBefore: bigint[] = [];
@@ -468,8 +498,14 @@ export async function runOneClearingCycleMP(
       "prove",
       "-b", "target/clearing.json",
       "-w", "target/clearing.gz",
+      // Audit #1: vk must exist first (compile-all.sh `bb write_vk -t noir-recursive`
+      // wrote target/vk.bin/vk). `-t noir-recursive` makes a ZK-UltraHonk proof of
+      // 500 fields plus a separate public_inputs file; the orderbook verifies it with
+      // proof_type 6 against the calldata public inputs. Replaces `--oracle_hash
+      // poseidon2` (not a flag in bb 4.x; it produced an unbindable proof shape).
+      "-k", "target/vk.bin/vk",
       "-o", "target/proofdir",
-      "--oracle_hash", "poseidon2",
+      "-t", "noir-recursive",
     ], {
       cwd: circuitDir,
       deadlineMs: deadline,

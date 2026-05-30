@@ -18,6 +18,13 @@ export interface RevealPayload {
   limit_price: string;       // bigint as decimal string
   submitted_at_block: number;
   owner: string;             // 0x-prefixed hex
+  // Audit #2: path is bound into the per-order commitment c_i. path_len is the
+  // number of tokens in the route (2 for 1-hop direct, 3 for a 2-hop route);
+  // path is exactly 3 token-address words (0x-prefixed hex), sentinel 0x0 for
+  // the unused 3rd slot on 1-hop orders. Optional for backward-compat with
+  // older reveal producers; validateReveals defaults to a direct path.
+  path_len?: number;
+  path?: string[];           // length 3, 0x-prefixed hex token addresses
   submission_tx_hash?: string;
 }
 

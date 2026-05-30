@@ -1,0 +1,45 @@
+{
+  "step": 15,
+  "notes": [
+    "2026-05-28T20:24:15.833Z tUSDC deployed: 0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+    "2026-05-28T20:27:18.703Z tETH deployed: 0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
+    "2026-05-28T20:29:02.883Z tBTC deployed: 0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+    "2026-05-28T20:30:16.187Z pool_usdc_eth deployed: 0x12f3300a5ba91cf46591f19d9ef4a6c05f85a5fb49801087f66c5d776f894795",
+    "2026-05-28T20:31:26.548Z pool_usdc_btc deployed: 0x0a474c95cd872fb51cd9123f5e5e46a240a508c1d205b657ba610743650b5521",
+    "2026-05-28T20:32:38.920Z pool_eth_btc deployed: 0x061679154adf5c7f30ceb7a7efe03a1b2450a787868807e43a204443c563ebc8",
+    "2026-05-28T20:33:50.807Z aggregatorRegistry deployed: 0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff",
+    "2026-05-28T20:35:02.192Z orderbook deployed: 0x218ad28908f52d430a9d18a4f281e41e0cf3df547d7e2c74012e952c9e0d28cc",
+    "2026-05-28T20:36:14.367Z treasury deployed: 0x023b6096335ec3bc7671429c35ba01658ec2245896fd25deae8575fb36c5f12f",
+    "2026-05-28T20:37:27.368Z set_treasury wired"
+  ],
+  "setOrderbookDone": {
+    "p0": true,
+    "p1": true,
+    "p2": true
+  },
+  "tUSDC": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+  "tETH": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5",
+  "tBTC": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+  "pool_usdc_eth": {
+    "address": "0x12f3300a5ba91cf46591f19d9ef4a6c05f85a5fb49801087f66c5d776f894795",
+    "token_a": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c",
+    "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+  },
+  "pool_usdc_btc": {
+    "address": "0x0a474c95cd872fb51cd9123f5e5e46a240a508c1d205b657ba610743650b5521",
+    "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+    "token_b": "0x0525a0e5a940daf669e98d5b98c46f85f4782b6f4c5af2e5d69db808375c349c"
+  },
+  "pool_eth_btc": {
+    "address": "0x061679154adf5c7f30ceb7a7efe03a1b2450a787868807e43a204443c563ebc8",
+    "token_a": "0x02c078075c3cbbc6c135f3ef4e4ae85e9765a56995e0aff4f638d44294638afc",
+    "token_b": "0x2efbaf6bd19c028cc8782a2d9e6b7b660a66476c890abe47aeaa06ec7a471ab5"
+  },
+  "aggregatorRegistry": "0x2d102fd64a3d5b2fb9ad831cdd3a55cb2b360ef8edb06aafa2a0f3460dd63cff",
+  "vkHash": "0x2aae33dd4ea01690b07b5a74e293fde5512be5d4ed1853705f95d1628454edaa",
+  "orderbook": "0x218ad28908f52d430a9d18a4f281e41e0cf3df547d7e2c74012e952c9e0d28cc",
+  "treasury": "0x023b6096335ec3bc7671429c35ba01658ec2245896fd25deae8575fb36c5f12f",
+  "setTreasuryDone": true,
+  "treasuryMintDone": true,
+  "treasurySeedDone": true
+}

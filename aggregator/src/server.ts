@@ -21,6 +21,13 @@ const RevealSchema = z.object({
   limit_price: z.string().regex(/^\d+$/),
   submitted_at_block: z.number().int().nonnegative(),
   owner: z.string().regex(/^0x[0-9a-fA-F]+$/),
+  // Audit #11 / #2: the routing path is bound into the per-order commitment c_i.
+  // Without forwarding it here, zod strips it and multi-hop (non-pool-0) reveals
+  // mis-clear (their c_i is recomputed against the pool-0 fallback path). Optional
+  // for backward-compat; validateReveals + clearing-cycle fall back to the pool-0
+  // direct path when absent (correct only while just pool 0 is seeded).
+  path_len: z.number().int().min(2).max(3).optional(),
+  path: z.array(z.string().regex(/^0x[0-9a-fA-F]+$/)).length(3).optional(),
   submission_tx_hash: z.string().optional(),
 });
 

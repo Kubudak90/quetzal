@@ -20,8 +20,6 @@ function mkDeps(overrides: Partial<DripDeps> = {}): DripDeps {
       feeJuiceAmount: 100_000_000_000_000_000_000n,
       tUSDCAmount: 1_000_000_000n,
       tETHAmount: 500_000_000_000_000_000n,
-      hcaptchaSecretKey: "secret",
-      hcaptchaBypassKey: "BYPASS",
       drainThresholdMultiplier: 10,
     },
     checkDrained: vi.fn().mockResolvedValue(false),

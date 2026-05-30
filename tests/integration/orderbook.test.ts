@@ -6,6 +6,14 @@ import type { AztecNode } from "@aztec/aztec.js/node";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { Fr } from "@aztec/aztec.js/fields";
 import { poseidon2Hash } from "@aztec/foundation/crypto/poseidon";
+import { computeCi } from "../../aggregator/src/validate.js";
+
+// Pool deploy-time parameters (canonical values from deploy-tokens.ts).
+const P_MIN_SQRT        = 100_000_000_000_000_000n; // 0.1e18
+const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n; // 1.5e18
+
+// Zero sentinel for unused slots in the Orderbook fixed-length [AztecAddress; 4] arrays.
+const ZERO_ADDR = { address: 0n } as const;
 
 import { connectToSandbox } from "./helpers/sandbox.js";
 import { getTestWallets } from "./helpers/wallets.js";
@@ -109,11 +117,12 @@ async function mineUntilBlock(
 }
 
 /**
- * Mirror of `Orderbook::_append_order`'s c_i computation. Inputs MUST be in the
- * exact field order the contract uses; otherwise the recomputed acc' will not match.
+ * Audit #2 unified per-order hiding commitment c_i. Mirrors the 10-field formula in
+ * aggregator/src/validate.ts::computeCi. Inputs MUST be in the exact field order the
+ * contract uses; otherwise the recomputed acc' will not match.
  *
- * Noir: poseidon2_hash([maker.to_field(), if side { 1 } else { 0 }, amount_in as Field,
- *                       limit_price as Field, order_nonce, submitted_at_block as Field])
+ * Noir: poseidon2_hash([owner, side(0/1), amount_in, limit_price, order_nonce,
+ *                       submitted_at_block, path_len, path[0], path[1], path[2]])
  */
 async function orderCommitment(args: {
   owner: AztecAddress;
@@ -122,15 +131,19 @@ async function orderCommitment(args: {
   limitPrice: bigint;
   orderNonce: bigint | Fr;
   submittedAtBlock: number;
+  pathLen?: number;
+  path?: [bigint, bigint, bigint];
 }): Promise<Fr> {
-  return poseidon2Hash([
-    args.owner.toField(),
-    args.side ? 1n : 0n,
-    args.amountIn,
-    args.limitPrice,
-    typeof args.orderNonce === "bigint" ? args.orderNonce : args.orderNonce.toBigInt(),
-    BigInt(args.submittedAtBlock),
-  ]);
+  return computeCi({
+    owner: args.owner.toField().toBigInt(),
+    side: args.side,
+    amount_in: args.amountIn,
+    limit_price: args.limitPrice,
+    order_nonce: typeof args.orderNonce === "bigint" ? args.orderNonce : args.orderNonce.toBigInt(),
+    submitted_at_block: args.submittedAtBlock,
+    path_len: args.pathLen ?? 2,
+    path: args.path ?? [0n, 0n, 0n],
+  });
 }
 
 /** acc' = poseidon2([acc, c_i]); the running-hash fold used by _append_order. */
@@ -178,7 +191,7 @@ describe("orderbook (live integration)", () => {
     tETH = deployedETH.contract;
 
     // Deploy the pool first (orderbook needs pool_addr at construction time).
-    const dPool = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+    const dPool = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
     const pool = dPool.contract;
 
@@ -186,11 +199,15 @@ describe("orderbook (live integration)", () => {
     // integration tests that don't call verify_proof_with_type.
     const deployedOB = await OrderbookContract.deploy(
       wallet,
-      tUSDC.address,
-      tETH.address,
-      100,
-      pool.address,
-      Fr.ZERO,
+      100,          // epoch_length
+      Fr.ZERO,      // clearing_vk_hash (dummy for non-proof tests)
+      ZERO_ADDR,    // aggregator_registry
+      0n,           // aggregator_fee
+      1,            // pool_count
+      [pool.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,        // pool_registry_admin
     ).send({ from: admin });
     orderbook = deployedOB.contract;
 
@@ -328,11 +345,15 @@ describe("orderbook cancel_order (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
-    const dPool2 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+    const dPool2 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 100, dPool2.contract.address, Fr.ZERO,
+      wallet, 100, Fr.ZERO, ZERO_ADDR, 0n, 1,
+      [dPool2.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -485,11 +506,15 @@ describe("orderbook epoch transitions (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
-    const dPool3 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+    const dPool3 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, EPOCH_LEN, dPool3.contract.address, Fr.ZERO,
+      wallet, EPOCH_LEN, Fr.ZERO, ZERO_ADDR, 0n, 1,
+      [dPool3.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -616,11 +641,15 @@ describe("orderbook order accumulator (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
-    const dPool4 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+    const dPool4 = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
 
     const dOB = await OrderbookContract.deploy(
-      wallet, tUSDC.address, tETH.address, 100, dPool4.contract.address, Fr.ZERO,
+      wallet, 100, Fr.ZERO, ZERO_ADDR, 0n, 1,
+      [dPool4.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,
     ).send({ from: admin });
     orderbook = dOB.contract;
 
@@ -808,11 +837,15 @@ describe("orderbook order accumulator (live integration)", () => {
     ).send({ from: admin });
     const freshTETH = freshDE.contract;
 
-    const freshDPool = await LiquidityPoolContract.deploy(wallet, freshTUSDC.address, freshTETH.address)
+    const freshDPool = await LiquidityPoolContract.deploy(wallet, freshTUSDC.address, freshTETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
 
     const freshDOB = await OrderbookContract.deploy(
-      wallet, freshTUSDC.address, freshTETH.address, 100, freshDPool.contract.address, Fr.ZERO,
+      wallet, 100, Fr.ZERO, ZERO_ADDR, 0n, 1,
+      [freshDPool.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [freshTUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [freshTETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,
     ).send({ from: admin });
     const freshOrderbook = freshDOB.contract;
 
@@ -865,11 +898,15 @@ describe("orderbook order accumulator (live integration)", () => {
     ).send({ from: admin });
     const freshTETH6a = freshDE6a.contract;
 
-    const freshDPool6a = await LiquidityPoolContract.deploy(wallet, freshTUSDC6a.address, freshTETH6a.address)
+    const freshDPool6a = await LiquidityPoolContract.deploy(wallet, freshTUSDC6a.address, freshTETH6a.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
       .send({ from: admin });
 
     const freshDOB6a = await OrderbookContract.deploy(
-      wallet, freshTUSDC6a.address, freshTETH6a.address, 10, freshDPool6a.contract.address, Fr.ZERO,
+      wallet, 10, Fr.ZERO, ZERO_ADDR, 0n, 1,
+      [freshDPool6a.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [freshTUSDC6a.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      [freshTETH6a.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+      admin,
     ).send({ from: admin });
     const freshOrderbook6a = freshDOB6a.contract;
 
@@ -936,14 +973,18 @@ describe("orderbook order accumulator (live integration)", () => {
       ).send({ from: admin });
       const freshTETH5 = freshDE5.contract;
 
-      const freshDPool5 = await LiquidityPoolContract.deploy(wallet, freshTUSDC5.address, freshTETH5.address)
+      const freshDPool5 = await LiquidityPoolContract.deploy(wallet, freshTUSDC5.address, freshTETH5.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
         .send({ from: admin });
 
       const freshDOB5 = await OrderbookContract.deploy(
         // epoch_length=100_000 so 32 sequential submits (each mining a few L2 blocks)
         // cannot expire the epoch mid-loop. With epoch_length=100 we'd hit
         // `epoch has expired; awaiting close_epoch` around submit ~30.
-        wallet, freshTUSDC5.address, freshTETH5.address, 100_000, freshDPool5.contract.address, Fr.ZERO,
+        wallet, 100_000, Fr.ZERO, ZERO_ADDR, 0n, 1,
+        [freshDPool5.contract.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [freshTUSDC5.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [freshTETH5.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        admin,
       ).send({ from: admin });
       const freshOrderbook5 = freshDOB5.contract;
 

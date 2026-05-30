@@ -43,7 +43,6 @@ export class FaucetNetworkError extends FaucetError {
 interface DripOpts {
   faucetUrl: string;
   address: `0x${string}`;
-  bypassKey: string;
   signal?: AbortSignal;
   /** Default 5 minutes — drips can take 2-4 min server-side on Aztec testnet. */
   timeoutMs?: number;
@@ -62,7 +61,10 @@ export async function dripFaucet(opts: DripOpts): Promise<DripResult> {
     const res = await fetch(`${opts.faucetUrl}/api/drip`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: opts.address, captchaToken: opts.bypassKey }),
+      // Audit #6: no captcha token is sent from the browser. The faucet server
+      // governs captcha via FAUCET_REQUIRE_CAPTCHA (off on testnet); captchaToken
+      // is optional server-side.
+      body: JSON.stringify({ address: opts.address }),
       signal: ctrl.signal,
     });
     if (res.status === 200) {

@@ -72,7 +72,7 @@ Pass one of these to `QuetzalClient.connect({ account: ... })`:
 { type: "schnorr"; secret: "0x..." }
 { type: "test-account"; accountIndex: number }        // sandbox pre-funded accounts
 { type: "external-pxe"; wallet: Wallet; address: AztecAddress } // bring your own wallet
-{ type: "aztec-wallet"; provider: AztecBrowserProvider }        // browser provider
+{ type: "aztec-wallet"; appId?: string }                       // browser extension via @aztec/wallet-sdk discovery (e.g. Celari)
 ```
 
 ### Orders

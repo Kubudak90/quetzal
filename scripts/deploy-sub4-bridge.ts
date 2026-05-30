@@ -105,6 +105,7 @@ async function main(): Promise<void> {
       const [lo, hi] = canon(ta, tb);
       const dp = await LiquidityPoolContract.deploy(
         wallet, lo, hi, P_MIN_SQRT, BUCKET_GROWTH_NUM,
+        admin, // Audit-#3: deploy-time admin; only this address may call set_orderbook
       ).send({ from: admin });
       return { pool: dp.contract, lo, hi };
     };

@@ -39,9 +39,14 @@ describe("dripFaucet", () => {
     const r = await dripFaucet({
       faucetUrl: "https://faucet.example",
       address: validAddr,
-      bypassKey: "TEST",
     });
     expect(r.l2Address).toBe(validAddr);
+    // Audit #6: the request body must carry the address and must NOT carry a
+    // bypass/captcha token (server governs captcha via FAUCET_REQUIRE_CAPTCHA).
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const sentBody = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(sentBody.address).toBe(validAddr);
+    expect(sentBody.captchaToken).toBeUndefined();
     expect(r.claimData.l1TxHash).toBe(happyResponse.claimData.l1TxHash);
     expect(r.tUSDCMint.txHash).toBe(happyResponse.tUSDCMint.txHash);
     expect(r.tETHMint.txHash).toBe(happyResponse.tETHMint.txHash);
@@ -54,11 +59,11 @@ describe("dripFaucet", () => {
       json: async () => ({ success: false, error: "rate-limited", retryAfterSeconds: 7200 }),
     }) as unknown as typeof fetch;
 
-    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr, bypassKey: "T" }))
+    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr }))
       .rejects.toBeInstanceOf(FaucetRateLimitedError);
 
     try {
-      await dripFaucet({ faucetUrl: "https://x", address: validAddr, bypassKey: "T" });
+      await dripFaucet({ faucetUrl: "https://x", address: validAddr });
     } catch (e) {
       expect(e).toBeInstanceOf(FaucetRateLimitedError);
       expect((e as FaucetRateLimitedError).retryAfterSeconds).toBe(7200);
@@ -72,14 +77,14 @@ describe("dripFaucet", () => {
       json: async () => ({ success: false, error: "faucet drained" }),
     }) as unknown as typeof fetch;
 
-    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr, bypassKey: "T" }))
+    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr }))
       .rejects.toBeInstanceOf(FaucetDrainedError);
   });
 
   test("network throw → FaucetNetworkError", async () => {
     global.fetch = vi.fn().mockRejectedValue(new TypeError("Failed to fetch")) as unknown as typeof fetch;
 
-    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr, bypassKey: "T" }))
+    await expect(dripFaucet({ faucetUrl: "https://x", address: validAddr }))
       .rejects.toBeInstanceOf(FaucetNetworkError);
   });
 
@@ -93,7 +98,7 @@ describe("dripFaucet", () => {
     }) as unknown as typeof fetch;
 
     const ctrl = new AbortController();
-    const p = dripFaucet({ faucetUrl: "https://x", address: validAddr, bypassKey: "T", signal: ctrl.signal });
+    const p = dripFaucet({ faucetUrl: "https://x", address: validAddr, signal: ctrl.signal });
     ctrl.abort();
     await expect(p).rejects.toThrow();
   });

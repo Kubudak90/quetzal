@@ -19,6 +19,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { Fr } from "@aztec/aztec.js/fields";
+import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { registerInitialLocalNetworkAccountsInWallet } from "@aztec/wallets/testing";
@@ -42,10 +43,10 @@ describe("Sub-2.5 e2e — concentrated liquidity multi-bucket clearing", () => {
     const [admin, lp1, lp2, alice] = accounts;
     if (!admin || !lp1 || !lp2 || !alice) throw new Error("need 4 test wallets");
 
-    const tUSDC = await TokenContract.at(Fr.fromString(config.tUSDC), wallet);
-    const tETH = await TokenContract.at(Fr.fromString(config.tETH), wallet);
-    const orderbook = await OrderbookContract.at(Fr.fromString(config.orderbook), wallet);
-    const pool = await LiquidityPoolContract.at(Fr.fromString(config.pool), wallet);
+    const tUSDC = await TokenContract.at(AztecAddress.fromString(config.tUSDC), wallet);
+    const tETH = await TokenContract.at(AztecAddress.fromString(config.tETH), wallet);
+    const orderbook = await OrderbookContract.at(AztecAddress.fromString(config.orderbook), wallet);
+    const pool = await LiquidityPoolContract.at(AztecAddress.fromString(config.pool), wallet);
 
     // LP1 deposits to bucket 5 (in-range), LP2 deposits to bucket 7 (above spot).
     // Implementer fills exact deposit call surface using patterns from

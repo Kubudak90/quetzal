@@ -13,5 +13,9 @@
     "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["**/*.test.ts", "dist"]
+  "exclude": [
+    "**/*.test.ts",
+    "dist",
+    "src/internal/contracts.browser.ts"
+  ]
 }

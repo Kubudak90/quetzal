@@ -52,8 +52,11 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     uint256 public maxTvl;
 
     /// @notice Tracks a deposit for potential 90-day-windowed recovery.
+    /// @dev `amount` is a full `uint256` so the recovery record can never truncate the
+    ///      deposited amount (Finding #10). The struct is only ever stored as a mapping
+    ///      value, so widening this field does not shift any base-slot contract state.
     struct Deposit {
-        uint128 amount;
+        uint256 amount;
         uint64  timestamp;
         bool    isPrivate;
     }
@@ -101,10 +104,10 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     );
     event MaxTvlUpdated(uint256 oldCap, uint256 newCap);
     event L2TokenAddressUpdated(bytes32 oldAddr, bytes32 newAddr);
-    event DepositTracked(address indexed sender, bytes32 indexed secretHash, uint128 amount, bool isPrivate);
-    event RecoveryRequested(address indexed sender, bytes32 indexed secretHash, uint128 amount);
+    event DepositTracked(address indexed sender, bytes32 indexed secretHash, uint256 amount, bool isPrivate);
+    event RecoveryRequested(address indexed sender, bytes32 indexed secretHash, uint256 amount);
     event RecoveryApproved(bytes32 indexed key);
-    event RecoveryExecuted(address indexed sender, bytes32 indexed secretHash, address indexed l1Recipient, uint128 amount);
+    event RecoveryExecuted(address indexed sender, bytes32 indexed secretHash, address indexed l1Recipient, uint256 amount);
 
     /// @notice Deposit would push the bridge's token balance above `maxTvl`.
     error TvlCapExceeded(uint256 attempted, uint256 cap);
@@ -122,6 +125,13 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     error NoSuchRequest();
     /// @notice Recovery has not been approved by governance.
     error NotApproved();
+    /// @notice A deposit was attempted before governance set a non-zero `l2TokenAddress`.
+    ///         Deposits made with a zero L2 actor are unrecoverable on L2; reject them.
+    error L2TokenNotSet();
+    /// @notice A deposit record already exists for (msg.sender, secretHash). Re-using the
+    ///         same key would silently overwrite the earlier record and destroy its
+    ///         recoverDeposit rights, so the second deposit is rejected (fail-safe).
+    error DepositKeyInUse();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -195,7 +205,16 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
     {
         if (amount == 0) revert ZeroAmount();
         if (l2Recipient == bytes32(0)) revert ZeroAddress();
+        // Finding #9: reject deposits made before governance has set a real L2 token
+        // actor. Sending to a zero L2 actor would escrow funds on L1 that can never be
+        // claimed on L2. `setL2TokenAddress` must run before deposits are accepted.
+        if (l2TokenAddress == bytes32(0)) revert L2TokenNotSet();
         _enforceTvlCap(amount);
+
+        // Finding #10: prevent a second deposit on the same (sender, secretHash) key from
+        // silently overwriting an earlier record and destroying its recoverDeposit rights.
+        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        if (deposits[trackKey].amount != 0) revert DepositKeyInUse();
 
         l1Token.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -211,14 +230,14 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         // Track the deposit so the depositor may recover it via requestRecovery
         // + governance approveRecovery + executeRecovery after 90 days if their
         // L2 wallet becomes inaccessible. Key by (sender, secretHash) so only
-        // the original depositor can recover.
-        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        // the original depositor can recover. The full `amount` is stored without
+        // truncation (Finding #10).
         deposits[trackKey] = Deposit({
-            amount: uint128(amount),
+            amount: amount,
             timestamp: uint64(block.timestamp),
             isPrivate: false
         });
-        emit DepositTracked(msg.sender, secretHash, uint128(amount), false);
+        emit DepositTracked(msg.sender, secretHash, amount, false);
     }
 
     /// @notice Deposit `amount` tokens to a hidden (private) L2 recipient. The recipient
@@ -235,7 +254,16 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         returns (bytes32 messageHash, uint256 messageIndex)
     {
         if (amount == 0) revert ZeroAmount();
+        // Finding #9: reject deposits made before governance has set a real L2 token
+        // actor. Sending to a zero L2 actor would escrow funds on L1 that can never be
+        // claimed on L2. `setL2TokenAddress` must run before deposits are accepted.
+        if (l2TokenAddress == bytes32(0)) revert L2TokenNotSet();
         _enforceTvlCap(amount);
+
+        // Finding #10: prevent a second deposit on the same (sender, secretHash) key from
+        // silently overwriting an earlier record and destroying its recoverDeposit rights.
+        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        if (deposits[trackKey].amount != 0) revert DepositKeyInUse();
 
         l1Token.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -248,13 +276,13 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
 
         emit DepositInitiated(msg.sender, bytes32(0), amount, secretHash, messageIndex, true);
 
-        bytes32 trackKey = keccak256(abi.encode(msg.sender, secretHash));
+        // Store the full `amount` without truncation (Finding #10).
         deposits[trackKey] = Deposit({
-            amount: uint128(amount),
+            amount: amount,
             timestamp: uint64(block.timestamp),
             isPrivate: true
         });
-        emit DepositTracked(msg.sender, secretHash, uint128(amount), true);
+        emit DepositTracked(msg.sender, secretHash, amount, true);
     }
 
     // ── Withdraw flow (L2 → L1) ───────────────────────────────────────────────
@@ -361,7 +389,7 @@ contract TokenBridge is Initializable, UUPSUpgradeable, AccessControlUpgradeable
         if (l1Recipient == address(0)) revert ZeroAddress();
         bytes32 key = keccak256(abi.encode(msg.sender, secretHash));
         if (!approvedRecoveries[key]) revert NotApproved();
-        uint128 amount = deposits[key].amount;
+        uint256 amount = deposits[key].amount;
         delete deposits[key];
         delete pendingRecoveries[key];
         delete approvedRecoveries[key];

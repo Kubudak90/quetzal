@@ -133,7 +133,7 @@ export async function runRelayerLoop(cfg: RelayerConfig): Promise<void> {
       await sleep(60_000);
     }
   } finally {
-    await ctx.stop();
+    await ctx.client.stop();
   }
 }
 
@@ -143,7 +143,7 @@ async function fetchPendingClaims(
 ): Promise<PendingClaim[]> {
   const treasury = await TreasuryContract.at(
     AztecAddress.fromString(treasuryAddr),
-    ctx.wallet,
+    ctx.client.wallet,
   );
 
   // Cast through any: D1/D2 added queue_relayer_claim + consume_relayer_claim +
@@ -271,7 +271,7 @@ async function processClaim(
   // 3. Consume the claim on L2 (Treasury pays the fee to this relayer)
   const treasury = await TreasuryContract.at(
     AztecAddress.fromString(cfg.treasuryAddr),
-    ctx.wallet,
+    ctx.client.wallet,
   );
   const treasuryDyn = treasury as unknown as {
     methods: {
@@ -280,7 +280,7 @@ async function processClaim(
       };
     };
   };
-  await treasuryDyn.methods.consume_relayer_claim(claim.id).send({ from: ctx.account });
+  await treasuryDyn.methods.consume_relayer_claim(claim.id).send({ from: ctx.client.address });
   console.log(
     `  claim ${claim.id}: consumed; fee ${claim.fee} paid to relayer`,
   );

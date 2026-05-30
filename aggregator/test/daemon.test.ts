@@ -43,7 +43,7 @@ describe("daemon.runOneClearingCycle", () => {
     const ci = await computeCi({
       owner: 0xa1n, side: false, amount_in: 1000n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x42n,
-      submitted_at_block: 5,
+      submitted_at_block: 5, path_len: 2, path: [0n, 0n, 0n],
     });
     const order_acc = await replayOrderAcc([ci]);
 
@@ -106,7 +106,7 @@ describe("daemon.runOneClearingCycle", () => {
     const ci_real = await computeCi({
       owner: 0xa1n, side: false, amount_in: 1000n,
       limit_price: 2_000_000_000_000_000_000n, order_nonce: 0x42n,
-      submitted_at_block: 5,
+      submitted_at_block: 5, path_len: 2, path: [0n, 0n, 0n],
     });
     const order_acc = await replayOrderAcc([ci_real]);
 

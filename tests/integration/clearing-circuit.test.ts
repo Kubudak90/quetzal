@@ -134,13 +134,20 @@ describe(
       tETH = dE.contract;
 
       // Deploy LiquidityPool.
-      const dP = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      const P_MIN_SQRT        = 100_000_000_000_000_000n; // 0.1e18
+      const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n; // 1.5e18
+      const ZERO_ADDR = { address: 0n } as const;
+      const dP = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
         .send({ from: admin });
       pool = dP.contract;
 
-      // Deploy Orderbook with admin as clearing_authority.
+      // Deploy Orderbook.
       const dOB = await OrderbookContract.deploy(
-        wallet, tUSDC.address, tETH.address, EPOCH_LEN, pool.address, admin,
+        wallet, EPOCH_LEN, Fr.ZERO, ZERO_ADDR, 0n, 1,
+        [pool.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        admin,
       ).send({ from: admin });
       orderbook = dOB.contract;
 
@@ -157,9 +164,11 @@ describe(
       await tETH.methods.mint_to_private(bob, SELL_ETH + ONE_ETH).send({ from: admin });
 
       // Admin deposits POOL_A tUSDC + POOL_B tETH into the pool.
-      const hint0 = (await pool.methods.get_pool_state().simulate({ from: admin })).result;
+      const hint0Raw = (await pool.methods.get_pool_state().simulate({ from: admin })).result as { reserve_a: bigint | number; reserve_b: bigint | number; current_sqrt_price: bigint | number };
+      const hint0PoolHint = { reserve_a: BigInt(hint0Raw.reserve_a), reserve_b: BigInt(hint0Raw.reserve_b), current_sqrt_price: BigInt(hint0Raw.current_sqrt_price) };
+      const zeroBucketHint = { reserve_a: 0n, reserve_b: 0n, liquidity: 0n, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n };
       await pool.methods
-        .deposit(POOL_A, POOL_B, hint0, randomField(), randomField(), randomField())
+        .deposit(0n, POOL_A, POOL_B, hint0PoolHint, zeroBucketHint, randomField(), randomField(), randomField())
         .send({ from: admin });
     });
 

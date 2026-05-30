@@ -2,7 +2,7 @@
 // Ported from _design-source/landing-setup.jsx. Tweaks panel dropped.
 
 import { useState, useEffect, Fragment, useCallback } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   Eyebrow, Hairline, PillButton, Segmented,
   FeatherGlyph, FeatherWatermark,
@@ -10,7 +10,7 @@ import {
 import { useClientContext } from "../sdk/client-context.js";
 import type { NetworkName } from "@quetzal/sdk";
 import { WizardStep3 } from "../onboarding/wizard-step3.js";
-import { loadSession } from "../onboarding/persistence.js";
+import { hasSession, loadSession, clearSession } from "../onboarding/persistence.js";
 
 const GITHUB_URL = "https://github.com/Kubudak90/quetzal";
 const DOCS_URL = (import.meta.env.VITE_DOCS_URL as string | undefined) ?? "https://docs.quetzaldex.xyz";
@@ -206,9 +206,34 @@ function generateMasterSecret(): string {
   return "0x" + Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Labeled wrapper for the passphrase inputs (Audit #8). The shared `Field`
+ * atom renders its own internal input and takes no children, so we use this
+ * small label+hint shell around a custom <input> to keep the password fields
+ * matching the wizard's visual style.
+ */
+function PassphraseField({ label, hint, children }: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <label className="q-eyebrow" style={{ fontSize: 10 }}>{label}</label>
+      {children}
+      {hint && (
+        <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.4 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ FIRST-LAUNCH SETUP ============ */
 export function SetupScreen({ onComplete }: { onComplete: () => void }) {
-  const [step, setStep] = useState(0); // 0=mode, 1=secret, 2=size+net, 3=faucet
+  // step: 0=mode, 1=secret, 2=size+net, 3=passphrase, 4=faucet
+  const [step, setStep] = useState(0);
   const [mode, setMode] = useState<string | null>(null);
   const [n, setN] = useState(3);
   const [network, setNetwork] = useState<NetworkName>("alpha-testnet");
@@ -218,21 +243,62 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   // The effective secret: imported takes precedence if non-empty
   const masterSecret = importedSecret.trim() || generatedSecret;
 
+  // Passphrase that encrypts the persisted session at rest (Audit #8).
+  const [passphrase, setPassphrase] = useState("");
+  const [passphraseConfirm, setPassphraseConfirm] = useState("");
+
+  // Audit #8 unlock flow: if an encrypted session already exists, we must ask
+  // for the passphrase before we can re-derive the pool. `existing` gates the
+  // whole screen between "unlock" and "fresh onboarding".
+  const [existing] = useState<boolean>(() => {
+    try { return hasSession(); } catch { return false; }
+  });
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockPassphrase, setUnlockPassphrase] = useState("");
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+
   // Local error display for connect failures
   const [localError, setLocalError] = useState<string | null>(null);
 
   const { connectAztecWallet, connectWalletPool, connecting, lastError } = useClientContext();
 
-  useEffect(() => {
-    const session = loadSession();
-    if (session && session.deployedAddresses.length >= session.poolSize) {
-      void connectWalletPool({
+  /**
+   * Audit #8: returning users unlock their encrypted session with the
+   * passphrase, then we connect exactly as the old auto-load path did.
+   */
+  const handleUnlock = useCallback(async () => {
+    setUnlockError(null);
+    setUnlocking(true);
+    try {
+      const session = await loadSession(unlockPassphrase);
+      if (!session) {
+        setUnlockError("Could not unlock — check your passphrase and try again.");
+        return;
+      }
+      if (session.deployedAddresses.length < session.poolSize) {
+        setUnlockError("Saved session is incomplete. Use “Start over” to re-onboard.");
+        return;
+      }
+      await connectWalletPool({
         masterSecret: session.masterSecret,
         n: session.poolSize,
         network: session.network,
-      }).then(() => onComplete());
+      });
+      onComplete();
+    } catch (e) {
+      setUnlockError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUnlocking(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlockPassphrase, connectWalletPool, onComplete]);
+
+  /** Wipe the encrypted session and fall through to fresh onboarding. */
+  const handleStartOver = useCallback(() => {
+    clearSession();
+    setUnlockError(null);
+    setUnlockPassphrase("");
+    // existing is frozen at mount; reload so the screen re-evaluates hasSession().
+    window.location.reload();
   }, []);
 
   const regenerateSecret = useCallback(() => {
@@ -247,14 +313,12 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   /** Called from the Aztec Wallet mode button on step 0 */
   const handleConnectAztecWallet = useCallback(async () => {
     setLocalError(null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const provider = (window as any).aztec;
-    if (!provider) {
-      setLocalError("Aztec Wallet not detected. Install the browser extension.");
-      return;
-    }
     try {
-      await connectAztecWallet({ provider, network });
+      // Extension discovery (@aztec/wallet-sdk) + the encrypted channel happen
+      // inside the adapter. If no wallet announces itself within the discovery
+      // window, connect() throws and `lastError` is populated by the context
+      // ("No Aztec wallet detected ...").
+      await connectAztecWallet({ network });
       onComplete();
     } catch {
       // lastError is already populated by the context
@@ -275,6 +339,72 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
   /** The inline error to show: prefer local override, fall back to context error */
   const displayError = localError ?? (lastError ? `${lastError.code}: ${lastError.message}` : null);
 
+  // Audit #8 — UNLOCK flow for returning users with an encrypted session.
+  if (existing) {
+    return (
+      <div style={{
+        height: "100%", overflow: "auto",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        padding: "48px 24px",
+      }} className="q-scroll">
+        <div style={{ width: "100%", maxWidth: 480 }}>
+          <Eyebrow>Welcome back</Eyebrow>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: 40, fontWeight: 300, letterSpacing: "-0.04em", marginTop: 4 }}>
+            Unlock your <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>pool</em>
+          </h2>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)", marginTop: 12, lineHeight: 1.5 }}>
+            Your wallet master secret is encrypted in this browser. Enter the passphrase you
+            set during onboarding to re-derive your pool.
+          </p>
+
+          <div className="q-card" style={{ padding: 24, marginTop: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+            <PassphraseField label="Passphrase">
+              <input
+                type="password"
+                autoFocus
+                value={unlockPassphrase}
+                onChange={(e) => { setUnlockPassphrase(e.target.value); setUnlockError(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && unlockPassphrase && !unlocking) void handleUnlock(); }}
+                placeholder="Your passphrase"
+                style={{
+                  width: "100%", padding: 12,
+                  background: "var(--surface)", border: "1px solid var(--hairline-strong)", borderRadius: 6,
+                  fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--fg)",
+                  boxSizing: "border-box",
+                }}
+              />
+            </PassphraseField>
+            {unlockError && (
+              <div style={{ color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                {unlockError}
+              </div>
+            )}
+            <PillButton
+              size="lg" variant="primary" rightIcon={unlocking ? undefined : "arrow-right"}
+              disabled={!unlockPassphrase || unlocking}
+              onClick={() => void handleUnlock()}
+            >
+              {unlocking ? "Unlocking…" : "Unlock"}
+            </PillButton>
+          </div>
+
+          <div style={{ marginTop: 16, fontFamily: "var(--font-body)", fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.5 }}>
+            Lost your passphrase? There is no recovery — you'll need to{" "}
+            <button
+              onClick={handleStartOver}
+              style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: "var(--fg)", textDecoration: "underline",
+                fontFamily: "var(--font-body)", fontSize: 12,
+              }}
+            >start over</button>{" "}
+            with a fresh master secret (you can re-import an old one if you saved it).
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       height: "100%", overflow: "auto",
@@ -285,7 +415,7 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
 
         {/* progress dots */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", marginBottom: 32 }}>
-          {["Mode", "Secret", "Pool", "Faucet"].map((label, i) => (
+          {["Mode", "Secret", "Pool", "Lock", "Faucet"].map((label, i) => (
             <Fragment key={label}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{
@@ -298,7 +428,7 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
                 }}>{i < step ? "✓" : i + 1}</span>
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: i <= step ? "var(--fg)" : "var(--fg-muted)", letterSpacing: "0.04em" }}>{label}</span>
               </div>
-              {i < 3 && <div style={{ width: 32, height: 1, background: i < step ? "var(--aztec-ink)" : "var(--hairline)" }} />}
+              {i < 4 && <div style={{ width: 32, height: 1, background: i < step ? "var(--aztec-ink)" : "var(--hairline)" }} />}
             </Fragment>
           ))}
         </div>
@@ -454,21 +584,86 @@ export function SetupScreen({ onComplete }: { onComplete: () => void }) {
 
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
               <PillButton size="lg" variant="ghost" onClick={() => setStep(1)} leftIcon="arrow-left">Back</PillButton>
-              <PillButton size="lg" variant="primary" onClick={() => setStep(3)} rightIcon="arrow-right">Initialize pool</PillButton>
+              <PillButton size="lg" variant="primary" onClick={() => setStep(3)} rightIcon="arrow-right">Continue</PillButton>
             </div>
           </div>
         )}
 
-        {/* STEP 3 — Faucet + deploy pipeline */}
+        {/* STEP 3 — Passphrase (encrypts the persisted session at rest — Audit #8) */}
         {step === 3 && (
+          <div>
+            <Eyebrow>Lock your wallet</Eyebrow>
+            <h2 style={{ fontFamily: "var(--font-display)", fontSize: 40, fontWeight: 300, letterSpacing: "-0.04em", marginTop: 4 }}>
+              Set a <em style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontWeight: 400 }}>passphrase</em>
+            </h2>
+            <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "var(--fg-muted)", marginTop: 12, lineHeight: 1.5 }}>
+              This passphrase encrypts your wallet master secret in this browser (AES-256-GCM).
+              It is never sent anywhere. <strong style={{ color: "var(--fg)" }}>If you lose it you must
+              re-onboard — there is no recovery.</strong>
+            </p>
+
+            <div className="q-card" style={{ padding: 28, marginTop: 32, display: "flex", flexDirection: "column", gap: 20 }}>
+              <PassphraseField label="Passphrase" hint="At least 8 characters. Use something you'll remember or store in a password manager.">
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Choose a passphrase"
+                  style={{
+                    width: "100%", padding: 12,
+                    background: "var(--surface)", border: "1px solid var(--hairline-strong)", borderRadius: 6,
+                    fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--fg)",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </PassphraseField>
+              <PassphraseField label="Confirm passphrase">
+                <input
+                  type="password"
+                  value={passphraseConfirm}
+                  onChange={(e) => setPassphraseConfirm(e.target.value)}
+                  placeholder="Re-enter your passphrase"
+                  style={{
+                    width: "100%", padding: 12,
+                    background: "var(--surface)", border: "1px solid var(--hairline-strong)", borderRadius: 6,
+                    fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--fg)",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </PassphraseField>
+              {passphrase.length > 0 && passphrase.length < 8 && (
+                <div style={{ color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                  Passphrase must be at least 8 characters.
+                </div>
+              )}
+              {passphraseConfirm.length > 0 && passphrase !== passphraseConfirm && (
+                <div style={{ color: "var(--aztec-vermillion, #e55)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                  Passphrases do not match.
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
+              <PillButton size="lg" variant="ghost" onClick={() => setStep(2)} leftIcon="arrow-left">Back</PillButton>
+              <PillButton
+                size="lg" variant="primary" rightIcon="arrow-right"
+                disabled={passphrase.length < 8 || passphrase !== passphraseConfirm}
+                onClick={() => setStep(4)}
+              >Initialize pool</PillButton>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4 — Faucet + deploy pipeline */}
+        {step === 4 && (
           <WizardStep3
             masterSecret={masterSecret}
             n={n}
+            passphrase={passphrase}
             faucetUrl={import.meta.env.VITE_FAUCET_URL as string}
-            bypassKey={import.meta.env.VITE_FAUCET_BYPASS_KEY as string}
             nodeUrl={import.meta.env.VITE_AZTEC_NODE_URL as string}
             onAllDone={() => void handleConnectPool()}
-            onBack={() => setStep(2)}
+            onBack={() => setStep(3)}
           />
         )}
       </div>

@@ -15,6 +15,11 @@ export interface RevealPayload {
   limit_price: string;
   submitted_at_block: number;
   owner: string;
+  // Audit #11: canonical routing path bound into c_i (path_len in {2,3}; path is
+  // 3 0x-hex token words). Forwarded so the aggregator recomputes c_i against the
+  // same path the contract bound (required for multi-hop / non-pool-0 orders).
+  path_len?: 2 | 3;
+  path?: [string, string, string];
   submission_tx_hash?: string;
 }
 

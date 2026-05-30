@@ -38,7 +38,7 @@ interface ClientContextValue {
   session: QuetzalSession | null;
   connecting: boolean;
   lastError: QuetzalError | null;
-  connectAztecWallet: (opts: { provider: unknown; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => Promise<void>;
+  connectAztecWallet: (opts: { network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => Promise<void>;
   connectWalletPool: (opts: { masterSecret: string; n: number; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => Promise<void>;
   disconnect: () => Promise<void>;
 }
@@ -51,7 +51,7 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   const [lastError, setLastError] = useState<QuetzalError | null>(null);
   const [sessionCounter, setSessionCounter] = useState(0);
 
-  const connectAztecWallet = useCallback(async (opts: { provider: unknown; network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => {
+  const connectAztecWallet = useCallback(async (opts: { network: NetworkName; nodeUrl?: string; contracts?: QuetzalContracts }) => {
     setConnecting(true);
     setLastError(null);
     try {
@@ -59,8 +59,9 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       const client = await QuetzalClient.connect({
         network: opts.network,
         nodeUrl: opts.nodeUrl,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        account: { type: "aztec-wallet", provider: opts.provider as any },
+        // Discovery + encrypted channel are handled inside the adapter
+        // (@aztec/wallet-sdk). No provider object is passed from the page.
+        account: { type: "aztec-wallet" },
         contracts,
       });
       setSessionCounter((c) => {

@@ -191,9 +191,16 @@ export function PillButton({
       transition: "background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
       ...variants[variant], ...style,
     }}>
-      {leftIcon && <i data-lucide={leftIcon} style={{ width: 14, height: 14, strokeWidth: 1.5 }}></i>}
+      {/* Icons are wrapped in a stable <span> that React owns. The global
+          lucide.createIcons() (App.tsx) replaces the inner <i> with an <svg>
+          via replaceChild; if React removed that mutated <i> directly (e.g.
+          when an icon toggles off during a connecting/unlocking state) it would
+          throw "removeChild: node is not a child" and unmount the whole app
+          (blank screen). Removing the wrapper <span> instead is always a valid
+          op, since lucide only touches the span's interior. */}
+      {leftIcon && <span style={{ display: "inline-flex" }}><i data-lucide={leftIcon} style={{ width: 14, height: 14, strokeWidth: 1.5 }}></i></span>}
       {children}
-      {rightIcon && <i data-lucide={rightIcon} style={{ width: 14, height: 14, strokeWidth: 1.5 }}></i>}
+      {rightIcon && <span style={{ display: "inline-flex" }}><i data-lucide={rightIcon} style={{ width: 14, height: 14, strokeWidth: 1.5 }}></i></span>}
     </button>
   );
 }

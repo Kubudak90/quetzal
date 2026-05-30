@@ -34,8 +34,6 @@ export interface DripDeps {
     feeJuiceAmount: bigint;
     tUSDCAmount: bigint;
     tETHAmount: bigint;
-    hcaptchaSecretKey: string;
-    hcaptchaBypassKey: string;
     drainThresholdMultiplier: number;
   };
   auditLog: Pick<AuditLog, "append">;

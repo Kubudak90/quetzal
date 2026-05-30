@@ -8,6 +8,7 @@ import type { DripResult } from "./faucet-client";
 import type { ClaimDeployResult } from "./claim-deploy";
 
 const MASTER = "0x" + "11".repeat(32);
+const PASSPHRASE = "test passphrase";
 
 function mkDeps(overrides: Partial<OnboardingStep3Deps> = {}): OnboardingStep3Deps {
   const dripResult = (addr: string): DripResult => ({
@@ -35,10 +36,9 @@ function mkDeps(overrides: Partial<OnboardingStep3Deps> = {}): OnboardingStep3De
     ),
     dripFaucet: vi.fn().mockImplementation(({ address }) => Promise.resolve(dripResult(address))),
     claimAndDeploy: vi.fn().mockResolvedValue(claimResult),
-    saveSession: vi.fn(),
+    saveSession: vi.fn().mockResolvedValue(undefined),
     config: {
       faucetUrl: "https://faucet.example",
-      bypassKey: "TEST",
       nodeUrl: "https://node.example",
     },
     ...overrides,
@@ -49,7 +49,7 @@ describe("useOnboardingStep3", () => {
   test("idle → running through all N children → done", async () => {
     const deps = mkDeps();
     const { result } = renderHook(() =>
-      useOnboardingStep3({ masterSecret: MASTER, n: 2, deps })
+      useOnboardingStep3({ masterSecret: MASTER, n: 2, passphrase: PASSPHRASE, deps })
     );
 
     expect(result.current.phase).toBe("idle");
@@ -77,7 +77,7 @@ describe("useOnboardingStep3", () => {
       }));
     const deps = mkDeps({ dripFaucet: failDrip });
     const { result } = renderHook(() =>
-      useOnboardingStep3({ masterSecret: MASTER, n: 2, deps })
+      useOnboardingStep3({ masterSecret: MASTER, n: 2, passphrase: PASSPHRASE, deps })
     );
 
     act(() => { result.current.start(); });
@@ -104,7 +104,7 @@ describe("useOnboardingStep3", () => {
     });
     const deps = mkDeps({ dripFaucet: failOnce });
     const { result } = renderHook(() =>
-      useOnboardingStep3({ masterSecret: MASTER, n: 1, deps })
+      useOnboardingStep3({ masterSecret: MASTER, n: 1, passphrase: PASSPHRASE, deps })
     );
 
     act(() => { result.current.start(); });

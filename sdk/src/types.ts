@@ -69,6 +69,16 @@ export interface PlaceOrderResult {
   orderNonce: bigint;
   epoch: number;
   blockNumber: number;
+  /**
+   * Audit #11: the canonical routing path bound into the order's commitment c_i
+   * (path_len in {2,3}; path is 3 0x-hex token-address words, "0x0" sentinel for
+   * the unused 3rd slot on 1-hop orders). Producers MUST forward these into the
+   * aggregator reveal so c_i is recomputed against the SAME path the contract
+   * bound -- otherwise multi-hop / non-pool-0 orders fail order_acc replay (the
+   * aggregator's pool-0 fallback only covers single-pool 1-hop orders).
+   */
+  path_len: 2 | 3;
+  path: [string, string, string];
 }
 
 export interface CurrentEpoch {
@@ -106,4 +116,7 @@ export interface BulkPlaceOrderResult {
   decoyNonces: bigint[];
   epoch: number;
   blockNumber: number;
+  /** Audit #11: canonical path of the REAL order (slot 0) for the reveal. See PlaceOrderResult. */
+  path_len: 2 | 3;
+  path: [string, string, string];
 }

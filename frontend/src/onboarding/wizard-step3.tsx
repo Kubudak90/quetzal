@@ -6,8 +6,9 @@ import { Eyebrow, PillButton, Badge, AddressMono } from "../components/atoms.js"
 export interface WizardStep3Props {
   masterSecret: string;
   n: number;
+  /** Encrypts the persisted session at rest (Audit #8). Set in an earlier step. */
+  passphrase: string;
   faucetUrl: string;
-  bypassKey: string;
   nodeUrl: string;
   onAllDone: () => void;
   onBack: () => void;
@@ -17,7 +18,8 @@ export function WizardStep3(props: WizardStep3Props) {
   const onboarding = useOnboardingStep3({
     masterSecret: props.masterSecret,
     n: props.n,
-    deps: { config: { faucetUrl: props.faucetUrl, bypassKey: props.bypassKey, nodeUrl: props.nodeUrl } },
+    passphrase: props.passphrase,
+    deps: { config: { faucetUrl: props.faucetUrl, nodeUrl: props.nodeUrl } },
   });
 
   // Auto-start on mount

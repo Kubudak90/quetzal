@@ -70,12 +70,40 @@ pub fn replay_cancel_chain(
 }
 
 // ============================================================================
-// Sub-4: path-aware binding (replay chain hashes 11 fields incl. path).
+// Sub-4 / Audit #2: path-aware binding (unified hiding commitment).
 // ============================================================================
 
-/// Sub-4: order_acc replay over OrderPreimagePath. Hashes 11 fields per link:
-///   [acc, side, amount_in, limit_price, order_nonce,
-///    submitted_at_block, owner, path_len, path[0], path[1], path[2]]
+/// Audit #2 unified per-order hiding commitment over OrderPreimagePath.
+/// MUST be byte-identical to:
+///   - contract  submit_order / submit_order_bulk c_i  (PRIVATE poseidon2_hash)
+///   - aggregator validate.ts::computeCi
+/// 10 inputs (order_nonce is a random Field so c_i is hiding; path is bound so the
+/// Sub-4 substitution guard is preserved):
+///   [ owner, side(0/1), amount_in, limit_price, order_nonce,
+///     submitted_at_block, path_len, path[0], path[1], path[2] ]
+pub fn c_i_path(o: OrderPreimagePath) -> Field {
+    let side_field: Field = if o.side { 1 } else { 0 };
+    poseidon::poseidon2::Poseidon2::hash(
+        [
+            o.owner,
+            side_field,
+            o.amount_in as Field,
+            o.limit_price as Field,
+            o.order_nonce,
+            o.submitted_at_block as Field,
+            o.path_len as Field,
+            o.path[0],
+            o.path[1],
+            o.path[2],
+        ],
+        10,
+    )
+}
+
+/// Audit #2: order_acc replay over OrderPreimagePath. Per order computes the
+/// 10-field hiding commitment c_i_path, then folds `acc = poseidon2([acc, c_i], 2)`
+/// starting at 0 -- EXACTLY matching the contract's PRIVATE c_i + PUBLIC
+/// _append_order fold and the aggregator's computeCi + replayOrderAcc.
 pub fn replay_chain_with_path(
     orders: [OrderPreimagePath; MAX_ORDERS_PER_EPOCH],
     order_count: u32,
@@ -83,31 +111,18 @@ pub fn replay_chain_with_path(
     let mut acc: Field = 0;
     for i in 0..MAX_ORDERS_PER_EPOCH {
         if (i as u32) < order_count {
-            let o = orders[i];
-            let side_field: Field = if o.side { 1 } else { 0 };
-            acc = poseidon::poseidon2::Poseidon2::hash(
-                [
-                    acc,
-                    side_field,
-                    o.amount_in as Field,
-                    o.limit_price as Field,
-                    o.order_nonce,
-                    o.submitted_at_block as Field,
-                    o.owner,
-                    o.path_len as Field,
-                    o.path[0],
-                    o.path[1],
-                    o.path[2],
-                ],
-                11,
-            );
+            let c = c_i_path(orders[i]);
+            acc = poseidon::poseidon2::Poseidon2::hash([acc, c], 2);
         }
     }
     acc
 }
 
-/// Sub-4: cancel_acc replay over OrderPreimagePath. Each cancelled order
-/// contributes poseidon2([acc, order_nonce], 2).
+/// Audit #2: cancel_acc replay over OrderPreimagePath. Each cancelled order
+/// contributes `acc = poseidon2([acc, c_i_path(order)], 2)` -- folding the SAME
+/// 10-field hiding commitment c_i that the contract's cancel_order recomputes and
+/// _append_cancel folds. (Previously this folded the raw order_nonce, which did
+/// NOT match the contract and made cancel_acc replay fail for any cancellation.)
 pub fn replay_cancel_chain_with_path(
     orders: [OrderPreimagePath; MAX_ORDERS_PER_EPOCH],
     cancelled_indices: [u32; MAX_ORDERS_PER_EPOCH],
@@ -124,7 +139,7 @@ pub fn replay_cancel_chain_with_path(
             for k in 0..MAX_ORDERS_PER_EPOCH {
                 if (k as u32) == idx { o = orders[k]; }
             }
-            acc = poseidon::poseidon2::Poseidon2::hash([acc, o.order_nonce], 2);
+            acc = poseidon::poseidon2::Poseidon2::hash([acc, c_i_path(o)], 2);
         }
     }
     acc

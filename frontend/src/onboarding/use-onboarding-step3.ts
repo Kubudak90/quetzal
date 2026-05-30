@@ -28,7 +28,6 @@ export interface OnboardingStep3Deps {
   dripFaucet: (opts: {
     faucetUrl: string;
     address: `0x${string}`;
-    bypassKey: string;
     signal?: AbortSignal;
   }) => Promise<DripResult>;
   claimAndDeploy: (opts: {
@@ -38,8 +37,12 @@ export interface OnboardingStep3Deps {
     signal?: AbortSignal;
     onProgress?: (phase: ClaimDeployPhase) => void;
   }) => Promise<ClaimDeployResult>;
-  saveSession: (s: PersistedSession) => void;
-  config: { faucetUrl: string; bypassKey: string; nodeUrl: string };
+  /**
+   * Persists the session encrypted at rest (Audit #8). Async + passphrase:
+   * the passphrase derives the AES-GCM key — see persistence.ts / crypto-vault.ts.
+   */
+  saveSession: (s: PersistedSession, passphrase: string) => Promise<void>;
+  config: { faucetUrl: string; nodeUrl: string };
 }
 
 interface State {
@@ -80,6 +83,11 @@ export interface OnboardingStep3Hook {
 export function useOnboardingStep3(opts: {
   masterSecret: string;
   n: number;
+  /**
+   * Passphrase that encrypts the persisted session at rest (Audit #8).
+   * Collected from the user earlier in the wizard and threaded down to here.
+   */
+  passphrase: string;
   deps?: Partial<OnboardingStep3Deps> & Pick<OnboardingStep3Deps, "config">;
 }): OnboardingStep3Hook {
   const deps: OnboardingStep3Deps = {
@@ -96,6 +104,11 @@ export function useOnboardingStep3(opts: {
   });
 
   const aborters = useRef<Map<number, AbortController>>(new Map());
+  // Guards the in-render settle-check so finalize() (and thus the async
+  // saveSession) runs exactly once per "running" episode, even though the
+  // settle condition can be true across several re-renders while the async
+  // save is in flight. Re-armed by start()/retry() when they re-enter "running".
+  const finalizeScheduled = useRef(false);
 
   const runChild = useCallback(async (
     index: number,
@@ -109,7 +122,6 @@ export function useOnboardingStep3(opts: {
       const drip = await deps.dripFaucet({
         faucetUrl: deps.config.faucetUrl,
         address: l2Address,
-        bypassKey: deps.config.bypassKey,
         signal: ctrl.signal,
       });
       dispatch({ type: "child-state", index, state: { state: "claiming", phase: "claiming" } });
@@ -134,27 +146,44 @@ export function useOnboardingStep3(opts: {
     }
   }, [deps]);
 
-  const finalize = useCallback((children: State["children"]) => {
+  const finalize = useCallback(async (children: State["children"]) => {
     const allDone = children.every((c) => c.state === "done");
     if (allDone) {
       const deployedAddresses = children
         .filter((c): c is typeof c & { state: "done"; deployedAddress: `0x${string}` } => c.state === "done")
         .map((c) => c.deployedAddress);
-      deps.saveSession({
-        schemaVersion: 1,
-        masterSecret: opts.masterSecret as `0x${string}`,
-        poolSize: opts.n,
-        network: "alpha-testnet",
-        deployedAddresses,
-        onboardedAt: Date.now(),
-      });
+      // Persist encrypted at rest (Audit #8). A save failure (e.g. Web Crypto
+      // unavailable) must NOT lose the freshly-deployed pool: the wallets ARE
+      // on-chain, so we still transition to "done" and only warn. The user can
+      // re-import their master secret next time if the encrypted session is
+      // missing. We never log the master secret itself.
+      try {
+        await deps.saveSession(
+          {
+            schemaVersion: 1,
+            masterSecret: opts.masterSecret as `0x${string}`,
+            poolSize: opts.n,
+            network: "alpha-testnet",
+            deployedAddresses,
+            onboardedAt: Date.now(),
+          },
+          opts.passphrase,
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(
+          "[onboarding] pool deployed but encrypted session could not be saved:",
+          msg,
+        );
+      }
       dispatch({ type: "phase", phase: "done" });
     } else {
       dispatch({ type: "phase", phase: "partial-error" });
     }
-  }, [deps, opts.masterSecret, opts.n]);
+  }, [deps, opts.masterSecret, opts.n, opts.passphrase]);
 
   const start = useCallback(() => {
+    finalizeScheduled.current = false;
     const secrets = deriveChildren(opts.masterSecret, opts.n).map((c) => ({
       index: c.index,
       secret: c.secret,
@@ -169,14 +198,21 @@ export function useOnboardingStep3(opts: {
   if (state.phase === "running") {
     const settled = state.children.length === opts.n &&
       state.children.every((c) => c.state === "done" || c.state === "error");
-    if (settled) {
-      queueMicrotask(() => finalize(state.children));
+    if (settled && !finalizeScheduled.current) {
+      finalizeScheduled.current = true;
+      queueMicrotask(() => {
+        void finalize(state.children).catch((e) => {
+          // finalize already swallows save errors; this guards any unexpected throw.
+          console.error("[onboarding] finalize failed:", e instanceof Error ? e.message : String(e));
+        });
+      });
     }
   }
 
   const retry = useCallback((index: number) => {
     const child = state.children[index];
     if (!child) return;
+    finalizeScheduled.current = false;
     dispatch({ type: "phase", phase: "running" });
     runChild(index, child.secret).then(() => {
       // The settle-check above re-fires after re-render.

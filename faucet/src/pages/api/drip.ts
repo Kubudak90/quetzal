@@ -11,6 +11,7 @@ import { getRuntime } from "@/lib/runtime";
 import { metrics } from "@/lib/metrics";
 import { runDripPipeline } from "@/lib/drip-pipeline";
 import { verifyCaptcha } from "@/lib/captcha";
+import { getClientIp } from "@/lib/client-ip";
 
 export default async function handler(
   req: NextApiRequest,
@@ -49,24 +50,22 @@ export default async function handler(
     return;
   }
 
-  // Prefer x-forwarded-for (set by the reverse proxy in front of the
-  // Next.js server). First entry is the client; downstream proxies append.
-  // Fall back to the socket address for tests / direct-connect scenarios.
-  const xff = req.headers["x-forwarded-for"];
-  const xffStr = Array.isArray(xff) ? xff[0] : xff;
-  const ip =
-    xffStr?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+  // Audit #5: the client IP for rate limiting is the LAST X-Forwarded-For entry
+  // (the real peer appended by our single reverse-proxy hop). Trusting the first
+  // entry let a client spoof its IP via a forged X-Forwarded-For header and
+  // bypass the per-IP rate limit. See getClientIp for the full rationale.
+  const ip = getClientIp(req);
 
   const out = await runDripPipeline({
     address: parsed.data.address,
-    captchaToken: parsed.data.captchaToken,
+    captchaToken: parsed.data.captchaToken ?? "",
     ip,
     deps: {
       verifyCaptcha: (t) =>
         verifyCaptcha({
           token: t,
           secretKey: rt.config.hcaptchaSecretKey,
-          bypassKey: rt.config.hcaptchaBypassKey,
+          requireCaptcha: rt.config.requireCaptcha,
         }),
       rateLimiter: rt.rateLimiter,
       bridgeFeeJuice: (to, amount) => rt.l1Bridge.bridgeFeeJuice(to, amount),

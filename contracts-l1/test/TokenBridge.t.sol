@@ -411,6 +411,141 @@ contract TokenBridgeTest is Test {
         bridge.approveRecovery(key);
     }
 
+    // ── Audit Finding #9: deposits require a non-zero l2TokenAddress ───────────────
+
+    // A bridge whose l2TokenAddress is still zero (init race before setL2TokenAddress)
+    // must reject deposits so funds are never escrowed against a zero L2 actor.
+    function _deployUnsetBridge() internal returns (TokenBridge) {
+        TokenBridge impl = new TokenBridge();
+        bytes memory init = abi.encodeWithSelector(
+            TokenBridge.initialize.selector,
+            IERC20(address(token)),
+            bytes32(0),            // l2TokenAddress UNSET — mirrors DeployAllBridges init
+            uint256(1),
+            IInbox(address(inbox)),
+            IOutbox(address(outbox)),
+            governanceTimelock,
+            emergencyTimelock,
+            uint256(0)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), init);
+        return TokenBridge(address(proxy));
+    }
+
+    function test_depositPublic_revertsWhenL2TokenUnset() public {
+        TokenBridge unset = _deployUnsetBridge();
+        vm.startPrank(alice);
+        token.approve(address(unset), 100_000_000);
+        vm.expectRevert(TokenBridge.L2TokenNotSet.selector);
+        unset.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    function test_depositPrivate_revertsWhenL2TokenUnset() public {
+        TokenBridge unset = _deployUnsetBridge();
+        vm.startPrank(alice);
+        token.approve(address(unset), 100_000_000);
+        vm.expectRevert(TokenBridge.L2TokenNotSet.selector);
+        unset.depositToL2Private(100_000_000, bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    // After governance sets the L2 token, deposits succeed again — confirms the guard
+    // only blocks the init-race window, not normal operation.
+    function test_depositPublic_succeedsAfterL2TokenSet() public {
+        TokenBridge unset = _deployUnsetBridge();
+        vm.prank(governanceTimelock);
+        unset.setL2TokenAddress(L2_TOKEN);
+
+        vm.startPrank(alice);
+        token.approve(address(unset), 100_000_000);
+        unset.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+        assertEq(token.balanceOf(address(unset)), 100_000_000, "deposit landed after L2 token set");
+    }
+
+    // ── Audit Finding #10: amount stored as uint256 (no truncation) ───────────────
+
+    // A deposit larger than uint128.max must be preserved exactly in the recovery
+    // record, otherwise executeRecovery would refund a truncated (smaller) amount.
+    function test_recovery_preservesAmountAboveUint128Max() public {
+        uint256 big = uint256(type(uint128).max) + 1; // 2^128, truncates to 0 as uint128
+        token.mint(alice, big);
+
+        vm.startPrank(alice);
+        token.approve(address(bridge), big);
+        bridge.depositToL2Public(big, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+
+        // The stored record holds the full uint256 amount, not a truncated value.
+        (uint256 storedAmount,,) = bridge.deposits(keccak256(abi.encode(alice, bytes32(uint256(0xbeef)))));
+        assertEq(storedAmount, big, "deposit record preserves amount > uint128.max");
+
+        vm.warp(block.timestamp + 91 days);
+        vm.prank(alice);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+        bytes32 key = keccak256(abi.encode(alice, bytes32(uint256(0xbeef))));
+        vm.prank(governanceTimelock);
+        bridge.approveRecovery(key);
+
+        uint256 balBefore = token.balanceOf(alice);
+        vm.prank(alice);
+        bridge.executeRecovery(bytes32(uint256(0xbeef)), alice);
+        assertEq(token.balanceOf(alice), balBefore + big, "recovered full untruncated amount");
+    }
+
+    // Finding #10: a second deposit on the same (sender, secretHash) key must revert
+    // rather than silently overwrite the earlier record and destroy its recovery rights.
+    function test_deposit_revertsOnDuplicateKey() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 200_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+
+        // Same (msg.sender, secretHash) → same key. Must revert.
+        vm.expectRevert(TokenBridge.DepositKeyInUse.selector);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+    }
+
+    // The duplicate-key guard is per-secretHash: a different secretHash from the same
+    // sender produces a distinct key and is accepted.
+    function test_deposit_distinctSecretHashSucceeds() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 200_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xcafe)));
+        vm.stopPrank();
+
+        (uint256 a1,,) = bridge.deposits(keccak256(abi.encode(alice, bytes32(uint256(0xbeef)))));
+        (uint256 a2,,) = bridge.deposits(keccak256(abi.encode(alice, bytes32(uint256(0xcafe)))));
+        assertEq(a1, 100_000_000, "first deposit record intact");
+        assertEq(a2, 100_000_000, "second deposit record stored under distinct key");
+    }
+
+    // After a deposit's recovery is fully executed (state cleared), the same
+    // (sender, secretHash) key becomes reusable for a fresh deposit.
+    function test_deposit_keyReusableAfterRecovery() public {
+        vm.startPrank(alice);
+        token.approve(address(bridge), 200_000_000);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 91 days);
+        vm.prank(alice);
+        bridge.requestRecovery(bytes32(uint256(0xbeef)));
+        bytes32 key = keccak256(abi.encode(alice, bytes32(uint256(0xbeef))));
+        vm.prank(governanceTimelock);
+        bridge.approveRecovery(key);
+        vm.prank(alice);
+        bridge.executeRecovery(bytes32(uint256(0xbeef)), alice);
+
+        // Record cleared → key free again.
+        vm.prank(alice);
+        bridge.depositToL2Public(100_000_000, bytes32(uint256(0xfeed)), bytes32(uint256(0xbeef)));
+        (uint256 a,,) = bridge.deposits(key);
+        assertEq(a, 100_000_000, "key reusable after recovery cleared the record");
+    }
+
     // ── Sub-5c B3: withdrawPrivate tests ──────────────────────────────────────────
 
     function test_withdrawPrivate_releasesTokensOnValidProof() public {

@@ -6,6 +6,7 @@ import { sepolia } from "viem/chains";
 import { getOperatorL2Balance } from "@/lib/l2-mint";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { metrics } from "@/lib/metrics";
+import { safeReason } from "@/lib/safe-error";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
   if (req.method !== "GET") { res.status(405).end(); return; }
@@ -62,6 +63,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
     res.status(200).json(body);
   } catch (e) {
-    res.status(503).json({ status: "degraded", error: String(e).slice(0, 200) });
+    // Audit #7: never leak the raw error to the client — upstream errors have
+    // exposed full RPC URLs + API keys. Full detail goes to server logs only;
+    // the client receives a coarse, non-sensitive category.
+    console.error("[health] probe failed", e);
+    res.status(503).json({ status: "degraded", error: safeReason(e) });
   }
 }

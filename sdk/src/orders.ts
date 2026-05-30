@@ -202,6 +202,10 @@ export class OrdersApi {
       orderNonce,
       epoch,
       blockNumber: receipt?.blockNumber ?? 0,
+      // Audit #11: expose the canonical path (already bound into c_i above) so
+      // reveal producers forward the SAME path the contract folded.
+      path_len,
+      path: [pathFields[0].toString(), pathFields[1].toString(), pathFields[2].toString()],
     };
   }
 
@@ -299,6 +303,9 @@ export class OrdersApi {
       decoyNonces: orderNonces.slice(1, decoyCount + 1),
       epoch,
       blockNumber: receipt?.blockNumber ?? 0,
+      // Audit #11: canonical path of the real order (slot 0) for the reveal.
+      path_len,
+      path: [pathFields[0].toString(), pathFields[1].toString(), pathFields[2].toString()],
     };
   }
 

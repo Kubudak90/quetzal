@@ -45,14 +45,14 @@ export class LiquidityPoolContract extends ContractBase {
   /**
    * Creates a tx to deploy a new instance of this contract.
    */
-  public static deploy(wallet: Wallet, token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number)) {
+  public static deploy(wallet: Wallet, token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number), admin: AztecAddressLike) {
     return new DeployMethod<LiquidityPoolContract>(PublicKeys.default(), wallet, LiquidityPoolContractArtifact, (instance, wallet) => LiquidityPoolContract.at(instance.address, wallet), Array.from(arguments).slice(1));
   }
 
   /**
    * Creates a tx to deploy a new instance of this contract using the specified public keys hash to derive the address.
    */
-  public static deployWithPublicKeys(publicKeys: PublicKeys, wallet: Wallet, token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number)) {
+  public static deployWithPublicKeys(publicKeys: PublicKeys, wallet: Wallet, token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number), admin: AztecAddressLike) {
     return new DeployMethod<LiquidityPoolContract>(publicKeys, wallet, LiquidityPoolContractArtifact, (instance, wallet) => LiquidityPoolContract.at(instance.address, wallet), Array.from(arguments).slice(2));
   }
 
@@ -90,7 +90,7 @@ export class LiquidityPoolContract extends ContractBase {
   }
   
 
-  public static get storage(): ContractStorageLayout<'positions' | 'pool_state' | 'token_a_addr' | 'token_b_addr' | 'orderbook_addr' | 'p_min_sqrt' | 'bucket_growth_num' | 'buckets'> {
+  public static get storage(): ContractStorageLayout<'positions' | 'pool_state' | 'token_a_addr' | 'token_b_addr' | 'orderbook_addr' | 'admin' | 'p_min_sqrt' | 'bucket_growth_num' | 'buckets'> {
       return {
         positions: {
       slot: new Fr(1n),
@@ -107,16 +107,19 @@ token_b_addr: {
 orderbook_addr: {
       slot: new Fr(9n),
     },
-p_min_sqrt: {
+admin: {
       slot: new Fr(10n),
     },
-bucket_growth_num: {
+p_min_sqrt: {
       slot: new Fr(12n),
     },
-buckets: {
+bucket_growth_num: {
       slot: new Fr(14n),
+    },
+buckets: {
+      slot: new Fr(16n),
     }
-      } as ContractStorageLayout<'positions' | 'pool_state' | 'token_a_addr' | 'token_b_addr' | 'orderbook_addr' | 'p_min_sqrt' | 'bucket_growth_num' | 'buckets'>;
+      } as ContractStorageLayout<'positions' | 'pool_state' | 'token_a_addr' | 'token_b_addr' | 'orderbook_addr' | 'admin' | 'p_min_sqrt' | 'bucket_growth_num' | 'buckets'>;
     }
     
 
@@ -126,8 +129,8 @@ buckets: {
     /** apply_clearing(swap: struct) */
     apply_clearing: ((swap: { a_to_pool: (bigint | number), b_to_pool: (bigint | number), a_from_pool: (bigint | number), b_from_pool: (bigint | number), active_bucket_deltas: { bucket_id: (bigint | number), reserve_a_add: (bigint | number), reserve_a_sub: (bigint | number), reserve_b_add: (bigint | number), reserve_b_sub: (bigint | number), cum_fee_a_per_share_increment: (bigint | number), cum_fee_b_per_share_increment: (bigint | number) }[], active_bucket_count: (bigint | number), current_sqrt_price_after: (bigint | number) }) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** constructor(token_a: struct, token_b: struct, p_min_sqrt: integer, bucket_growth_num: integer) */
-    constructor: ((token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    /** constructor(token_a: struct, token_b: struct, p_min_sqrt: integer, bucket_growth_num: integer, admin: struct) */
+    constructor: ((token_a: AztecAddressLike, token_b: AztecAddressLike, p_min_sqrt: (bigint | number), bucket_growth_num: (bigint | number), admin: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** deposit(bucket_id: integer, amount_a: integer, amount_b: integer, hint_pool: struct, hint_bucket: struct, nonce_a: field, nonce_b: field, position_nonce: field) */
     deposit: ((bucket_id: (bigint | number), amount_a: (bigint | number), amount_b: (bigint | number), hint_pool: { reserve_a: (bigint | number), reserve_b: (bigint | number), current_sqrt_price: (bigint | number) }, hint_bucket: { reserve_a: (bigint | number), reserve_b: (bigint | number), liquidity: (bigint | number), cum_fee_a_per_share: (bigint | number), cum_fee_b_per_share: (bigint | number) }, nonce_a: FieldLike, nonce_b: FieldLike, position_nonce: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

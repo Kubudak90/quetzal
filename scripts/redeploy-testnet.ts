@@ -259,6 +259,7 @@ async function main(): Promise<void> {
     const t0 = Date.now();
     const dp = await LiquidityPoolContract.deploy(
       wallet, lo, hi, P_MIN_SQRT, BUCKET_GROWTH_NUM,
+      admin, // Audit-#3: deploy-time admin; only this address may call set_orderbook
     ).send({ from: admin });
     const addr = dp.contract.address.toString();
     console.log(`[redeploy]     pool ${label}=${addr} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);

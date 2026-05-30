@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aztec/wallet-sdk": "4.2.1",
     "@quetzal/sdk": "workspace:*",
     "@tanstack/react-query": "^5.100.14",
     "react": "^18.3.1",

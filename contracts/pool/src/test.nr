@@ -34,7 +34,7 @@ unconstrained fn deploy_pool(
     token_b: AztecAddress,
 ) -> AztecAddress {
     let initializer_call = LiquidityPool::interface().constructor(
-        token_a, token_b, TEST_P_MIN_SQRT, TEST_GROWTH_NUM,
+        token_a, token_b, TEST_P_MIN_SQRT, TEST_GROWTH_NUM, deployer,
     );
     env.deploy("LiquidityPool").with_public_initializer(deployer, initializer_call)
 }
@@ -97,6 +97,31 @@ unconstrained fn constructor_initializes_pool_state() {
     assert(state.reserve_a == 0 as u128, "reserve_a starts at 0");
     assert(state.reserve_b == 0 as u128, "reserve_b starts at 0");
     assert(state.current_sqrt_price == TEST_P_MIN_SQRT, "sqrt_p starts at p_min_sqrt");
+}
+
+// Audit-#3: set_orderbook is gated to the deploy-time admin. The admin (the
+// deployer) can wire the orderbook once; any other caller is rejected, which
+// prevents front-running the post-deploy wiring with a malicious orderbook.
+#[test]
+unconstrained fn admin_can_set_orderbook() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+
+    let orderbook = AztecAddress::from_field(0xab1cde);
+    let _ = env.call_public(deployer, LiquidityPool::at(pool).set_orderbook(orderbook));
+}
+
+#[test(should_fail_with = "only admin may set orderbook")]
+unconstrained fn set_orderbook_rejects_non_admin_caller() {
+    let mut env = TestEnvironment::new();
+    let deployer = env.create_light_account();
+    let pool = deploy_pool(&mut env, deployer, deployer, deployer);
+
+    // A non-admin account attempts to front-run the orderbook wiring.
+    let attacker = env.create_light_account();
+    let evil_orderbook = AztecAddress::from_field(0xdead);
+    let _ = env.call_public(attacker, LiquidityPool::at(pool).set_orderbook(evil_orderbook));
 }
 
 #[test]

@@ -156,6 +156,7 @@ async function main() {
     const t0 = Date.now();
     const poolDeploy = await LiquidityPoolContract.deploy(
       wallet, tUSDCAddr, tETHAddr, P_MIN_SQRT, BUCKET_GROWTH_NUM,
+      admin, // Audit-#3: deploy-time admin; only this address may call set_orderbook
     ).send({ from: admin });
     state.poolAddress = poolDeploy.contract.address.toString();
     state.step = 2;
@@ -340,16 +341,19 @@ async function main() {
       console.warn(`[M3] WARN: vk.bin size ${vkBuf.length}, expected ${115 * 32}`);
     }
 
-    // Bridge: 500-field proof truncated to 456 (Sub-1 5d-3 convention); 115-field VK padded to 127.
+    // Audit #1: pass the FULL 500-field proof + 115-field VK. The old code
+    // truncated the proof to 456 + padded the VK to 127, which corrupted both and
+    // made recursive verify impossible. (NB: the rest of this Sub-2.5-era script
+    // still builds the legacy 42-field ClearingPublic and is superseded by the
+    // aggregator MP clearing path; the bridge is corrected here for correctness.)
     const proofFields: Fr[] = [];
-    for (let i = 0; i < 456; i++) {
+    for (let i = 0; i < 500; i++) {
       proofFields.push(Fr.fromBuffer(proofBuf.subarray(i * 32, (i + 1) * 32) as Buffer));
     }
     const vkFields: Fr[] = [];
     for (let i = 0; i < 115; i++) {
       vkFields.push(Fr.fromBuffer(vkBuf.subarray(i * 32, (i + 1) * 32) as Buffer));
     }
-    while (vkFields.length < 127) vkFields.push(Fr.ZERO);
 
     // Build the ClearingPublic struct matching the empty-clearing fixture.
     // Layout (42 fields per Sub-2.5 design):

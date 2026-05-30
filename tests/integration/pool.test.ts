@@ -39,7 +39,7 @@ interface PoolState {
 // `.simulate()` wraps it in { result }.
 async function readPoolState(pool: LiquidityPoolContract, from: AztecAddress): Promise<PoolState> {
   const sim = await pool.methods.get_pool_state().simulate({ from });
-  const r = (sim as { result: Record<string, bigint | number> }).result;
+  const r = (sim as { result: { reserve_a: bigint | number; reserve_b: bigint | number; lp_supply: bigint | number; cum_fee_a_per_share: bigint | number; cum_fee_b_per_share: bigint | number } }).result;
   return {
     reserve_a: BigInt(r.reserve_a),
     reserve_b: BigInt(r.reserve_b),
@@ -103,8 +103,10 @@ describe("pool (live integration)", () => {
     ).send({ from: admin });
     tETH = dE.contract;
 
+    const P_MIN_SQRT        = 100_000_000_000_000_000n; // 0.1e18
+    const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n; // 1.5e18
     const dP = await LiquidityPoolContract.deploy(
-      wallet, tUSDC.address, tETH.address,
+      wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin,
     ).send({ from: admin });
     pool = dP.contract;
 
@@ -123,12 +125,15 @@ describe("pool (live integration)", () => {
   const ALICE_A = 100_000n * ONE_TUSDC;
   const ALICE_B = 1n * ONE_TETH;
 
+  // Zero-filled BucketState hint for tests that don't use bucket-specific state.
+  const ZERO_BUCKET_HINT = { reserve_a: 0n, reserve_b: 0n, liquidity: 0n, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n };
+
   it("first deposit sets reserves and mints sqrt(a*b) shares", { timeout: 600_000 }, async () => {
     const hint = await readPoolState(pool, admin);
     assert.equal(hint.lp_supply, 0n, "precondition: empty pool");
 
     await pool.methods
-      .deposit(ALICE_A, ALICE_B, hint, randomField(), randomField(), randomField())
+      .deposit(0n, ALICE_A, ALICE_B, { reserve_a: hint.reserve_a, reserve_b: hint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, randomField(), randomField(), randomField())
       .send({ from: alice });
 
     const state = await readPoolState(pool, admin);
@@ -149,7 +154,7 @@ describe("pool (live integration)", () => {
     const expectedShares = bobA * hint.lp_supply / hint.reserve_a;
 
     await pool.methods
-      .deposit(bobA, bobB, hint, randomField(), randomField(), randomField())
+      .deposit(0n, bobA, bobB, { reserve_a: hint.reserve_a, reserve_b: hint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, randomField(), randomField(), randomField())
       .send({ from: bob });
 
     const state = await readPoolState(pool, admin);
@@ -169,7 +174,7 @@ describe("pool (live integration)", () => {
     const bobEthBefore = await readPrivateBalance(tETH, bob);
 
     await pool.methods
-      .deposit(bobA, bobB, hint, randomField(), randomField(), randomField())
+      .deposit(0n, bobA, bobB, { reserve_a: hint.reserve_a, reserve_b: hint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, randomField(), randomField(), randomField())
       .send({ from: bob });
 
     const bobUsdcAfter = await readPrivateBalance(tUSDC, bob);
@@ -188,11 +193,11 @@ describe("pool (live integration)", () => {
 
     const usdcBefore = await readPrivateBalance(tUSDC, alice);
     await pool.methods
-      .deposit(depA, depB, depHint, randomField(), randomField(), posNonce)
+      .deposit(0n, depA, depB, { reserve_a: depHint.reserve_a, reserve_b: depHint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, randomField(), randomField(), posNonce)
       .send({ from: alice });
 
     const wHint = await readPoolState(pool, admin);
-    await pool.methods.withdraw(posNonce, wHint).send({ from: alice });
+    await pool.methods.withdraw(posNonce, { reserve_a: wHint.reserve_a, reserve_b: wHint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, 0n, 0n).send({ from: alice });
 
     const usdcAfter = await readPrivateBalance(tUSDC, alice);
     // Alice gets back ~her principal (V2 rounding may lose a few base units).
@@ -208,7 +213,7 @@ describe("pool (live integration)", () => {
   it("withdraw of an unknown nonce is rejected", { timeout: 600_000 }, async () => {
     const hint = await readPoolState(pool, admin);
     await assert.rejects(
-      pool.methods.withdraw(randomField(), hint).send({ from: alice }),
+      pool.methods.withdraw(randomField(), { reserve_a: hint.reserve_a, reserve_b: hint.reserve_b, current_sqrt_price: 0n }, ZERO_BUCKET_HINT, 0n, 0n).send({ from: alice }),
       /position not found/i,
       "withdrawing a non-existent position must revert",
     );

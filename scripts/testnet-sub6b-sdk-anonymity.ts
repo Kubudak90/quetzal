@@ -25,7 +25,7 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { QuetzalClient, MAX_DECOYS, BridgeError } from "@quetzal/sdk";
+import { QuetzalClient, MAX_DECOYS, BridgeError, type QuetzalContracts } from "@quetzal/sdk";
 
 const NODE_URL = process.env.AZTEC_NODE_URL ?? process.env.AZTEC_RPC_URL ?? "";
 if (!NODE_URL.includes("testnet")) {
@@ -33,6 +33,24 @@ if (!NODE_URL.includes("testnet")) {
 }
 
 const STATE_PATH = "testnet-sub6b-sdk-anonymity-state.json";
+
+// Load deployed contract addresses from quetzal.config.json so the SDK can
+// auto-register them against the wallet's PXE on connect.
+function loadContracts(): QuetzalContracts {
+  if (!existsSync("quetzal.config.json")) {
+    throw new Error("quetzal.config.json not found at cwd — run from project root");
+  }
+  const cfg = JSON.parse(readFileSync("quetzal.config.json", "utf8")) as Record<string, unknown>;
+  return {
+    orderbook: cfg.orderbook as string,
+    tUSDC: cfg.tUSDC as string,
+    tETH: cfg.tETH as string,
+    pools: cfg.pools as QuetzalContracts["pools"],
+    admin: cfg.admin as string,
+    aggregatorRegistry: cfg.aggregatorRegistry as string,
+    treasury: cfg.treasury as string,
+  };
+}
 
 const STEP_NAMES = [
   "S1_wallet_bootstrap",
@@ -82,6 +100,7 @@ async function main(): Promise<void> {
     network: "alpha-testnet",
     nodeUrl: NODE_URL,
     account: { type: "schnorr", secret: process.env.AZTEC_PRIVATE_KEY ?? process.env.AZTEC_SECRET_KEY ?? "" },
+    contracts: loadContracts(),
     l1: {
       rpcUrl: process.env.L1_RPC_URL ?? process.env.SEPOLIA_RPC_URL,
       privateKey: process.env.DEPLOYER_PK ?? process.env.L1_PRIVATE_KEY,

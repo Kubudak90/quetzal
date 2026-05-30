@@ -17,7 +17,7 @@ See `docs/superpowers/specs/2026-05-27-quetzal-subproject-07a-custom-faucet-desi
 ```
 cp .env.faucet.example .env.faucet
 # fill in: FAUCET_L1_PK, FAUCET_L1_FEE_JUICE_PORTAL (optional), FAUCET_L2_SECRET,
-#         HCAPTCHA_SECRET_KEY, FAUCET_HCAPTCHA_BYPASS_KEY
+#         HCAPTCHA_SECRET_KEY (optional), FAUCET_REQUIRE_CAPTCHA (Audit #6; "false" on testnet)
 
 pnpm install
 pnpm -F @quetzal/faucet dev   # http://localhost:3030

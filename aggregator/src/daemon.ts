@@ -61,8 +61,11 @@ export interface DaemonContext {
 
 const HONK_PROOF_FIELDS = 500;
 const HONK_VK_FIELDS = 115;
-const CONTRACT_PROOF_SIZE = 456;
-const CONTRACT_VK_SIZE = 127;
+// Audit #1: orderbook verify consumes the full bb `-t noir-recursive` shapes
+// (proof 500, vk 115). Equal to HONK_*_FIELDS so the bridge fns are pass-through;
+// the old 456/127 truncation corrupted the proof and broke recursive verify.
+const CONTRACT_PROOF_SIZE = 500;
+const CONTRACT_VK_SIZE = 115;
 
 function bridgeProof(buf: Buffer): Fr[] {
   const fields: Fr[] = [];

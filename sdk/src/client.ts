@@ -8,7 +8,6 @@ import type { WalletAdapter } from "./wallet/adapter.js";
 import { SchnorrSecretAdapter } from "./wallet/schnorr.js";
 import { ExternalPxeAdapter } from "./wallet/pxe.js";
 import { AztecWalletAdapter } from "./wallet/aztec-wallet.js";
-import type { AztecBrowserProvider } from "./wallet/aztec-wallet.js";
 import { TestAccountAdapter } from "./wallet/test-account.js";
 import { OrdersApi } from "./orders.js";
 import { BridgeApi } from "./bridge.js";
@@ -23,13 +22,15 @@ import { PoolsApi } from "./pools.js";
  * - "test-account" — ephemeral embedded PXE, pre-funded local-network test
  *                    accounts indexed 0..N; used by the CLI + integration tests
  * - "external-pxe" — caller already holds a connected wallet + address
- * - "aztec-wallet" — browser extension (window.aztec RPC provider)
+ * - "aztec-wallet" — browser extension discovered via the @aztec/wallet-sdk
+ *                    protocol (e.g. Celari); the adapter handles discovery +
+ *                    the encrypted channel, so no provider object is passed in
  */
 export type AccountSpec =
   | { type: "schnorr"; secret: string; salt?: string; signingKey?: string; proverEnabled?: boolean; dataDirectory?: string }
   | { type: "test-account"; accountIndex: number }
   | { type: "external-pxe"; wallet: Wallet; address: AztecAddress }
-  | { type: "aztec-wallet"; provider: AztecBrowserProvider };
+  | { type: "aztec-wallet"; appId?: string; discoveryTimeoutMs?: number };
 
 export interface QuetzalClientConnectOptions {
   network: NetworkName;
@@ -137,7 +138,9 @@ export class QuetzalClient {
         break;
       case "aztec-wallet":
         adapter = new AztecWalletAdapter({
-          provider: opts.account.provider,
+          nodeUrl,
+          appId: opts.account.appId,
+          discoveryTimeoutMs: opts.account.discoveryTimeoutMs,
         });
         break;
     }

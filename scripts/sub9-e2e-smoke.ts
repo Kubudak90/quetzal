@@ -491,6 +491,11 @@ async function main(): Promise<void> {
       submitted_at_block: state.submittedOrder!.submittedAtBlock ?? state.submittedOrder!.blockNumber,
       owner: address.toString(),
       submission_tx_hash: state.submittedOrder!.txHash,
+      // Audit #11: forward the canonical path if the stored order carries it, so the
+      // aggregator recomputes c_i against the bound path. (pool-0 smoke also works
+      // via the aggregator's pool-0 fallback when these are absent.)
+      path_len: (state.submittedOrder as { path_len?: 2 | 3 }).path_len,
+      path: (state.submittedOrder as { path?: [string, string, string] }).path,
     };
     state.revealPayload = payload;
     saveState(state);

@@ -202,7 +202,10 @@ describe(
       tETH = dE.contract;
 
       // Fresh LiquidityPool.
-      const dP = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address)
+      const P_MIN_SQRT        = 100_000_000_000_000_000n; // 0.1e18
+      const BUCKET_GROWTH_NUM = 1_500_000_000_000_000_000n; // 1.5e18
+      const ZERO_ADDR = { address: 0n } as const;
+      const dP = await LiquidityPoolContract.deploy(wallet, tUSDC.address, tETH.address, P_MIN_SQRT, BUCKET_GROWTH_NUM, admin)
         .send({ from: admin });
       pool = dP.contract;
 
@@ -215,7 +218,11 @@ describe(
       // Deploy the orderbook with the W5d-3 constructor signature
       // (clearing_vk_hash replaces W5c's clearing_authority arg).
       const dOB = await OrderbookContract.deploy(
-        wallet, tUSDC.address, tETH.address, EPOCH_LEN, pool.address, vkHash,
+        wallet, EPOCH_LEN, vkHash, ZERO_ADDR, 0n, 1,
+        [pool.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [tUSDC.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        [tETH.address, ZERO_ADDR, ZERO_ADDR, ZERO_ADDR],
+        admin,
       ).send({ from: admin });
       orderbook = dOB.contract;
 
@@ -229,9 +236,11 @@ describe(
       await tETH.methods.mint_to_private(bob,    SELL_ETH + ONE_ETH).send({ from: admin });
 
       // Pool deposit (balanced 10k tUSDC : 5k tETH).
-      const hint0 = (await pool.methods.get_pool_state().simulate({ from: admin })).result;
+      const hint0Raw = (await pool.methods.get_pool_state().simulate({ from: admin })).result as { reserve_a: bigint | number; reserve_b: bigint | number; current_sqrt_price: bigint | number };
+      const hint0PoolHint = { reserve_a: BigInt(hint0Raw.reserve_a), reserve_b: BigInt(hint0Raw.reserve_b), current_sqrt_price: BigInt(hint0Raw.current_sqrt_price) };
+      const zeroBucketHint = { reserve_a: 0n, reserve_b: 0n, liquidity: 0n, cum_fee_a_per_share: 0n, cum_fee_b_per_share: 0n };
       await pool.methods
-        .deposit(POOL_A, POOL_B, hint0, randomField(), randomField(), randomField())
+        .deposit(0n, POOL_A, POOL_B, hint0PoolHint, zeroBucketHint, randomField(), randomField(), randomField())
         .send({ from: admin });
     });
 
@@ -676,7 +685,7 @@ interface OrderNoteFields {
  */
 async function buildPublicInputsStruct(
   epoch: { order_acc: bigint; cancel_acc: bigint; order_count: bigint | number; cancel_count: bigint | number },
-  pool: { reserve_a: bigint; reserve_b: bigint; lp_supply: bigint },
+  pool: { reserve_a: bigint; reserve_b: bigint; lp_supply?: bigint },
   clearing: {
     clearingPrice: bigint;
     fills: { orderNonce: bigint; amountOut: bigint }[];
@@ -695,17 +704,25 @@ async function buildPublicInputsStruct(
 
   const deltaA = clearing.newReserveA - pool.reserve_a;
   const deltaB = clearing.newReserveB - pool.reserve_b;
+  // Audit #1: public_inputs now uses active_pool_count + active_pools[] multi-pool shape.
+  // For this single-pool test the clearing maps to pool_id=0 with one bucket delta entry.
+  const bucketDelta = {
+    bucket_id: 0n,
+    reserve_a_add: deltaA > 0n ? deltaA : 0n,
+    reserve_a_sub: deltaA < 0n ? -deltaA : 0n,
+    reserve_b_add: deltaB > 0n ? deltaB : 0n,
+    reserve_b_sub: deltaB < 0n ? -deltaB : 0n,
+    cum_fee_a_per_share_increment: clearing.feeAPerShareIncrement,
+    cum_fee_b_per_share_increment: clearing.feeBPerShareIncrement,
+  };
   const swap = {
     a_to_pool: 0n,
     b_to_pool: 0n,
     a_from_pool: 0n,
     b_from_pool: 0n,
-    reserve_a_add: deltaA > 0n ? deltaA : 0n,
-    reserve_a_sub: deltaA < 0n ? -deltaA : 0n,
-    reserve_b_add: deltaB > 0n ? deltaB : 0n,
-    reserve_b_sub: deltaB < 0n ? -deltaB : 0n,
-    fee_a_per_share_increment: clearing.feeAPerShareIncrement,
-    fee_b_per_share_increment: clearing.feeBPerShareIncrement,
+    active_bucket_deltas: [bucketDelta],
+    active_bucket_count: 1n,
+    current_sqrt_price_after: 0n,
   };
 
   return {
@@ -713,11 +730,8 @@ async function buildPublicInputsStruct(
     cancel_acc: epoch.cancel_acc,
     order_count: Number(epoch.order_count),
     cancel_count: Number(epoch.cancel_count),
-    reserve_a: pool.reserve_a,
-    reserve_b: pool.reserve_b,
-    lp_supply: pool.lp_supply,
-    clearing_price: clearing.clearingPrice,
     fills_root: tree.root.toBigInt(),
-    swap,
+    active_pool_count: 1n,
+    active_pools: [{ pool_id: 0n, clearing_price: clearing.clearingPrice, swap }],
   };
 }

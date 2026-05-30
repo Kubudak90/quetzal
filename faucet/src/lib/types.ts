@@ -7,7 +7,11 @@ const HexAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be 0x-prefixed 
 
 export const DripRequestSchema = z.object({
   address: HexAddress,
-  captchaToken: z.string().min(1).max(2048),
+  // Audit #6: captcha is now governed by the server-side FAUCET_REQUIRE_CAPTCHA
+  // toggle, so the frontend may omit this field entirely. When present it is
+  // length-capped; when absent it defaults to "" and the server decides whether
+  // verification is required (see lib/captcha.ts).
+  captchaToken: z.string().max(2048).optional().default(""),
 });
 export type DripRequest = z.infer<typeof DripRequestSchema>;
 

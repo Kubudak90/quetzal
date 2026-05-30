@@ -29,6 +29,10 @@ function sdkBrowserShims(): Plugin {
       path.resolve(sdkSrc, "privacy/decoy-registry.browser.ts"),
     [path.resolve(sdkSrc, "privacy/bridge-schedule.ts")]:
       path.resolve(sdkSrc, "privacy/bridge-schedule.browser.ts"),
+    // Node loader resolves codegen'd bindings via process.cwd() (invalid in the
+    // browser); the browser variant statically imports them so Vite bundles them.
+    [path.resolve(sdkSrc, "internal/contracts.ts")]:
+      path.resolve(sdkSrc, "internal/contracts.browser.ts"),
   };
 
   return {
@@ -110,6 +114,15 @@ export default defineConfig({
   },
   // Some Aztec packages have CJS-only files; preempt resolver issues.
   optimizeDeps: {
+    // Pre-bundle the wallet-sdk discovery entry that the "aztec-wallet" adapter
+    // pulls in via dynamic import. Without this, Vite discovers it lazily on the
+    // first Connect click and force-reloads the page mid-connect ("optimized
+    // dependencies changed. reloading"), dropping the flow. Pre-bundling at
+    // startup keeps the connect flow intact.
+    // `vite-plugin-node-polyfills/shims/global` is reached only via the
+    // wallet-sdk code path; if not pre-bundled it gets optimized lazily and
+    // triggers a reload. Pin it here so the startup optimize pass covers it.
+    include: ["@aztec/wallet-sdk/manager", "vite-plugin-node-polyfills/shims/global"],
     esbuildOptions: {
       target: "es2022",
     },

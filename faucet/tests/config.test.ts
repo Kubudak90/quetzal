@@ -16,7 +16,6 @@ const MINIMAL_ENV: Record<string, string> = {
   FAUCET_TUSDC_AMOUNT: "1000000000",
   FAUCET_TETH_AMOUNT: "500000000000000000",
   HCAPTCHA_SECRET_KEY: "test-secret",
-  FAUCET_HCAPTCHA_BYPASS_KEY: "BYPASS",
   FAUCET_GLOBAL_DAILY_CAP: "500",
   FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW: "4",
   FAUCET_PER_IP_WINDOW_SECONDS: "28800",
@@ -97,5 +96,33 @@ describe("loadConfig", () => {
     const cfg = loadConfig();
     expect(cfg.allowedOrigins[0]).toBeInstanceOf(RegExp);
     expect((cfg.allowedOrigins[0] as RegExp).source).toBe("a");
+  });
+
+  // Audit #6: captcha is now an optional server-side toggle, not a required secret.
+  test("does NOT throw when HCAPTCHA_SECRET_KEY is missing (now optional)", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV });
+    delete process.env.HCAPTCHA_SECRET_KEY;
+    const cfg = loadConfig();
+    expect(cfg.hcaptchaSecretKey).toBe("");
+  });
+
+  test("requireCaptcha defaults to true (secure-by-default) when env unset", () => {
+    Object.assign(process.env, { ...MINIMAL_ENV });
+    delete process.env.FAUCET_REQUIRE_CAPTCHA;
+    const cfg = loadConfig();
+    expect(cfg.requireCaptcha).toBe(true);
+  });
+
+  test('FAUCET_REQUIRE_CAPTCHA="false" parses to requireCaptcha:false', () => {
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_REQUIRE_CAPTCHA: "false" });
+    const cfg = loadConfig();
+    expect(cfg.requireCaptcha).toBe(false);
+  });
+
+  test('any non-"false" value keeps requireCaptcha:true', () => {
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_REQUIRE_CAPTCHA: "true" });
+    expect(loadConfig().requireCaptcha).toBe(true);
+    Object.assign(process.env, { ...MINIMAL_ENV, FAUCET_REQUIRE_CAPTCHA: "1" });
+    expect(loadConfig().requireCaptcha).toBe(true);
   });
 });

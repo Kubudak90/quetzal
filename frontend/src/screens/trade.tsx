@@ -211,6 +211,10 @@ export function TradeScreen({ pushToast, secondsLeft }: TradeScreenProps) {
           submitted_at_block: result.blockNumber,
           owner: client.address.toString(),
           submission_tx_hash: result.txHash || undefined,
+          // Audit #11: forward the canonical path so the aggregator recomputes c_i
+          // against the same path the contract bound (needed for multi-hop orders).
+          path_len: result.path_len,
+          path: result.path,
         };
         void client.aggregator.directReveal(aggregatorUrl, revealPayload).then((ok) => {
           if (ok) {

@@ -137,6 +137,10 @@ pub contract LiquidityPool {
         token_a_addr: PublicImmutable<AztecAddress, Context>,
         token_b_addr: PublicImmutable<AztecAddress, Context>,
         orderbook_addr: PublicMutable<AztecAddress, Context>,
+        /// Sub-Audit-#3: deploy-time admin authorized to wire the orderbook
+        /// via the one-shot `set_orderbook` setter. Prevents front-running the
+        /// post-deploy wiring with an attacker-controlled orderbook address.
+        admin: PublicImmutable<AztecAddress, Context>,
         /// Sub-2: p_min and growth let us derive bucket bounds on demand
         /// (avoids storing a [BucketBounds; 16] PublicImmutable, which is
         /// awkward with aztec-nr 4.2.0's serialization).
@@ -157,11 +161,13 @@ pub contract LiquidityPool {
         token_b: AztecAddress,
         p_min_sqrt: u128,
         bucket_growth_num: u128,
+        admin: AztecAddress,
     ) {
         self.storage.token_a_addr.initialize(token_a);
         self.storage.token_b_addr.initialize(token_b);
         self.storage.p_min_sqrt.initialize(p_min_sqrt);
         self.storage.bucket_growth_num.initialize(bucket_growth_num);
+        self.storage.admin.initialize(admin);
         self.storage.pool_state.write(PoolState {
             reserve_a: 0 as u128,
             reserve_b: 0 as u128,
@@ -179,6 +185,11 @@ pub contract LiquidityPool {
     /// be re-pointed later.
     #[external("public")]
     fn set_orderbook(orderbook: AztecAddress) {
+        // Audit-#3: gate the wiring to the deploy-time admin. Without this, an
+        // attacker could front-run the legitimate wiring with a malicious
+        // orderbook address and drain the pool via apply_clearing.
+        let admin = self.storage.admin.read();
+        assert(self.msg_sender() == admin, "only admin may set orderbook");
         let current = self.storage.orderbook_addr.read();
         assert(current == AztecAddress::from_field(0), "orderbook already set");
         self.storage.orderbook_addr.write(orderbook);

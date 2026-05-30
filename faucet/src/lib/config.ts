@@ -29,7 +29,13 @@ export interface FaucetConfig {
   tUSDCAmount: bigint;
   tETHAmount: bigint;
   hcaptchaSecretKey: string;
-  hcaptchaBypassKey: string;
+  /**
+   * Audit #6: server-side captcha toggle. When false the faucet skips captcha
+   * verification entirely (testnet, which has no hCaptcha widget). Defaults to
+   * true (secure-by-default) so production must explicitly opt out. Replaces the
+   * old public-shared `hcaptchaBypassKey` secret that shipped in the browser bundle.
+   */
+  requireCaptcha: boolean;
   globalDailyCap: number;
   perIpMaxDripsPerWindow: number;
   perIpWindowSeconds: number;
@@ -81,8 +87,8 @@ export function loadConfig(): FaucetConfig {
     feeJuiceAmount: asBigint("FAUCET_FEE_JUICE_AMOUNT", required("FAUCET_FEE_JUICE_AMOUNT")),
     tUSDCAmount: asBigint("FAUCET_TUSDC_AMOUNT", required("FAUCET_TUSDC_AMOUNT")),
     tETHAmount: asBigint("FAUCET_TETH_AMOUNT", required("FAUCET_TETH_AMOUNT")),
-    hcaptchaSecretKey: required("HCAPTCHA_SECRET_KEY"),
-    hcaptchaBypassKey: required("FAUCET_HCAPTCHA_BYPASS_KEY"),
+    hcaptchaSecretKey: process.env.HCAPTCHA_SECRET_KEY ?? "",
+    requireCaptcha: (process.env.FAUCET_REQUIRE_CAPTCHA ?? "true") !== "false",
     globalDailyCap: asNumber("FAUCET_GLOBAL_DAILY_CAP", required("FAUCET_GLOBAL_DAILY_CAP")),
     perIpMaxDripsPerWindow: asNumber("FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW", required("FAUCET_PER_IP_MAX_DRIPS_PER_WINDOW")),
     perIpWindowSeconds: asNumber("FAUCET_PER_IP_WINDOW_SECONDS", required("FAUCET_PER_IP_WINDOW_SECONDS")),

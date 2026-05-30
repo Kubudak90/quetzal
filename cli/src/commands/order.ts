@@ -111,6 +111,10 @@ export function registerOrder(program: Command): void {
             limit_price: realLimitPrice.toString(),
             submitted_at_block: 0, // best-guess; aggregator re-folds against on-chain order_acc.
             owner: client.address.toString(),
+            // Audit #11: forward the canonical path so the aggregator recomputes c_i
+            // against the same path the contract bound (needed for multi-hop orders).
+            path_len: result.path_len,
+            path: result.path,
           };
           const registry = await AggregatorRegistryContract.at(
             AztecAddress.fromString(config.aggregatorRegistry),
